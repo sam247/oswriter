@@ -134,7 +134,7 @@ export class QueueRunner {
       job = { ...job, pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
       let markdown = await this.model.generateArticle({ title: job.title, research, controls: settings.controls });
-      job = { ...job, pipeline: completeStage(job.pipeline, "generation", { model: process.env.AI_GENERATION_MODEL ?? "deepseek-chat" }), updatedAt: nowIso() };
+      job = { ...job, pipeline: completeStage(job.pipeline, "generation", { model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash" }), updatedAt: nowIso() };
       await this.store.saveJob(job);
       log({ stage: "generation", level: "info", message: "Article generation completed.", data: { words: countWords(markdown) } });
 

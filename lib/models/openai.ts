@@ -11,26 +11,32 @@ export class OpenAIModelAdapter implements ModelAdapter {
 
   async generateArticle(input: ArticleGenerationInput): Promise<string> {
     this.ensureKey();
-    const response = await this.client.responses.create({
-      model: process.env.AI_GENERATION_MODEL ?? "deepseek-chat",
-      input: buildGenerationPrompt(input),
+    const response = await this.client.chat.completions.create({
+      model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      messages: promptToMessages(
+        "You write useful, technically careful Markdown articles from research notes.",
+        buildGenerationPrompt(input)
+      ),
       temperature: 0.4,
-      max_output_tokens: 5000
+      max_tokens: 5000
     });
-    const text = response.output_text?.trim();
+    const text = response.choices[0]?.message.content?.trim();
     if (!text) throw new Error("OpenAI generation unavailable: empty response.");
     return normaliseMarkdown(text, input.title);
   }
 
   async editArticle(input: EditorInput): Promise<string> {
     this.ensureKey();
-    const response = await this.client.responses.create({
-      model: process.env.AI_EDITOR_MODEL ?? process.env.AI_GENERATION_MODEL ?? "deepseek-chat",
-      input: buildEditorPrompt(input),
+    const response = await this.client.chat.completions.create({
+      model: process.env.AI_EDITOR_MODEL ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      messages: promptToMessages(
+        "You are a conservative article editor. Preserve meaning and return Markdown only.",
+        buildEditorPrompt(input)
+      ),
       temperature: 0.25,
-      max_output_tokens: 5000
+      max_tokens: 5000
     });
-    const text = response.output_text?.trim();
+    const text = response.choices[0]?.message.content?.trim();
     if (!text) throw new Error("OpenAI editor unavailable: empty response.");
     return normaliseMarkdown(text, input.title);
   }
@@ -38,13 +44,17 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async validateArticle(input: ValidationInput): Promise<ValidationResult> {
     this.ensureKey();
     try {
-      const response = await this.client.responses.create({
-        model: process.env.AI_VALIDATION_MODEL ?? process.env.AI_GENERATION_MODEL ?? "deepseek-chat",
-        input: buildValidationPrompt(input),
+      const response = await this.client.chat.completions.create({
+        model: process.env.AI_VALIDATION_MODEL ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+        messages: promptToMessages(
+          "You validate articles and return strict JSON only.",
+          buildValidationPrompt(input)
+        ),
         temperature: 0.1,
-        max_output_tokens: 1400
+        max_tokens: 1400,
+        response_format: { type: "json_object" }
       });
-      const text = response.output_text?.trim();
+      const text = response.choices[0]?.message.content?.trim();
       if (!text) return heuristicValidation(input);
       const parsed = JSON.parse(cleanJsonText(text)) as ValidationResult;
       return {
@@ -64,6 +74,13 @@ export class OpenAIModelAdapter implements ModelAdapter {
   private ensureKey() {
     if (!process.env.AI_API_KEY) throw new Error("AI API unavailable: AI_API_KEY is not set.");
   }
+}
+
+function promptToMessages(system: string, user: string) {
+  return [
+    { role: "system" as const, content: system },
+    { role: "user" as const, content: user }
+  ];
 }
 
 function buildGenerationPrompt({ title, research, controls }: ArticleGenerationInput) {

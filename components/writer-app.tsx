@@ -73,6 +73,10 @@ function Workbench() {
     () => articles.find((article) => article.id === selectedArticleId) ?? articles[0] ?? null,
     [articles, selectedArticleId]
   );
+  const selectedJob = useMemo(
+    () => jobs.find((job) => job.articleId === selectedArticleId) ?? null,
+    [jobs, selectedArticleId]
+  );
   const visibleJobs = jobs.filter((job) => filter === "all" || job.status === filter);
   const stats = useMemo(() => ({
     queued: jobs.filter((job) => job.status === "queued").length,
@@ -210,9 +214,9 @@ function Workbench() {
         </aside>
 
         <section className="flex min-h-0 flex-col">
-          <ArticleHeader article={selectedArticle} />
+          <ArticleHeader article={selectedArticle} job={selectedJob} />
           <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
-            {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : <Empty text="No article selected." />}
+            {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <FailedJob job={selectedJob} /> : <Empty text="No article selected." />}
           </div>
         </section>
 
@@ -222,7 +226,7 @@ function Workbench() {
               <button key={item} onClick={() => setTab(item)} className={cn("h-7 rounded px-2 text-xs capitalize", tab === item ? "bg-surface-1 text-ink shadow-sm" : "text-ink-muted")}>{item}</button>
             ))}
           </div>
-          <Inspector tab={tab} article={selectedArticle} details={details} />
+          <Inspector tab={tab} article={selectedArticle} job={selectedJob} details={details} />
         </aside>
       </div>
 
@@ -238,7 +242,16 @@ function Workbench() {
   );
 }
 
-function ArticleHeader({ article }: { article: ArticleDocument | null }) {
+function ArticleHeader({ article, job }: { article: ArticleDocument | null; job: QueueJob | null }) {
+  if (!article && job) {
+    return (
+      <div className="hairline-b bg-background px-6 py-4">
+        <div className="mono text-[11px] uppercase tracking-[0.16em] text-danger">{job.status.replace("_", " ")}</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{job.title}</h1>
+        <div className="mono mt-2 text-xs text-ink-muted">attempt {job.attempts}</div>
+      </div>
+    );
+  }
   if (!article) return <div className="hairline-b h-24 p-5" />;
   return (
     <div className="hairline-b bg-background px-6 py-4">
@@ -254,6 +267,18 @@ function ArticleHeader({ article }: { article: ArticleDocument | null }) {
   );
 }
 
+function FailedJob({ job }: { job: QueueJob }) {
+  return (
+    <div className="mx-auto max-w-3xl rounded-md border border-danger/30 bg-surface-1 p-4">
+      <h2 className="font-semibold text-danger">Technical failure</h2>
+      <p className="mt-2 text-sm text-ink-muted">
+        This job has no saved article because it hit a technical failure before draft save.
+      </p>
+      <pre className="mono mt-3 whitespace-pre-wrap rounded bg-surface-2 p-3 text-xs text-danger">{job.fatalError ?? "No fatal error recorded."}</pre>
+    </div>
+  );
+}
+
 function MarkdownPreview({ markdown }: { markdown: string }) {
   return (
     <article className="mx-auto max-w-3xl whitespace-pre-wrap text-[15px] leading-7 text-ink">
@@ -262,14 +287,14 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
   );
 }
 
-function Inspector({ tab, article, details }: { tab: string; article: ArticleDocument | null; details: Details }) {
-  if (!article) return <Empty text="No article selected." />;
+function Inspector({ tab, article, job, details }: { tab: string; article: ArticleDocument | null; job: QueueJob | null; details: Details }) {
+  if (!article && !job) return <Empty text="No article selected." />;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
-      {tab === "research" && <ResearchPanel research={details.research} article={article} />}
-      {tab === "pipeline" && <PipelinePanel article={article} />}
-      {tab === "validation" && <ValidationPanel article={article} />}
-      {tab === "seo" && <SeoPanel article={article} />}
+      {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text="No research pack saved before failure." />)}
+      {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} />}
+      {tab === "validation" && (article ? <ValidationPanel article={article} /> : <Empty text={job?.fatalError ?? "No validation record saved before failure."} />)}
+      {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
   );
@@ -302,10 +327,10 @@ function ResearchPanel({ research, article }: { research: ResearchPack | null; a
   );
 }
 
-function PipelinePanel({ article }: { article: ArticleDocument }) {
+function PipelinePanel({ pipeline }: { pipeline: ArticleDocument["pipeline"] }) {
   return (
     <ol className="space-y-2">
-      {article.pipeline.map((step) => (
+      {pipeline.map((step) => (
         <li key={step.stage} className="rounded-md border border-line bg-surface-1 p-2">
           <div className="flex items-center gap-2">
             {step.status === "done" ? <CheckCircle2 className="size-4 text-success" /> : step.status === "failed" ? <AlertCircle className="size-4 text-danger" /> : <Search className="size-4 text-ink-subtle" />}

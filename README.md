@@ -22,9 +22,9 @@ BLOB_READ_WRITE_TOKEN="vercel-blob-token"
 EXA_API_KEY="exa-key"
 AI_API_KEY="deepseek-key"
 AI_BASE_URL="https://api.deepseek.com"
-AI_GENERATION_MODEL="deepseek-chat"
-AI_EDITOR_MODEL="deepseek-chat"
-AI_VALIDATION_MODEL="deepseek-chat"
+AI_GENERATION_MODEL="deepseek-v4-flash"
+AI_EDITOR_MODEL="deepseek-v4-flash"
+AI_VALIDATION_MODEL="deepseek-v4-flash"
 ```
 
 If `WORKSPACE_PASSWORD` is unset, local development accepts `oswriter`.
