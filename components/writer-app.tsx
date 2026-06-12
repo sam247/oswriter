@@ -72,7 +72,7 @@ function Workbench() {
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
   const selectedArticle = useMemo(
-    () => articles.find((article) => article.id === selectedArticleId) ?? articles[0] ?? null,
+    () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : articles[0] ?? null,
     [articles, selectedArticleId]
   );
   const selectedJob = useMemo(
@@ -97,7 +97,14 @@ function Workbench() {
     if (res.ok) {
       const next = await res.json() as AppState;
       setState(next);
-      if (!selectedArticleId && next.articles[0]) setSelectedArticleId(next.articles[0].id);
+      const selectedExists = selectedArticleId && (
+        next.jobs.some((job) => job.articleId === selectedArticleId) ||
+        next.articles.some((article) => article.id === selectedArticleId)
+      );
+      if (!selectedExists) {
+        const active = next.jobs.find((job) => job.status === "processing");
+        setSelectedArticleId(active?.articleId ?? next.articles[0]?.id ?? next.jobs[0]?.articleId ?? null);
+      }
     } else {
       setMessage("Unable to load state.");
     }
@@ -152,6 +159,7 @@ function Workbench() {
       await refresh();
       return false;
     }
+    if (data.job) setSelectedArticleId(data.job.articleId);
     setMessage(data.processed ? `Processed: ${data.job?.title}` : "No queued jobs.");
     await refresh();
     return Boolean(data.processed);
@@ -254,7 +262,7 @@ function Workbench() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{job.title}</span>
                   <span className="mono mt-1 block text-[11px] text-ink-subtle">
-                    {statusGuidance(job.status)} · attempt {job.attempts}
+                    {statusLabel(job.status)} - Attempt {job.attempts}
                   </span>
                 </span>
               </button>
@@ -459,12 +467,12 @@ function statusColor(status: JobStatus) {
   }[status];
 }
 
-function statusGuidance(status: JobStatus) {
+function statusLabel(status: JobStatus) {
   return {
-    queued: "queued - waiting to be generated",
-    processing: "generating - writing",
-    generated: "processed - done",
-    needs_review: "processed - needs review",
-    failed: "failed - technical failure"
+    queued: "Queued",
+    processing: "Generating",
+    generated: "Generated",
+    needs_review: "Needs review",
+    failed: "Failed"
   }[status];
 }

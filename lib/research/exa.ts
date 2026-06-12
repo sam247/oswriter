@@ -16,6 +16,7 @@ export class ExaSearchAdapter implements SearchAdapter {
 
     const res = await fetch("https://api.exa.ai/search", {
       method: "POST",
+      signal: AbortSignal.timeout(12_000),
       headers: {
         "Content-Type": "application/json",
         "x-api-key": this.apiKey

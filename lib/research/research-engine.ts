@@ -18,11 +18,15 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const raw: SearchResult[] = [];
   const requestIds: string[] = [];
 
-  for (const query of queries) {
-    const { results, requestId } = await search.search(query, {
+  const responses = await Promise.allSettled(queries.map((query) => search.search(query, {
       numResults: 5,
       excludeDomains: EXCLUDE_DOMAINS
-    });
+    })));
+
+  const failures = responses.filter((response) => response.status === "rejected");
+  for (const response of responses) {
+    if (response.status === "rejected") continue;
+    const { results, requestId } = response.value;
     if (requestId) requestIds.push(requestId);
     for (const result of results) {
       if (!seen.has(result.url)) {
@@ -31,6 +35,12 @@ export async function runResearch(title: string, articleId: string, search: Sear
       }
     }
     if (raw.length >= 30) break;
+  }
+
+  if (raw.length === 0 && failures.length === responses.length) {
+    const first = failures[0] as PromiseRejectedResult | undefined;
+    const message = first?.reason instanceof Error ? first.reason.message : String(first?.reason ?? "unknown");
+    throw new Error(`Research/search completely unavailable: ${message}`);
   }
 
   const scored = raw.slice(0, 30).map((result, index) => toResearchSource(result, title, index + 1));
@@ -50,6 +60,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
   if (accepted.length < 2) warnings.push("Research found fewer than 2 usable sources.");
   else if (accepted.length < 4) warnings.push("Research source coverage is below the preferred 4+ usable sources.");
   if (confidence < 60) warnings.push("Research confidence is low.");
+  if (failures.length) warnings.push(`${failures.length} research query variants failed, but generation continued.`);
 
   return {
     articleId,

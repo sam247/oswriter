@@ -115,16 +115,16 @@ export class QueueRunner {
   async processNext(projectId = DEFAULT_PROJECT_ID) {
     await this.reclaimStale(projectId);
     const jobs = await this.store.listJobs(projectId);
-    const job = jobs.find((item) => item.status === "queued");
+    const job = jobs.find((item) => item.status === "processing") ?? jobs.find((item) => item.status === "queued");
     if (!job) return { processed: false, job: null };
-    return { processed: true, job: await this.processJob(job) };
+    return { processed: true, job: await this.processJobStep(job) };
   }
 
-  private async processJob(initial: QueueJob) {
+  private async processJobStep(initial: QueueJob) {
     let job: QueueJob = {
       ...initial,
       status: "processing",
-      attempts: initial.attempts + 1,
+      attempts: initial.status === "queued" ? initial.attempts + 1 : initial.attempts,
       updatedAt: nowIso(),
       fatalError: undefined
     };
@@ -144,22 +144,34 @@ export class QueueRunner {
     try {
       const settings = await this.store.getSettings(job.projectId);
 
-      job = { ...job, pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
-      await this.store.saveJob(job);
-      log({ stage: "research", level: "info", message: "Research started." });
-      const research = await runResearch(job.title, job.articleId, this.search);
-      await this.store.saveResearch(research, job.projectId);
-      job = { ...job, pipeline: completeStage(job.pipeline, "research", { sourceCount: research.sources.length, confidence: research.confidence }), updatedAt: nowIso() };
-      await this.store.saveJob(job);
-      log({ stage: "research", level: research.warnings.length ? "warn" : "info", message: "Research completed.", data: research.warnings });
+      if (!stageDone(job, "research")) {
+        job = { ...job, pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
+        await this.store.saveJob(job);
+        log({ stage: "research", level: "info", message: "Research started." });
+        const research = await runResearch(job.title, job.articleId, this.search);
+        await this.store.saveResearch(research, job.projectId);
+        job = { ...job, pipeline: completeStage(job.pipeline, "research", { sourceCount: research.sources.length, confidence: research.confidence }), updatedAt: nowIso() };
+        await this.store.saveJob(job);
+        log({ stage: "research", level: research.warnings.length ? "warn" : "info", message: "Research completed.", data: research.warnings });
+        await this.store.saveDebug(debug, job.projectId);
+        return job;
+      }
 
-      job = { ...job, pipeline: startStage(job.pipeline, "outline", "Using generation prompt structure."), updatedAt: nowIso() };
-      job = { ...job, pipeline: completeStage(job.pipeline, "outline", { strategy: "model-guided" }), updatedAt: nowIso() };
-      await this.store.saveJob(job);
+      if (!stageDone(job, "outline")) {
+        job = { ...job, pipeline: startStage(job.pipeline, "outline", "Using generation prompt structure."), updatedAt: nowIso() };
+        job = { ...job, pipeline: completeStage(job.pipeline, "outline", { strategy: "model-guided" }), updatedAt: nowIso() };
+        await this.store.saveJob(job);
+        log({ stage: "outline", level: "info", message: "Outline stage prepared." });
+        await this.store.saveDebug(debug, job.projectId);
+        return job;
+      }
+
+      const research = await this.store.getResearch(job.articleId, job.projectId);
+      if (!research) throw new Error("Research unavailable after research stage.");
 
       job = { ...job, pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      let markdown = await this.model.generateArticle({ title: job.title, research, controls: settings.controls });
+      const markdown = await this.model.generateArticle({ title: job.title, research, controls: settings.controls });
       job = { ...job, pipeline: completeStage(job.pipeline, "generation", { model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash" }), updatedAt: nowIso() };
       await this.store.saveJob(job);
       log({ stage: "generation", level: "info", message: "Article generation completed.", data: { words: countWords(markdown) } });
@@ -204,6 +216,10 @@ export class QueueRunner {
       return failed;
     }
   }
+}
+
+function stageDone(job: QueueJob, stage: QueueJob["pipeline"][number]["stage"]) {
+  return job.pipeline.find((step) => step.stage === stage)?.status === "done";
 }
 
 function createArticle(
