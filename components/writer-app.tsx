@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
+type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug";
 
 export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
   const [authed, setAuthed] = useState(initialAuthed);
@@ -65,7 +66,8 @@ function Workbench() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
-  const [tab, setTab] = useState<"research" | "pipeline" | "validation" | "seo" | "debug">("research");
+  const [tab, setTab] = useState<InspectorTab>("research");
+  const [selectedStage, setSelectedStage] = useState<string>("research");
   const stopRequested = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
 
@@ -104,7 +106,8 @@ function Workbench() {
       );
       if (!selectedExists) {
         const active = next.jobs.find((job) => job.status === "processing");
-        setSelectedArticleId(active?.articleId ?? next.articles[0]?.id ?? next.jobs[0]?.articleId ?? null);
+        const nonFailedJob = next.jobs.find((job) => job.status !== "failed");
+        setSelectedArticleId(active?.articleId ?? next.articles[0]?.id ?? nonFailedJob?.articleId ?? next.jobs[0]?.articleId ?? null);
       }
     }
   }
@@ -162,7 +165,7 @@ function Workbench() {
     }
     if (data.job) {
       upsertJob(data.job);
-      setSelectedArticleId(data.job.articleId);
+      if (data.job.status !== "failed") setSelectedArticleId(data.job.articleId);
     }
     setMessage(data.processed ? `Processed: ${data.job?.title}` : "No queued jobs.");
     void refresh();
@@ -229,6 +232,15 @@ function Workbench() {
       body: JSON.stringify({ lengthTargetWords })
     });
     if (!res.ok) void refresh();
+  }
+
+  async function retryOne(jobId: string) {
+    const res = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({})) as { job?: QueueJob };
+      if (data.job) upsertJob(data.job);
+    }
+    void refresh();
   }
 
   function upsertJob(job: QueueJob) {
@@ -317,21 +329,28 @@ function Workbench() {
 
           <div className="min-h-0 flex-1 overflow-auto">
             {visibleJobs.map((job) => (
-              <button key={job.id} onClick={() => setSelectedArticleId(job.articleId)} className="hairline-b flex w-full gap-2 px-3 py-2 text-left hover:bg-surface-3">
-                <span className={cn("status-dot mt-1.5 shrink-0", statusColor(job.status))} />
+              <div key={job.id} className="hairline-b flex w-full gap-2 px-3 py-2 hover:bg-surface-3">
+                <button onClick={() => setSelectedArticleId(job.articleId)} className="flex min-w-0 flex-1 gap-2 text-left">
+                  <span className={cn("status-dot mt-1.5 shrink-0", statusColor(job.status))} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{job.title}</span>
                   <span className="mono mt-1 block text-[11px] text-ink-subtle">
                     {statusLabel(job.status)} - Attempt {job.attempts}
                   </span>
                 </span>
-              </button>
+                </button>
+                {job.status === "failed" && (
+                  <button onClick={() => retryOne(job.id)} className="self-center rounded border border-line bg-surface-1 px-2 py-1 text-[11px] text-ink-muted hover:text-ink">
+                    Retry
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </aside>
 
         <section className="flex min-h-0 flex-col">
-          <ArticleHeader article={selectedArticle} job={selectedJob} />
+          <ArticleHeader article={selectedArticle} job={selectedJob} onReviewClick={() => setTab("validation")} />
           <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
             {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <JobPlaceholder job={selectedJob} /> : <Empty text="No article selected." />}
           </div>
@@ -343,7 +362,7 @@ function Workbench() {
               <button key={item} onClick={() => setTab(item)} className={cn("h-7 rounded px-2 text-xs capitalize", tab === item ? "bg-surface-1 text-ink shadow-sm" : "text-ink-muted")}>{item}</button>
             ))}
           </div>
-          <Inspector tab={tab} article={selectedArticle} job={selectedJob} details={details} />
+          <Inspector tab={tab} setTab={setTab} article={selectedArticle} job={selectedJob} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} />
         </aside>
       </div>
 
@@ -359,7 +378,7 @@ function Workbench() {
   );
 }
 
-function ArticleHeader({ article, job }: { article: ArticleDocument | null; job: QueueJob | null }) {
+function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocument | null; job: QueueJob | null; onReviewClick: () => void }) {
   if (!article && job) {
     return (
       <div className="hairline-b bg-background px-6 py-4">
@@ -378,7 +397,11 @@ function ArticleHeader({ article, job }: { article: ArticleDocument | null; job:
         <span>{article.sources.length} sources</span>
         <span>{article.wordCount} words</span>
         <span>Q{article.qualityScore}</span>
-        {article.needsReviewReasons.length > 0 && <span className="text-warn">{article.needsReviewReasons.length} review reasons</span>}
+        {article.needsReviewReasons.length > 0 && (
+          <button onClick={onReviewClick} className="text-warn hover:underline">
+            {article.needsReviewReasons.length} review reasons
+          </button>
+        )}
       </div>
     </div>
   );
@@ -418,12 +441,28 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
   );
 }
 
-function Inspector({ tab, article, job, details }: { tab: string; article: ArticleDocument | null; job: QueueJob | null; details: Details }) {
+function Inspector({
+  tab,
+  setTab,
+  article,
+  job,
+  details,
+  selectedStage,
+  setSelectedStage
+}: {
+  tab: InspectorTab;
+  setTab: (tab: InspectorTab) => void;
+  article: ArticleDocument | null;
+  job: QueueJob | null;
+  details: Details;
+  selectedStage: string;
+  setSelectedStage: (stage: string) => void;
+}) {
   if (!article && !job) return <Empty text="No article selected." />;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
-      {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} />}
+      {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
@@ -458,11 +497,37 @@ function ResearchPanel({ research, article }: { research: ResearchPack | null; a
   );
 }
 
-function PipelinePanel({ pipeline }: { pipeline: ArticleDocument["pipeline"] }) {
+function PipelinePanel({
+  pipeline,
+  article,
+  details,
+  selectedStage,
+  setSelectedStage,
+  setTab
+}: {
+  pipeline: ArticleDocument["pipeline"];
+  article: ArticleDocument | null;
+  details: Details;
+  selectedStage: string;
+  setSelectedStage: (stage: string) => void;
+  setTab: (tab: InspectorTab) => void;
+}) {
+  const selected = pipeline.find((step) => step.stage === selectedStage) ?? pipeline[0];
   return (
-    <ol className="space-y-2">
-      {pipeline.map((step) => (
-        <li key={step.stage} className="rounded-md border border-line bg-surface-1 p-2">
+    <div className="space-y-4">
+      <ol className="space-y-2">
+        {pipeline.map((step) => (
+          <li key={step.stage}>
+            <button
+              onClick={() => {
+                setSelectedStage(step.stage);
+                if (step.stage === "research" && article) setTab("research");
+              }}
+              className={cn(
+                "w-full rounded-md border border-line bg-surface-1 p-2 text-left hover:border-ink-subtle",
+                selected?.stage === step.stage && "border-ink-subtle"
+              )}
+            >
           <div className="flex items-center gap-2">
             {step.status === "done" ? <CheckCircle2 className="size-4 text-success" /> : step.status === "failed" ? <AlertCircle className="size-4 text-danger" /> : <Search className="size-4 text-ink-subtle" />}
             <span className="font-medium capitalize">{step.stage}</span>
@@ -470,9 +535,81 @@ function PipelinePanel({ pipeline }: { pipeline: ArticleDocument["pipeline"] }) 
           </div>
           {step.error && <p className="mt-1 text-xs text-danger">{step.error}</p>}
           {step.message && <p className="mt-1 text-xs text-ink-muted">{step.message}</p>}
+            </button>
         </li>
       ))}
     </ol>
+      {selected && <StageDetails step={selected} article={article} details={details} />}
+    </div>
+  );
+}
+
+function StageDetails({ step, article, details }: { step: ArticleDocument["pipeline"][number]; article: ArticleDocument | null; details: Details }) {
+  if (step.stage === "research") {
+    const research = details.research;
+    const sources = research?.sources ?? article?.sources ?? [];
+    return (
+      <div className="space-y-3 rounded-md border border-line bg-surface-1 p-3">
+        <PanelTitle title="Research detail" />
+        <MetricGrid items={[
+          ["Sources found", sources.length],
+          ["Rejected", research?.rejectedSources.length ?? 0],
+          ["Authority", research?.authorityScore ?? 0],
+          ["Confidence", research?.confidence ?? 0]
+        ]} />
+        {research?.queries?.length ? (
+          <>
+            <PanelTitle title="Queries" />
+            <ul className="space-y-1 text-xs text-ink-muted">
+              {research.queries.map((query) => <li key={query}>{query}</li>)}
+            </ul>
+          </>
+        ) : null}
+        <PanelTitle title="Sources" />
+        <ul className="space-y-2">
+          {sources.map((source) => (
+            <li key={source.url} className="rounded border border-line p-2">
+              <div className="text-xs font-medium">{source.title}</div>
+              <a href={source.url} target="_blank" className="mono mt-1 block truncate text-[11px] text-ink-subtle">{source.domain}</a>
+            </li>
+          ))}
+        </ul>
+        {research?.rejectedSources.length ? (
+          <>
+            <PanelTitle title="Rejected" />
+            <ul className="space-y-1 text-xs text-ink-muted">
+              {research.rejectedSources.slice(0, 8).map((source) => <li key={source.url}>{source.title} - {source.rejectionReason ?? "low relevance"}</li>)}
+            </ul>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (step.stage === "validation" && article) {
+    return (
+      <div className="space-y-3 rounded-md border border-line bg-surface-1 p-3">
+        <PanelTitle title="Validation detail" />
+        <MetricGrid items={[
+          ["Quality", article.validation.qualityScore],
+          ["FAQ", article.validation.faqScore],
+          ["SEO", article.validation.seoScore],
+          ["Warnings", article.validation.warnings.length]
+        ]} />
+        {article.validation.warnings.length ? (
+          <ul className="space-y-2 text-xs text-ink-muted">
+            {article.validation.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+          </ul>
+        ) : <Empty text="No validation warnings." />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-line bg-surface-1 p-3">
+      <PanelTitle title={`${step.stage} detail`} />
+      <pre className="mono mt-2 whitespace-pre-wrap text-xs text-ink-muted">{JSON.stringify(step, null, 2)}</pre>
+    </div>
   );
 }
 
