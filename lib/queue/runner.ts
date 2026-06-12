@@ -75,6 +75,7 @@ export class QueueRunner {
   async reclaimStale(projectId = DEFAULT_PROJECT_ID) {
     const settings = await this.store.getSettings(projectId);
     const cutoff = Date.now() - settings.staleProcessingMinutes * 60_000;
+    await this.reconcileSavedArticles(projectId);
     const jobs = await this.store.listJobs(projectId);
     const stale = jobs.filter((job) => job.status === "processing" && new Date(job.updatedAt).getTime() < cutoff);
     await Promise.all(stale.map((job) => this.store.saveJob({
@@ -84,6 +85,31 @@ export class QueueRunner {
       pipeline: job.pipeline.map((step) => step.status === "running" ? { ...step, status: "idle", message: "Recovered after stale processing timeout." } : step)
     })));
     return stale.length;
+  }
+
+  async reconcileSavedArticles(projectId = DEFAULT_PROJECT_ID) {
+    const [jobs, articles] = await Promise.all([
+      this.store.listJobs(projectId),
+      this.store.listArticles(projectId)
+    ]);
+    const articlesByJob = new Map(articles.map((article) => [article.jobId, article]));
+    const mismatched = jobs.filter((job) => {
+      const article = articlesByJob.get(job.id);
+      return article && job.status !== article.status;
+    });
+    await Promise.all(mismatched.map((job) => {
+      const article = articlesByJob.get(job.id);
+      if (!article) return Promise.resolve();
+      return this.store.saveJob({
+        ...job,
+        status: article.status,
+        needsReviewReasons: article.needsReviewReasons,
+        pipeline: article.pipeline,
+        updatedAt: nowIso(),
+        fatalError: undefined
+      });
+    }));
+    return mismatched.length;
   }
 
   async processNext(projectId = DEFAULT_PROJECT_ID) {

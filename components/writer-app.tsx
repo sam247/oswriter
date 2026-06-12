@@ -79,14 +79,18 @@ function Workbench() {
     () => jobs.find((job) => job.articleId === selectedArticleId) ?? null,
     [jobs, selectedArticleId]
   );
-  const visibleJobs = jobs.filter((job) => filter === "all" || job.status === filter);
+  const displayJobs = useMemo(() => jobs.map((job) => {
+    const article = articles.find((item) => item.jobId === job.id);
+    return article ? { ...job, status: article.status } : job;
+  }), [articles, jobs]);
+  const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter);
   const stats = useMemo(() => ({
-    queued: jobs.filter((job) => job.status === "queued").length,
-    processing: jobs.filter((job) => job.status === "processing").length,
-    generated: jobs.filter((job) => job.status === "generated").length,
-    needs_review: jobs.filter((job) => job.status === "needs_review").length,
-    failed: jobs.filter((job) => job.status === "failed").length
-  }), [jobs]);
+    queued: displayJobs.filter((job) => job.status === "queued").length,
+    processing: displayJobs.filter((job) => job.status === "processing").length,
+    generated: displayJobs.filter((job) => job.status === "generated").length,
+    needs_review: displayJobs.filter((job) => job.status === "needs_review").length,
+    failed: displayJobs.filter((job) => job.status === "failed").length
+  }), [displayJobs]);
 
   async function refresh() {
     const res = await fetch("/api/state", { cache: "no-store" });

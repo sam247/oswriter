@@ -6,6 +6,7 @@ export async function POST() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
   const { runner } = createRuntime();
-  const count = await runner.reclaimStale();
-  return NextResponse.json({ count });
+  const reconciled = await runner.reconcileSavedArticles();
+  const recovered = await runner.reclaimStale();
+  return NextResponse.json({ reconciled, recovered, count: reconciled + recovered });
 }
