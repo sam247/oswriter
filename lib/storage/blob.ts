@@ -1,4 +1,4 @@
-import { list, put } from "@vercel/blob";
+import { del, list, put } from "@vercel/blob";
 import type { StorageAdapter } from "@/lib/storage/storage";
 
 export class BlobStorageAdapter implements StorageAdapter {
@@ -27,6 +27,15 @@ export class BlobStorageAdapter implements StorageAdapter {
       return res.json() as Promise<T>;
     }));
     return docs;
+  }
+
+  async listPaths(prefix: string): Promise<string[]> {
+    const page = await list({ prefix, limit: 1000 });
+    return page.blobs.map((blob) => blob.pathname);
+  }
+
+  async deletePath(path: string): Promise<void> {
+    await del(path);
   }
 
   private async find(path: string) {

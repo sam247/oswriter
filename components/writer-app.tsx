@@ -1,7 +1,7 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Loader2, Play, RotateCw, Search, Square, Upload } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, CheckCircle2, Loader2, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +66,8 @@ function Workbench() {
   const [message, setMessage] = useState("Ready");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<"research" | "pipeline" | "validation" | "seo" | "debug">("research");
+  const stopRequested = useRef(false);
+  const activeRequest = useRef<AbortController | null>(null);
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -126,11 +128,23 @@ function Workbench() {
   async function processNext() {
     setBusy(true);
     setMessage("Processing next queued title...");
-    const res = await fetch("/api/queue/process-next", { method: "POST" });
-    const data = await res.json().catch(() => ({})) as { processed?: boolean; job?: QueueJob };
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const res = await fetch("/api/queue/process-next", { method: "POST", signal: controller.signal }).catch((error) => {
+      if (controller.signal.aborted) return null;
+      throw error;
+    });
+    activeRequest.current = null;
+    if (!res) {
+      setBusy(false);
+      setMessage("Run stopped locally. Current server job may finish or recover on next refresh.");
+      await refresh();
+      return false;
+    }
+    const data = await res.json().catch(() => ({})) as { processed?: boolean; job?: QueueJob; error?: string };
     setBusy(false);
     if (!res.ok) {
-      setMessage(data && "error" in data ? String(data.error) : "Processing failed.");
+      setMessage(data.error ? String(data.error) : "Processing failed.");
       await refresh();
       return false;
     }
@@ -140,13 +154,23 @@ function Workbench() {
   }
 
   async function runSequential() {
+    stopRequested.current = false;
     setRunning(true);
     let processed = true;
-    while (processed) {
+    while (processed && !stopRequested.current) {
       processed = await processNext();
       if (!processed) break;
     }
     setRunning(false);
+  }
+
+  async function stopRun() {
+    stopRequested.current = true;
+    activeRequest.current?.abort();
+    setRunning(false);
+    setBusy(false);
+    setMessage("Stopping run...");
+    await post("/api/queue/cancel-current", "Run stopped. Current job returned to queue if still processing.");
   }
 
   async function post(path: string, success: string) {
@@ -155,6 +179,24 @@ function Workbench() {
     setBusy(false);
     setMessage(res.ok ? success : "Action failed.");
     await refresh();
+  }
+
+  async function clearQueue() {
+    if (!confirm("Clear all queued jobs, failed jobs, generated articles, research packs, and debug logs for this project?")) return;
+    stopRequested.current = true;
+    activeRequest.current?.abort();
+    setRunning(false);
+    setBusy(true);
+    const res = await fetch("/api/queue/clear", { method: "POST" });
+    setBusy(false);
+    if (res.ok) {
+      setSelectedArticleId(null);
+      setDetails({ research: null, debug: null });
+      setMessage("Queue and generated records cleared.");
+      await refresh();
+    } else {
+      setMessage("Clear queue failed.");
+    }
   }
 
   return (
@@ -184,9 +226,13 @@ function Workbench() {
               </button>
             </div>
             <div className="mt-2 grid grid-cols-3 gap-1">
-              <button onClick={runSequential} disabled={busy || running} className="h-8 rounded-md border border-line bg-surface-1 text-xs">{running ? "Running" : "Start run"}</button>
-              <button onClick={() => post("/api/queue/cancel-current", "Current job returned to queue.")} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><Square className="size-3" /> Cancel</button>
+              <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-8 rounded-md border border-line bg-surface-1 text-xs">{running ? "Stop run" : "Start run"}</button>
+              <button onClick={stopRun} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><Square className="size-3" /> Stop</button>
               <button onClick={() => post("/api/queue/retry-failed", "Failed jobs requeued.")} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><RotateCw className="size-3" /> Retry</button>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-1">
+              <button onClick={() => post("/api/queue/recover", "Stale processing jobs recovered.")} className="h-8 rounded-md border border-line bg-surface-1 text-xs">Recover</button>
+              <button onClick={clearQueue} className="flex h-8 items-center justify-center gap-1 rounded-md border border-danger/30 bg-surface-1 text-xs text-danger"><Trash2 className="size-3" /> Clear queue</button>
             </div>
           </div>
 

@@ -21,4 +21,12 @@ export class MemoryStorageAdapter implements StorageAdapter {
       .filter(([path]) => path.startsWith(prefix) && path.endsWith(".json"))
       .map(([, raw]) => JSON.parse(raw) as T);
   }
+
+  async listPaths(prefix: string): Promise<string[]> {
+    return [...this.docs.keys()].filter((path) => path.startsWith(prefix));
+  }
+
+  async deletePath(path: string): Promise<void> {
+    this.docs.delete(path);
+  }
 }

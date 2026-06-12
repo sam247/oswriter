@@ -44,3 +44,5 @@ npm run build
 ```
 
 The queue contract is deliberately simple: article-quality concerns become `needs_review`; only technical failures become `failed`.
+
+`AI_BASE_URL` should be the provider root, not the full chat endpoint. For DeepSeek use `https://api.deepseek.com`.

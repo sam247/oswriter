@@ -6,7 +6,7 @@ import { heuristicValidation } from "@/lib/validation/heuristics";
 export class OpenAIModelAdapter implements ModelAdapter {
   private readonly client = new OpenAI({
     apiKey: process.env.AI_API_KEY,
-    baseURL: process.env.AI_BASE_URL
+    baseURL: normaliseBaseUrl(process.env.AI_BASE_URL)
   });
 
   async generateArticle(input: ArticleGenerationInput): Promise<string> {
@@ -81,6 +81,15 @@ function promptToMessages(system: string, user: string) {
     { role: "system" as const, content: system },
     { role: "user" as const, content: user }
   ];
+}
+
+function normaliseBaseUrl(value: string | undefined) {
+  if (!value) return undefined;
+  return value
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/i, "")
+    .replace(/\/v1$/i, "");
 }
 
 function buildGenerationPrompt({ title, research, controls }: ArticleGenerationInput) {

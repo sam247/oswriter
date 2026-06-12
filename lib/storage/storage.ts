@@ -7,6 +7,8 @@ export interface StorageAdapter {
   putJson<T>(path: string, value: T): Promise<void>;
   putText(path: string, value: string): Promise<void>;
   listJson<T>(prefix: string): Promise<T[]>;
+  listPaths(prefix: string): Promise<string[]>;
+  deletePath(path: string): Promise<void>;
 }
 
 export class WorkspaceStore {
@@ -33,6 +35,19 @@ export class WorkspaceStore {
     const jobs = await this.listJobs(projectId);
     const articles = await this.listArticles(projectId);
     return { project, settings, jobs, articles };
+  }
+
+  async clearProjectData(projectId = DEFAULT_PROJECT_ID) {
+    const prefixes = [
+      jobsPrefix(projectId),
+      articlesPrefix(projectId),
+      `${rootForClear(projectId)}/research/`,
+      `${rootForClear(projectId)}/debug/`,
+      `${rootForClear(projectId)}/exports/`
+    ];
+    const paths = (await Promise.all(prefixes.map((prefix) => this.storage.listPaths(prefix)))).flat();
+    await Promise.all(paths.map((path) => this.storage.deletePath(path)));
+    return paths.length;
   }
 
   async listJobs(projectId = DEFAULT_PROJECT_ID) {
@@ -80,4 +95,8 @@ export class WorkspaceStore {
     const { settings } = await this.ensureProject(projectId);
     return settings;
   }
+}
+
+function rootForClear(projectId: string) {
+  return `projects/${projectId}`;
 }
