@@ -1,0 +1,52 @@
+import type { SearchAdapter, SearchResult } from "@/lib/types";
+
+interface ExaResult {
+  title?: string;
+  url: string;
+  text?: string;
+  summary?: string;
+  highlights?: string[];
+}
+
+export class ExaSearchAdapter implements SearchAdapter {
+  private readonly apiKey = process.env.EXA_API_KEY;
+
+  async search(query: string, options: { numResults: number; includeDomains?: string[]; excludeDomains?: string[] }) {
+    if (!this.apiKey) throw new Error("Exa API unavailable: EXA_API_KEY is not set.");
+
+    const res = await fetch("https://api.exa.ai/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey
+      },
+      body: JSON.stringify({
+        query,
+        numResults: options.numResults,
+        includeDomains: options.includeDomains,
+        excludeDomains: options.excludeDomains,
+        contents: {
+          text: { maxCharacters: 2500 },
+          highlights: { numSentences: 3 },
+          summary: true
+        }
+      })
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Exa search unavailable: ${res.status} ${body.slice(0, 200)}`);
+    }
+
+    const data = await res.json() as { results?: ExaResult[]; requestId?: string };
+    const results: SearchResult[] = (data.results ?? []).map((item) => ({
+      title: item.title ?? item.url,
+      url: item.url,
+      text: item.text,
+      summary: item.summary,
+      highlights: item.highlights,
+      requestId: data.requestId
+    }));
+    return { results, requestId: data.requestId };
+  }
+}

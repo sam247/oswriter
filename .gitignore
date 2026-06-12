@@ -1,0 +1,11 @@
+.env*
+.next/
+node_modules/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+
+# Visual/design reference only. Keep it out of the production app repo.
+VITE_UI_DESIGN/
