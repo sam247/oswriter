@@ -8,7 +8,7 @@ export const DEFAULT_CONTROLS: ContentControls = {
   runEditor: true,
   styleProfile: "technical",
   targetTone: "clear, practical, authoritative",
-  lengthTargetWords: 900
+  lengthTargetWords: 1400
 };
 
 export function nowIso() {

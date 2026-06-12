@@ -95,6 +95,10 @@ export class WorkspaceStore {
     const { settings } = await this.ensureProject(projectId);
     return settings;
   }
+
+  async saveSettings(settings: SettingsDocument) {
+    await this.storage.putJson(settingsPath(settings.projectId), settings);
+  }
 }
 
 function rootForClear(projectId: string) {

@@ -46,3 +46,5 @@ npm run build
 The queue contract is deliberately simple: article-quality concerns become `needs_review`; only technical failures become `failed`.
 
 `AI_BASE_URL` should be the provider root, not the full chat endpoint. For DeepSeek use `https://api.deepseek.com`.
+
+Article length is a configurable target stored in `settings.json`. It is not used as a hidden reliability lever; queue reliability comes from resumable processing and time-bounded stages.

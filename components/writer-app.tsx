@@ -71,6 +71,7 @@ function Workbench() {
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
+  const controls = state?.settings.controls;
   const selectedArticle = useMemo(
     () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : articles[0] ?? null,
     [articles, selectedArticleId]
@@ -214,6 +215,22 @@ function Workbench() {
     }
   }
 
+  async function updateLengthTarget(lengthTargetWords: number) {
+    setState((current) => current ? {
+      ...current,
+      settings: {
+        ...current.settings,
+        controls: { ...current.settings.controls, lengthTargetWords }
+      }
+    } : current);
+    const res = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lengthTargetWords })
+    });
+    if (!res.ok) void refresh();
+  }
+
   function upsertJob(job: QueueJob) {
     setState((current) => current ? {
       ...current,
@@ -273,6 +290,20 @@ function Workbench() {
             <div className="mt-2 grid grid-cols-2 gap-1">
               <button onClick={() => post("/api/queue/recover", "Stale processing jobs recovered.")} className="h-8 rounded-md border border-line bg-surface-1 text-xs">Recover</button>
               <button onClick={clearQueue} className="flex h-8 items-center justify-center gap-1 rounded-md border border-danger/30 bg-surface-1 text-xs text-danger"><Trash2 className="size-3" /> Clear queue</button>
+            </div>
+            <div className="mt-3 rounded-md border border-line bg-surface-1 p-2">
+              <label className="flex items-center justify-between text-xs text-ink-muted">
+                <span>Target words</span>
+                <input
+                  type="number"
+                  min={300}
+                  max={5000}
+                  step={100}
+                  value={controls?.lengthTargetWords ?? 1400}
+                  onChange={(event) => updateLengthTarget(Number(event.target.value))}
+                  className="mono h-7 w-24 rounded border border-line bg-background px-2 text-right text-xs text-ink outline-none focus:border-ink"
+                />
+              </label>
             </div>
           </div>
 
