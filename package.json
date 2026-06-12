@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit"
+    "test": "tsx --test tests/queue-runner.test.ts tests/storage-paths.test.ts"
   },
   "dependencies": {
     "@vercel/blob": "^1.0.2",
@@ -20,8 +20,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^2.5.5",
-    "zustand": "^5.0.2",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "zustand": "^5.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -32,6 +32,7 @@
     "eslint-config-next": "^15.0.4",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.2"
   }
 }

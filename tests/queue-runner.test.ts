@@ -75,47 +75,58 @@ class DownModel extends FakeModel {
   }
 }
 
-function setup(search: SearchAdapter = new FakeSearch(), model: ModelAdapter = new FakeModel()) {
-  const store = new WorkspaceStore(new MemoryStorageAdapter());
+class SparseModel extends FakeModel {
+  async generateArticle(input: ArticleGenerationInput) {
+    return `# ${input.title}
+
+Short answer with a draft that intentionally has thin structure.`;
+  }
+}
+
+function setup(search: SearchAdapter = new FakeSearch(), model: ModelAdapter = new FakeModel(), store = new WorkspaceStore(new MemoryStorageAdapter())) {
   const runner = new QueueRunner(store, search, model);
   return { store, runner };
+}
+
+async function drainQueue(runner: QueueRunner, maxSteps = 1000) {
+  for (let i = 0; i < maxSteps; i += 1) {
+    const result = await runner.processNext();
+    if (!result.processed) return;
+  }
+  throw new Error(`Queue did not drain within ${maxSteps} steps.`);
 }
 
 describe("QueueRunner", () => {
   it("processes 20 titles into 20 saved articles", async () => {
     const { store, runner } = setup();
     await runner.addTitles(Array.from({ length: 20 }, (_, index) => `Technical article ${index + 1}`));
-
-    for (let i = 0; i < 20; i += 1) {
-      const result = await runner.processNext();
-      assert.equal(result.processed, true);
-    }
+    await drainQueue(runner);
 
     const state = await store.getState();
     assert.equal(state.jobs.length, 20);
     assert.equal(state.articles.length, 20);
-    assert.equal(state.jobs.every((job) => job.status === "generated"), true);
+    assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
   });
 
   it("marks weak research as needs_review while still saving the article", async () => {
     const { store, runner } = setup(new FakeSearch("weak"), new FakeModel());
     await runner.addTitles(["Piling cost per metre UK"]);
-    const result = await runner.processNext();
+    await drainQueue(runner);
 
     const state = await store.getState();
-    assert.equal(result.job?.status, "needs_review");
+    assert.equal(state.jobs[0].status, "needs_review");
     assert.equal(state.articles.length, 1);
     assert.equal(state.articles[0].status, "needs_review");
     assert.match(state.articles[0].needsReviewReasons.join(" "), /source coverage|confidence|fewer/i);
   });
 
-  it("marks validation warnings as needs_review, never failed", async () => {
-    const { store, runner } = setup(new FakeSearch(), new FakeModel(["FAQ quality needs review."]));
+  it("marks advisory validation warnings as needs_review, never failed", async () => {
+    const { store, runner } = setup(new FakeSearch(), new SparseModel());
     await runner.addTitles(["Road adoption process explained"]);
-    const result = await runner.processNext();
+    await drainQueue(runner);
 
     const state = await store.getState();
-    assert.equal(result.job?.status, "needs_review");
+    assert.equal(state.jobs[0].status, "needs_review");
     assert.equal(state.articles[0].status, "needs_review");
     assert.notEqual(state.jobs[0].status, "failed");
   });
@@ -123,10 +134,10 @@ describe("QueueRunner", () => {
   it("uses failed only for technical generation/search failure", async () => {
     const { store, runner } = setup(new FakeSearch(), new DownModel());
     await runner.addTitles(["What is a CBR test?"]);
-    const result = await runner.processNext();
+    await drainQueue(runner);
 
     const state = await store.getState();
-    assert.equal(result.job?.status, "failed");
+    assert.equal(state.jobs[0].status, "failed");
     assert.equal(state.articles.length, 0);
     assert.match(state.jobs[0].fatalError ?? "", /OpenAI API unavailable/);
   });
@@ -144,5 +155,77 @@ describe("QueueRunner", () => {
     const state = await store.getState();
     assert.equal(count, 1);
     assert.equal(state.jobs[0].status, "queued");
+  });
+
+  it("recovers after browser refresh during processing", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Refresh during processing"]);
+    const firstStep = await runner.processNext();
+    assert.equal(firstStep.job?.status, "processing");
+
+    const resumed = setup(new FakeSearch(), new FakeModel(), store).runner;
+    await drainQueue(resumed);
+
+    const state = await store.getState();
+    assert.notEqual(state.jobs[0].status, "failed");
+    assert.equal(state.articles.length, 1);
+  });
+
+  it("recovers after app restart during processing", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Restart during processing"]);
+    await runner.processNext();
+    await runner.processNext();
+
+    const restarted = new QueueRunner(store, new FakeSearch(), new FakeModel());
+    await drainQueue(restarted);
+
+    const state = await store.getState();
+    assert.notEqual(state.jobs[0].status, "failed");
+    assert.equal(state.articles.length, 1);
+  });
+
+  it("recovers safely across 25 queued jobs", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(Array.from({ length: 25 }, (_, index) => `Recovery article ${index + 1}`));
+    await runner.processNext();
+    await runner.processNext();
+
+    const restarted = new QueueRunner(store, new FakeSearch(), new FakeModel());
+    await drainQueue(restarted, 200);
+
+    const state = await store.getState();
+    assert.equal(state.jobs.length, 25);
+    assert.equal(state.articles.length, 25);
+    assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
+  });
+
+  it("recovers safely across 50 queued jobs", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(Array.from({ length: 50 }, (_, index) => `Large queue article ${index + 1}`));
+    await runner.processNext();
+
+    const restarted = setup(new FakeSearch(), new FakeModel(), store).runner;
+    await drainQueue(restarted, 400);
+
+    const state = await store.getState();
+    assert.equal(state.jobs.length, 50);
+    assert.equal(state.articles.length, 50);
+    assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
+  });
+
+  it("retries successfully after timeout-style research failure", async () => {
+    const { store, runner } = setup(new FakeSearch("down"), new FakeModel());
+    const [job] = await runner.addTitles(["Retry after timeout"]);
+    await drainQueue(runner);
+    assert.equal((await store.getState()).jobs[0].status, "failed");
+
+    const healthy = setup(new FakeSearch(), new FakeModel(), store).runner;
+    await healthy.retryJob(job.id);
+    await drainQueue(healthy);
+
+    const state = await store.getState();
+    assert.notEqual(state.jobs[0].status, "failed");
+    assert.equal(state.articles.length, 1);
   });
 });

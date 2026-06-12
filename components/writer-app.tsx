@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertCircle, CheckCircle2, Loader2, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -68,8 +68,11 @@ function Workbench() {
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("research");
   const [selectedStage, setSelectedStage] = useState<string>("research");
+  const [highlightWarnings, setHighlightWarnings] = useState(false);
+  const [tick, setTick] = useState(Date.now());
   const stopRequested = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
+  const warningsRef = useRef<HTMLDivElement | null>(null);
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -94,6 +97,7 @@ function Workbench() {
     needs_review: displayJobs.filter((job) => job.status === "needs_review").length,
     failed: displayJobs.filter((job) => job.status === "failed").length
   }), [displayJobs]);
+  const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, articles, tick), [articles, displayJobs, tick]);
 
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
@@ -114,6 +118,11 @@ function Workbench() {
 
   useEffect(() => {
     void refresh();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -317,6 +326,7 @@ function Workbench() {
                 />
               </label>
             </div>
+            <QueueMetricsPanel metrics={queueMetrics} />
           </div>
 
           <div className="hairline-b flex flex-wrap gap-1 p-2">
@@ -350,7 +360,16 @@ function Workbench() {
         </aside>
 
         <section className="flex min-h-0 flex-col">
-          <ArticleHeader article={selectedArticle} job={selectedJob} onReviewClick={() => setTab("validation")} />
+          <ArticleHeader
+            article={selectedArticle}
+            job={selectedJob}
+            onReviewClick={() => {
+              setTab("validation");
+              setHighlightWarnings(true);
+              window.setTimeout(() => warningsRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
+              window.setTimeout(() => setHighlightWarnings(false), 1800);
+            }}
+          />
           <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
             {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <JobPlaceholder job={selectedJob} /> : <Empty text="No article selected." />}
           </div>
@@ -362,7 +381,17 @@ function Workbench() {
               <button key={item} onClick={() => setTab(item)} className={cn("h-7 rounded px-2 text-xs capitalize", tab === item ? "bg-surface-1 text-ink shadow-sm" : "text-ink-muted")}>{item}</button>
             ))}
           </div>
-          <Inspector tab={tab} setTab={setTab} article={selectedArticle} job={selectedJob} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} />
+          <Inspector
+            tab={tab}
+            setTab={setTab}
+            article={selectedArticle}
+            job={selectedJob}
+            details={details}
+            selectedStage={selectedStage}
+            setSelectedStage={setSelectedStage}
+            warningsRef={warningsRef}
+            highlightWarnings={highlightWarnings}
+          />
         </aside>
       </div>
 
@@ -448,7 +477,9 @@ function Inspector({
   job,
   details,
   selectedStage,
-  setSelectedStage
+  setSelectedStage,
+  warningsRef,
+  highlightWarnings
 }: {
   tab: InspectorTab;
   setTab: (tab: InspectorTab) => void;
@@ -457,13 +488,15 @@ function Inspector({
   details: Details;
   selectedStage: string;
   setSelectedStage: (stage: string) => void;
+  warningsRef: RefObject<HTMLDivElement | null>;
+  highlightWarnings: boolean;
 }) {
   if (!article && !job) return <Empty text="No article selected." />;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
-      {tab === "validation" && (article ? <ValidationPanel article={article} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
+      {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
@@ -513,8 +546,16 @@ function PipelinePanel({
   setTab: (tab: InspectorTab) => void;
 }) {
   const selected = pipeline.find((step) => step.stage === selectedStage) ?? pipeline[0];
+  const runtime = calculatePipelineRuntime(pipeline);
   return (
     <div className="space-y-4">
+      <MetricGrid items={[
+        ["Total", formatDuration(runtime.totalMs)],
+        ["Research", formatDuration(runtime.researchMs)],
+        ["Generation", formatDuration(runtime.generationMs)],
+        ["Validation", formatDuration(runtime.validationMs)],
+        ["Save", formatDuration(runtime.saveMs)]
+      ]} />
       <ol className="space-y-2">
         {pipeline.map((step) => (
           <li key={step.stage}>
@@ -613,7 +654,15 @@ function StageDetails({ step, article, details }: { step: ArticleDocument["pipel
   );
 }
 
-function ValidationPanel({ article }: { article: ArticleDocument }) {
+function ValidationPanel({
+  article,
+  warningsRef,
+  highlightWarnings
+}: {
+  article: ArticleDocument;
+  warningsRef: RefObject<HTMLDivElement | null>;
+  highlightWarnings: boolean;
+}) {
   return (
     <div className="space-y-4">
       <MetricGrid items={[
@@ -622,12 +671,20 @@ function ValidationPanel({ article }: { article: ArticleDocument }) {
         ["SEO", article.validation.seoScore],
         ["Warnings", article.validation.warnings.length]
       ]} />
-      <PanelTitle title="Warnings" />
-      {article.validation.warnings.length ? (
-        <ul className="space-y-2 text-xs text-ink-muted">
-          {article.validation.warnings.map((warning) => <li key={warning} className="rounded-md bg-surface-1 p-2">{warning}</li>)}
-        </ul>
-      ) : <Empty text="No validation warnings." />}
+      <div
+        ref={warningsRef}
+        className={cn(
+          "rounded-md transition-shadow",
+          highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
+        )}
+      >
+        <PanelTitle title="Warnings" />
+        {article.validation.warnings.length ? (
+          <ul className="mt-2 space-y-2 text-xs text-ink-muted">
+            {article.validation.warnings.map((warning) => <li key={warning} className="rounded-md bg-surface-1 p-2">{warning}</li>)}
+          </ul>
+        ) : <Empty text="No validation warnings." />}
+      </div>
     </div>
   );
 }
@@ -660,6 +717,31 @@ function MetricGrid({ items }: { items: [string, string | number][] }) {
   );
 }
 
+function QueueMetricsPanel({ metrics }: { metrics: QueueMetrics }) {
+  return (
+    <div className="mt-3 rounded-md border border-line bg-surface-1 p-2">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">Queue metrics</div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        <MetricLine label="Completed" value={`${metrics.completed}/${metrics.total}`} />
+        <MetricLine label="Remaining" value={metrics.remaining} />
+        <MetricLine label="Current" value={formatDuration(metrics.currentRuntimeMs)} />
+        <MetricLine label="Average" value={formatDuration(metrics.averageRuntimeMs)} />
+        <MetricLine label="ETA" value={formatDuration(metrics.etaMs)} />
+        <MetricLine label="Throughput" value={metrics.throughputPerHour ? `${metrics.throughputPerHour}/hr` : "-"} />
+      </div>
+    </div>
+  );
+}
+
+function MetricLine({ label, value }: { label: string; value: string | number }) {
+  return (
+    <>
+      <span className="text-ink-subtle">{label}</span>
+      <span className="mono text-right text-ink">{value}</span>
+    </>
+  );
+}
+
 function PanelTitle({ title }: { title: string }) {
   return <h3 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">{title}</h3>;
 }
@@ -686,6 +768,63 @@ function statusLabel(status: JobStatus) {
     needs_review: "Needs review",
     failed: "Failed"
   }[status];
+}
+
+interface QueueMetrics {
+  total: number;
+  completed: number;
+  remaining: number;
+  currentRuntimeMs: number | null;
+  averageRuntimeMs: number | null;
+  etaMs: number | null;
+  throughputPerHour: number | null;
+}
+
+function calculateQueueMetrics(jobs: QueueJob[], articles: ArticleDocument[], now: number): QueueMetrics {
+  const total = jobs.length;
+  const completed = jobs.filter((job) => job.status === "generated" || job.status === "needs_review" || job.status === "failed").length;
+  const remaining = jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
+  const completedRuntimes = articles
+    .map((article) => calculatePipelineRuntime(article.pipeline).totalMs)
+    .filter((runtime) => runtime > 0);
+  const averageRuntimeMs = completedRuntimes.length
+    ? Math.round(completedRuntimes.reduce((sum, runtime) => sum + runtime, 0) / completedRuntimes.length)
+    : null;
+  const processing = jobs.find((job) => job.status === "processing");
+  const currentRuntimeMs = processing ? currentJobRuntime(processing, now) : null;
+  const etaMs = averageRuntimeMs ? Math.max(0, averageRuntimeMs * remaining - (currentRuntimeMs ?? 0)) : null;
+  const throughputPerHour = averageRuntimeMs ? Math.round(3_600_000 / averageRuntimeMs) : null;
+  return { total, completed, remaining, currentRuntimeMs, averageRuntimeMs, etaMs, throughputPerHour };
+}
+
+function calculatePipelineRuntime(pipeline: ArticleDocument["pipeline"]) {
+  const stageMs = (stage: string) => pipeline.find((step) => step.stage === stage)?.durationMs ?? 0;
+  const totalMs = pipeline.reduce((sum, step) => sum + (step.durationMs ?? 0), 0);
+  return {
+    totalMs,
+    researchMs: stageMs("research"),
+    generationMs: stageMs("generation"),
+    validationMs: stageMs("validation"),
+    saveMs: stageMs("save")
+  };
+}
+
+function currentJobRuntime(job: QueueJob, now: number) {
+  const startedAt = job.pipeline
+    .map((step) => step.startedAt)
+    .filter(Boolean)
+    .sort()[0];
+  const start = startedAt ?? job.updatedAt ?? job.createdAt;
+  return Math.max(0, now - new Date(start).getTime());
+}
+
+function formatDuration(ms: number | null) {
+  if (!ms || ms <= 0) return "-";
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 20_000) {
