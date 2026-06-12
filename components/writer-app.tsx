@@ -208,7 +208,6 @@ function Workbench() {
       <header className="hairline-b flex h-10 items-center gap-3 bg-surface-1 px-3">
         <div className="font-semibold tracking-tight">OS Writer V2</div>
         <span className="mono text-xs text-ink-subtle">No clever blocking logic</span>
-        <div className="ml-auto mono text-xs text-ink-muted">{message}</div>
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(420px,1fr)_360px]">
@@ -255,7 +254,7 @@ function Workbench() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{job.title}</span>
                   <span className="mono mt-1 block text-[11px] text-ink-subtle">
-                    {job.status.replace("_", " ")} · attempt {job.attempts}
+                    {statusGuidance(job.status)} · attempt {job.attempts}
                   </span>
                 </span>
               </button>
@@ -457,5 +456,15 @@ function statusColor(status: JobStatus) {
     generated: "bg-success",
     needs_review: "bg-warn",
     failed: "bg-danger"
+  }[status];
+}
+
+function statusGuidance(status: JobStatus) {
+  return {
+    queued: "queued - waiting to be generated",
+    processing: "generating - writing",
+    generated: "processed - done",
+    needs_review: "processed - needs review",
+    failed: "failed - technical failure"
   }[status];
 }

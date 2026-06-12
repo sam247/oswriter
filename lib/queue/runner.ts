@@ -164,59 +164,29 @@ export class QueueRunner {
       await this.store.saveJob(job);
       log({ stage: "generation", level: "info", message: "Article generation completed.", data: { words: countWords(markdown) } });
 
-      job = { ...job, pipeline: startStage(job.pipeline, "save", "Saving draft before optional checks."), updatedAt: nowIso() };
+      job = { ...job, pipeline: startStage(job.pipeline, "save", "Saving generated article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const draftArticle = createArticle(job, markdown, research.warnings, heuristicValidation({ title: job.title, markdown, research }), research);
-      await this.store.saveArticle(draftArticle);
-      job = { ...job, pipeline: completeStage(job.pipeline, "save", { markdownSaved: true }), updatedAt: nowIso() };
-      await this.store.saveJob(job);
-      log({ stage: "save", level: "info", message: "Draft article saved before editor and validation." });
-
       const needsReview = [...research.warnings];
-      if (settings.controls.runEditor) {
-        job = { ...job, pipeline: startStage(job.pipeline, "editor", "Running optional AI editor pass."), updatedAt: nowIso() };
-        await this.store.saveJob(job);
-        try {
-          markdown = await this.model.editArticle({ title: job.title, markdown, research });
-          job = { ...job, pipeline: completeStage(job.pipeline, "editor", { enabled: true }), updatedAt: nowIso() };
-          log({ stage: "editor", level: "info", message: "Optional editor pass completed." });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          needsReview.push(`Optional AI editor pass failed: ${message}`);
-          job = { ...job, pipeline: failStage(job.pipeline, "editor", message), updatedAt: nowIso() };
-          log({ stage: "editor", level: "warn", message: "Optional editor pass failed; keeping saved draft.", data: message });
-        }
-      } else {
-        job = { ...job, pipeline: skipStage(job.pipeline, "editor", "AI editor disabled."), updatedAt: nowIso() };
-      }
-      await this.store.saveJob(job);
-
-      job = { ...job, pipeline: startStage(job.pipeline, "validation", "Running advisory validation."), updatedAt: nowIso() };
-      await this.store.saveJob(job);
-      let validation = heuristicValidation({ title: job.title, markdown, research });
-      try {
-        validation = await this.model.validateArticle({ title: job.title, markdown, research });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        needsReview.push(`Advisory validation model failed: ${message}`);
-        log({ stage: "validation", level: "warn", message: "Validation model failed; heuristic validation used.", data: message });
-      }
+      const validation = heuristicValidation({ title: job.title, markdown, research });
       needsReview.push(...validation.needsReviewReasons);
       const uniqueReasons = [...new Set(needsReview)];
       const finalStatus = statusFromReviewReasons(uniqueReasons);
+      let pipeline = completeStage(job.pipeline, "save", { markdownSaved: true });
+      pipeline = skipStage(pipeline, "editor", settings.controls.runEditor ? "Deferred to keep queue processing under Vercel timeout." : "AI editor disabled.");
+      pipeline = startStage(pipeline, "validation", "Running fast advisory validation.");
+      pipeline = completeStage(pipeline, "validation", { warnings: validation.warnings.length, qualityScore: validation.qualityScore, mode: "heuristic" });
       job = {
         ...job,
         status: finalStatus,
         needsReviewReasons: uniqueReasons,
-        pipeline: completeStage(job.pipeline, "validation", { warnings: validation.warnings.length, qualityScore: validation.qualityScore }),
+        pipeline,
         updatedAt: nowIso()
       };
-      await this.store.saveJob(job);
 
       const article = createArticle(job, markdown, uniqueReasons, validation, research);
       await this.store.saveArticle(article);
-      await this.store.saveDebug(debug, job.projectId);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
+      await this.store.saveJob(job);
       await this.store.saveDebug(debug, job.projectId);
       return job;
     } catch (error) {
