@@ -6,7 +6,9 @@ import { heuristicValidation } from "@/lib/validation/heuristics";
 export class OpenAIModelAdapter implements ModelAdapter {
   private readonly client = new OpenAI({
     apiKey: process.env.AI_API_KEY,
-    baseURL: normaliseBaseUrl(process.env.AI_BASE_URL)
+    baseURL: normaliseBaseUrl(process.env.AI_BASE_URL),
+    timeout: 50_000,
+    maxRetries: 1
   });
 
   async generateArticle(input: ArticleGenerationInput): Promise<string> {
@@ -18,7 +20,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
         buildGenerationPrompt(input)
       ),
       temperature: 0.4,
-      max_tokens: 5000
+      max_tokens: 3200
     });
     const text = response.choices[0]?.message.content?.trim();
     if (!text) throw new Error("OpenAI generation unavailable: empty response.");
@@ -34,7 +36,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
         buildEditorPrompt(input)
       ),
       temperature: 0.25,
-      max_tokens: 5000
+      max_tokens: 3200
     });
     const text = response.choices[0]?.message.content?.trim();
     if (!text) throw new Error("OpenAI editor unavailable: empty response.");

@@ -93,8 +93,8 @@ function Workbench() {
   }), [displayJobs]);
 
   async function refresh() {
-    const res = await fetch("/api/state", { cache: "no-store" });
-    if (res.ok) {
+    const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
+    if (res?.ok) {
       const next = await res.json() as AppState;
       setState(next);
       const selectedExists = selectedArticleId && (
@@ -105,8 +105,6 @@ function Workbench() {
         const active = next.jobs.find((job) => job.status === "processing");
         setSelectedArticleId(active?.articleId ?? next.articles[0]?.id ?? next.jobs[0]?.articleId ?? null);
       }
-    } else {
-      setMessage("Unable to load state.");
     }
   }
 
@@ -139,6 +137,8 @@ function Workbench() {
   async function processNext() {
     setBusy(true);
     setMessage("Processing next queued title...");
+    const optimisticJob = markNextJobGenerating();
+    if (optimisticJob) setSelectedArticleId(optimisticJob.articleId);
     const controller = new AbortController();
     activeRequest.current = controller;
     const res = await fetch("/api/queue/process-next", { method: "POST", signal: controller.signal }).catch((error) => {
@@ -149,19 +149,22 @@ function Workbench() {
     if (!res) {
       setBusy(false);
       setMessage("Run stopped locally. Current server job may finish or recover on next refresh.");
-      await refresh();
+      void refresh();
       return false;
     }
     const data = await res.json().catch(() => ({})) as { processed?: boolean; job?: QueueJob; error?: string };
     setBusy(false);
     if (!res.ok) {
       setMessage(data.error ? String(data.error) : "Processing failed.");
-      await refresh();
-      return false;
+      void refresh();
+      return res.status === 504;
     }
-    if (data.job) setSelectedArticleId(data.job.articleId);
+    if (data.job) {
+      upsertJob(data.job);
+      setSelectedArticleId(data.job.articleId);
+    }
     setMessage(data.processed ? `Processed: ${data.job?.title}` : "No queued jobs.");
-    await refresh();
+    void refresh();
     return Boolean(data.processed);
   }
 
@@ -209,6 +212,32 @@ function Workbench() {
     } else {
       setMessage("Clear queue failed.");
     }
+  }
+
+  function upsertJob(job: QueueJob) {
+    setState((current) => current ? {
+      ...current,
+      jobs: current.jobs.map((item) => item.id === job.id ? job : item)
+    } : current);
+  }
+
+  function markNextJobGenerating() {
+    const next = jobs.find((job) => job.status === "processing") ?? jobs.find((job) => job.status === "queued");
+    if (!next) return null;
+    const picked: QueueJob = {
+      ...next,
+      status: "processing",
+      attempts: next.status === "queued" ? next.attempts + 1 : next.attempts,
+      updatedAt: new Date().toISOString()
+    };
+    setState((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        jobs: current.jobs.map((job) => job.id === picked.id ? picked : job)
+      };
+    });
+    return picked;
   }
 
   return (
@@ -273,7 +302,7 @@ function Workbench() {
         <section className="flex min-h-0 flex-col">
           <ArticleHeader article={selectedArticle} job={selectedJob} />
           <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
-            {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <FailedJob job={selectedJob} /> : <Empty text="No article selected." />}
+            {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <JobPlaceholder job={selectedJob} /> : <Empty text="No article selected." />}
           </div>
         </section>
 
@@ -324,7 +353,21 @@ function ArticleHeader({ article, job }: { article: ArticleDocument | null; job:
   );
 }
 
-function FailedJob({ job }: { job: QueueJob }) {
+function JobPlaceholder({ job }: { job: QueueJob }) {
+  if (job.status !== "failed") {
+    return (
+      <div className="mx-auto max-w-3xl rounded-md border border-line bg-surface-1 p-4">
+        <h2 className="font-semibold text-ink">{statusLabel(job.status)}</h2>
+        <p className="mt-2 text-sm text-ink-muted">
+          {job.status === "processing"
+            ? "This title is currently moving through research and writing."
+            : "This title is waiting for its turn in the queue."}
+        </p>
+        <div className="mono mt-3 text-xs text-ink-subtle">Attempt {job.attempts}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl rounded-md border border-danger/30 bg-surface-1 p-4">
       <h2 className="font-semibold text-danger">Technical failure</h2>
@@ -348,9 +391,9 @@ function Inspector({ tab, article, job, details }: { tab: string; article: Artic
   if (!article && !job) return <Empty text="No article selected." />;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
-      {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text="No research pack saved before failure." />)}
+      {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} />}
-      {tab === "validation" && (article ? <ValidationPanel article={article} /> : <Empty text={job?.fatalError ?? "No validation record saved before failure."} />)}
+      {tab === "validation" && (article ? <ValidationPanel article={article} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
@@ -475,4 +518,17 @@ function statusLabel(status: JobStatus) {
     needs_review: "Needs review",
     failed: "Failed"
   }[status];
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 20_000) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: init.signal ?? controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) return null;
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
