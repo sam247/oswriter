@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Bold, CheckCircle2, ChevronDown, Code2, Columns2, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Bold, CheckCircle2, ChevronDown, ChevronRight, Code2, Columns2, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -78,7 +78,7 @@ function Workbench() {
   const articles = state?.articles ?? [];
   const controls = state?.settings.controls;
   const selectedArticle = useMemo(
-    () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : articles[0] ?? null,
+    () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : null,
     [articles, selectedArticleId]
   );
   const selectedJob = useMemo(
@@ -115,8 +115,7 @@ function Workbench() {
       );
       if (!selectedExists) {
         const active = next.jobs.find((job) => job.status === "processing");
-        const nonFailedJob = next.jobs.find((job) => job.status !== "failed");
-        setSelectedArticleId(active?.articleId ?? next.articles[0]?.id ?? nonFailedJob?.articleId ?? next.jobs[0]?.articleId ?? null);
+        setSelectedArticleId(active?.articleId ?? null);
       }
     }
   }
@@ -294,11 +293,11 @@ function Workbench() {
             <PanelRight className="size-3.5" />
           </button>
           <span className="font-semibold tracking-tight text-ink">OS Writer V2</span>
-          <span className="text-ink-subtle">/</span>
+          <ChevronRight className="size-3 text-ink-subtle" />
           <span className="truncate text-ink-muted">{state?.project.name ?? "Loading project"}</span>
           {selectedArticle || selectedJob ? (
             <>
-              <span className="text-ink-subtle">/</span>
+              <ChevronRight className="size-3 text-ink-subtle" />
               <span className="truncate text-ink">{selectedArticle?.title ?? selectedJob?.title}</span>
             </>
           ) : null}
@@ -317,14 +316,14 @@ function Workbench() {
         <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
           <div className="hairline-b px-3 pb-3 pt-3">
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
+              <button onClick={() => setSelectedArticleId(null)} className="min-w-0 text-left">
                 <div className="truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</div>
                 <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-ink-subtle">
                   <span>{projectSummary?.articleCount ?? jobs.length} articles</span>
                   <span>{projectSummary?.totalWords ? formatNumber(projectSummary.totalWords) : 0} words</span>
                   <span>{queueMetrics.successRate}% success</span>
                 </div>
-              </div>
+              </button>
               <ProjectExportMenu summary={projectSummary} />
             </div>
             <div className="mono mt-3 grid grid-cols-4 gap-2 text-[10.5px]">
@@ -347,6 +346,30 @@ function Workbench() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
+            <div className="flex items-center justify-between px-3 pb-1 pt-2">
+              <PanelTitle title="Articles" />
+              <span className="mono text-[10.5px] text-ink-subtle">{visibleJobs.length} shown</span>
+            </div>
+            <button
+              onClick={() => setSelectedArticleId(null)}
+              className={cn(
+                "group relative flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors",
+                !selectedArticleId ? "bg-ink/[0.06]" : "hover:bg-surface-3"
+              )}
+            >
+              {!selectedArticleId && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
+              <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-ink" />
+              <span className="min-w-0 flex-1">
+                <span className={cn("block truncate text-[13px] leading-snug text-ink", !selectedArticleId ? "font-semibold" : "font-medium")}>Project overview</span>
+                <span className="mono mt-1 flex flex-wrap gap-x-1.5 gap-y-0.5 text-[10.5px] text-ink-subtle">
+                  <span>{formatNumber(projectSummary?.articleCount ?? jobs.length)} articles</span>
+                  <span className="text-line-strong">·</span>
+                  <span>{metricsLabel(queueMetrics)}</span>
+                  <span className="text-line-strong">·</span>
+                  <span>Q{projectSummary?.averageConfidence ?? 0}</span>
+                </span>
+              </span>
+            </button>
             {visibleJobs.length ? visibleJobs.map((job) => {
               const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
               return (
@@ -401,39 +424,68 @@ function Workbench() {
         </aside>
 
         <section className="flex min-h-0 flex-col bg-background">
-          <ArticleHeader
-            article={selectedArticle}
-            job={selectedJob}
-            onReviewClick={() => {
-              setTab("validation");
-              setHighlightWarnings(true);
-              window.setTimeout(() => warningsRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
-              window.setTimeout(() => setHighlightWarnings(false), 1800);
-            }}
-          />
-          <ArticleToolbar article={selectedArticle} />
-          <div className="min-h-0 flex-1 overflow-auto">
-            {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <JobPlaceholder job={selectedJob} /> : <Empty text="No article selected." />}
-          </div>
+          {selectedArticle || selectedJob ? (
+            <>
+              <ArticleHeader
+                article={selectedArticle}
+                job={selectedJob}
+                onReviewClick={() => {
+                  setTab("validation");
+                  setHighlightWarnings(true);
+                  window.setTimeout(() => warningsRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
+                  window.setTimeout(() => setHighlightWarnings(false), 1800);
+                }}
+              />
+              <ArticleToolbar
+                article={selectedArticle}
+                busy={busy}
+                running={running}
+                onGenerate={processNext}
+                onRunQueue={runSequential}
+                onStopRun={stopRun}
+                onRetryFailed={() => post("/api/queue/retry-failed", "Failed jobs requeued.")}
+              />
+              <div className="min-h-0 flex-1 overflow-auto">
+                {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <JobPlaceholder job={selectedJob} /> : null}
+              </div>
+              {selectedArticle && <ArticleMetricsRail article={selectedArticle} />}
+            </>
+          ) : (
+            <ProjectDashboard
+              state={state}
+              articles={articles}
+              jobs={displayJobs}
+              metrics={queueMetrics}
+              history={runHistory}
+              summary={projectSummary}
+              onSelectArticle={setSelectedArticleId}
+            />
+          )}
         </section>
 
         <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
-          <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
-            {(["research", "pipeline", "validation", "seo", "sources", "debug"] as const).map((item) => (
-              <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
-            ))}
-          </div>
-          <Inspector
-            tab={tab}
-            setTab={setTab}
-            article={selectedArticle}
-            job={selectedJob}
-            details={details}
-            selectedStage={selectedStage}
-            setSelectedStage={setSelectedStage}
-            warningsRef={warningsRef}
-            highlightWarnings={highlightWarnings}
-          />
+          {selectedArticle || selectedJob ? (
+            <>
+              <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
+                {(["research", "pipeline", "validation", "seo", "sources", "debug"] as const).map((item) => (
+                  <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
+                ))}
+              </div>
+              <Inspector
+                tab={tab}
+                setTab={setTab}
+                article={selectedArticle}
+                job={selectedJob}
+                details={details}
+                selectedStage={selectedStage}
+                setSelectedStage={setSelectedStage}
+                warningsRef={warningsRef}
+                highlightWarnings={highlightWarnings}
+              />
+            </>
+          ) : (
+            <ProjectInsights state={state} articles={articles} jobs={displayJobs} metrics={queueMetrics} history={runHistory} />
+          )}
         </aside>
       </div>
 
@@ -447,6 +499,475 @@ function Workbench() {
         <span className="ml-auto">{selectedArticle ? `${formatNumber(selectedArticle.wordCount)} words · Q${selectedArticle.qualityScore} · ${selectedArticle.sources.length} sources` : "No article"}</span>
       </footer>
     </main>
+  );
+}
+
+function ProjectDashboard({
+  state,
+  articles,
+  jobs,
+  metrics,
+  history,
+  summary,
+  onSelectArticle
+}: {
+  state: AppState | null;
+  articles: ArticleDocument[];
+  jobs: QueueJob[];
+  metrics: QueueMetrics;
+  history: RunSummary[];
+  summary: ProjectSummary | null;
+  onSelectArticle: (id: string) => void;
+}) {
+  const attentionJobs = jobs.filter((job) => job.status === "needs_review" || job.status === "failed" || job.status === "processing").slice(0, 8);
+  const contentInventory = [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
+  const latestRun = history[0] ?? null;
+  const generatedWords = articles.reduce((sum, article) => sum + article.wordCount, 0);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Project dashboard</div>
+        <div className="mt-1 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
+            <div className="mono mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-muted">
+              <span>{formatNumber(summary?.articleCount ?? jobs.length)} articles</span>
+              <span>{formatNumber(generatedWords)} words</span>
+              <span>{formatNumber(summary?.totalSources ?? 0)} sources</span>
+              <span>{metrics.successRate}% success</span>
+            </div>
+          </div>
+          <ProjectExportMenu summary={summary} />
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <section className="min-w-0 space-y-5">
+            <div className="grid grid-cols-4 gap-3">
+              <DashboardStat label="Generated" value={metrics.generated} detail={`${formatNumber(generatedWords)} words`} />
+              <DashboardStat label="Needs review" value={metrics.needsReview} detail="Editorial attention" warn={metrics.needsReview > 0} />
+              <DashboardStat label="Failed" value={metrics.failed} detail="Retry or inspect" danger={metrics.failed > 0} />
+              <DashboardStat label="Remaining" value={metrics.remaining} detail={metrics.currentTitle ? "Run active" : "Queue depth"} />
+            </div>
+
+            <ProjectSection title="Needs attention">
+              {attentionJobs.length ? (
+                <InventoryTable jobs={attentionJobs} articles={articles} onSelectArticle={onSelectArticle} compact />
+              ) : (
+                <Empty text="No articles currently need attention." />
+              )}
+            </ProjectSection>
+
+            <ProjectSection title="Content inventory">
+              {contentInventory.length ? (
+                <InventoryTable jobs={contentInventory} articles={articles} onSelectArticle={onSelectArticle} />
+              ) : (
+                <Empty text="Queued and generated articles will appear here." />
+              )}
+            </ProjectSection>
+          </section>
+
+          <section className="space-y-5">
+            <ProjectSection title="Project profile">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                <MetricLine label="Style" value={state?.settings.controls.styleProfile ?? "-"} />
+                <MetricLine label="Tone" value={state?.settings.controls.targetTone || "-"} />
+                <MetricLine label="Target words" value={state?.settings.controls.lengthTargetWords ?? "-"} />
+                <MetricLine label="Editor" value={state?.settings.controls.runEditor ? "On" : "Off"} />
+              </div>
+            </ProjectSection>
+
+            <ProjectSection title="Current run">
+              <div className="space-y-3">
+                <div>
+                  <div className="mono text-2xl font-semibold text-ink">{metrics.completed}/{metrics.total}</div>
+                  <div className="mt-1 text-xs text-ink-muted">complete across the active project</div>
+                </div>
+                <ProgressBar value={metrics.total ? metrics.completed / metrics.total : 0} />
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                  <MetricLine label="Processing" value={metrics.processingCount} />
+                  <MetricLine label="ETA" value={formatDuration(metrics.etaMs)} />
+                  <MetricLine label="Average" value={formatDuration(metrics.averageRuntimeMs)} />
+                  <MetricLine label="Throughput" value={metrics.throughputPerHour ? `${metrics.throughputPerHour}/hr` : "-"} />
+                </div>
+                {metrics.currentTitle && <div className="truncate text-xs text-ink-muted">{metrics.currentTitle}</div>}
+              </div>
+            </ProjectSection>
+
+            <ProjectSection title="Latest run">
+              {latestRun ? (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                  <MetricLine label="Articles" value={latestRun.total} />
+                  <MetricLine label="Generated" value={latestRun.generated} />
+                  <MetricLine label="Review" value={latestRun.needsReview} />
+                  <MetricLine label="Failed" value={latestRun.failed} />
+                  <MetricLine label="Started" value={formatDate(latestRun.startedAt)} />
+                  <MetricLine label="Average" value={formatDuration(latestRun.averageRuntimeMs)} />
+                </div>
+              ) : (
+                <Empty text="Run history appears after jobs are queued." />
+              )}
+            </ProjectSection>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectInsights({
+  state,
+  articles,
+  jobs,
+  metrics,
+  history
+}: {
+  state: AppState | null;
+  articles: ArticleDocument[];
+  jobs: QueueJob[];
+  metrics: QueueMetrics;
+  history: RunSummary[];
+}) {
+  const sourceCount = articles.reduce((sum, article) => sum + article.sources.length, 0);
+  const warnings = articles.reduce((sum, article) => sum + article.validation.warnings.length, 0);
+  const reviewReasons = articles.reduce((sum, article) => sum + article.needsReviewReasons.length, 0);
+  const authority = averageNumber(articles.flatMap((article) => article.sources.map((source) => source.authorityScore)));
+  const quality = averageNumber(articles.map((article) => article.qualityScore));
+  const failed = jobs.filter((job) => job.status === "failed").slice(0, 5);
+  const topDomains = buildTopDomains(articles);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="hairline-b px-3 py-3">
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Project insights</div>
+        <div className="mt-1 truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</div>
+      </div>
+      <div className="min-h-0 flex-1 space-y-5 overflow-auto p-3 text-sm">
+        <ProjectSection title="Operational health">
+          <div className="space-y-3">
+            <StatusDistribution jobs={jobs} />
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+              <MetricLine label="Success rate" value={`${metrics.successRate}%`} />
+              <MetricLine label="Generated" value={metrics.generated} />
+              <MetricLine label="Review" value={metrics.needsReview} />
+              <MetricLine label="Failed" value={metrics.failed} />
+              <MetricLine label="Queued" value={jobs.filter((job) => job.status === "queued").length} />
+              <MetricLine label="Processing" value={metrics.processingCount} />
+            </div>
+          </div>
+        </ProjectSection>
+
+        <ProjectSection title="Content quality">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+              <MetricLine label="Average Q" value={quality || "-"} />
+              <MetricLine label="Warnings" value={warnings} />
+              <MetricLine label="Review reasons" value={reviewReasons} />
+              <MetricLine label="Validated" value={articles.filter((article) => article.validation.pass).length} />
+            </div>
+            <AttentionList articles={articles} jobs={jobs} />
+          </div>
+        </ProjectSection>
+
+        <ProjectSection title="Research coverage">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <MetricLine label="Sources" value={sourceCount} />
+            <MetricLine label="Authority" value={authority || "-"} />
+            <MetricLine label="With sources" value={articles.filter((article) => article.sources.length > 0).length} />
+            <MetricLine label="Avg/article" value={articles.length ? Math.round(sourceCount / articles.length) : "-"} />
+          </div>
+        </ProjectSection>
+
+        <ProjectSection title="Source domains">
+          {topDomains.length ? <SourceDomainList domains={topDomains} /> : <Empty text="Accepted research domains will appear here." />}
+        </ProjectSection>
+
+        <ProjectSection title="Export readiness">
+          <ProjectExportReadiness articles={articles} jobs={jobs} metrics={metrics} />
+        </ProjectSection>
+
+        <ProjectSection title="Pipeline timings">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <MetricLine label="Average" value={formatDuration(metrics.averageRuntimeMs)} />
+            <MetricLine label="Research" value={formatDuration(metrics.averageResearchMs)} />
+            <MetricLine label="Generation" value={formatDuration(metrics.averageGenerationMs)} />
+            <MetricLine label="Save" value={formatDuration(metrics.averageSaveMs)} />
+          </div>
+        </ProjectSection>
+
+        <ProjectSection title="Generation controls">
+          <div className="space-y-3">
+            <ControlFlag label="TLDR" enabled={Boolean(state?.settings.controls.includeTldr)} />
+            <ControlFlag label="FAQ" enabled={Boolean(state?.settings.controls.includeFaq)} />
+            <ControlFlag label="Editor pass" enabled={Boolean(state?.settings.controls.runEditor)} />
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+              <MetricLine label="Style" value={state?.settings.controls.styleProfile ?? "-"} />
+              <MetricLine label="Tone" value={state?.settings.controls.targetTone || "-"} />
+              <MetricLine label="Target words" value={state?.settings.controls.lengthTargetWords ?? "-"} />
+              <MetricLine label="Stale recovery" value={state?.settings.staleProcessingMinutes ? `${state.settings.staleProcessingMinutes}m` : "-"} />
+            </div>
+          </div>
+        </ProjectSection>
+
+        <ProjectSection title="Failure queue">
+          {failed.length ? (
+            <div className="divide-y divide-line/70">
+              {failed.map((job) => (
+                <ProjectRow
+                  key={job.id}
+                  title={job.title}
+                  status="Failed"
+                  meta={[`Attempt ${job.attempts}`, job.fatalError ? "Fatal error recorded" : "No fatal error"]}
+                />
+              ))}
+            </div>
+          ) : (
+            <Empty text="No failed jobs." />
+          )}
+        </ProjectSection>
+
+        <ProjectSection title="Run history">
+          {history.length ? (
+            <div className="space-y-2">
+              {history.slice(0, 4).map((run, index) => (
+                <div key={run.id} className="grid grid-cols-[1fr_auto] gap-2 text-xs">
+                  <span className="text-ink">Run #{index + 1}</span>
+                  <span className="mono text-ink-subtle">{run.generated}/{run.total} generated</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty text="No run history yet." />
+          )}
+        </ProjectSection>
+      </div>
+    </div>
+  );
+}
+
+function DashboardStat({ label, value, detail, warn = false, danger = false }: { label: string; value: string | number; detail: string; warn?: boolean; danger?: boolean }) {
+  return (
+    <div className="rounded-md border border-line bg-surface-1 p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">{label}</div>
+      <div className={cn("mono mt-2 text-2xl font-semibold text-ink", warn && "text-warn", danger && "text-danger")}>{value}</div>
+      <div className="mt-1 truncate text-xs text-ink-muted">{detail}</div>
+    </div>
+  );
+}
+
+function InventoryTable({
+  jobs,
+  articles,
+  onSelectArticle,
+  compact = false
+}: {
+  jobs: QueueJob[];
+  articles: ArticleDocument[];
+  onSelectArticle: (id: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className="overflow-hidden">
+      <div className="grid grid-cols-[minmax(0,1fr)_86px_64px_56px_56px_64px] gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+        <span>Title</span>
+        <span>Status</span>
+        <span className="text-right">Words</span>
+        <span className="text-right">Src</span>
+        <span className="text-right">Q</span>
+        <span className="text-right">Updated</span>
+      </div>
+      <div className="divide-y divide-line/70">
+        {jobs.map((job) => {
+          const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId);
+          return (
+            <button
+              key={job.id}
+              onClick={() => onSelectArticle(article?.id ?? job.articleId)}
+              className="grid w-full grid-cols-[minmax(0,1fr)_86px_64px_56px_56px_64px] gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2"
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-medium text-ink">{article?.title ?? job.title}</span>
+                {!compact && <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">{attentionSummary(article, job) ?? `Attempt ${job.attempts}`}</span>}
+              </span>
+              <span className={cn("mono text-[10.5px]", statusTextTone(job.status))}>{displayStatusLabel(job, article)}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article ? formatNumber(article.wordCount) : "-"}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article?.sources.length ?? "-"}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article ? article.qualityScore : "-"}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article?.updatedAt ?? job.updatedAt)}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StatusDistribution({ jobs }: { jobs: QueueJob[] }) {
+  const total = Math.max(1, jobs.length);
+  const segments: { label: string; value: number; className: string }[] = [
+    { label: "Generated", value: jobs.filter((job) => job.status === "generated").length, className: "bg-success" },
+    { label: "Review", value: jobs.filter((job) => job.status === "needs_review").length, className: "bg-warn" },
+    { label: "Failed", value: jobs.filter((job) => job.status === "failed").length, className: "bg-danger" },
+    { label: "Writing", value: jobs.filter((job) => job.status === "processing").length, className: "bg-info" },
+    { label: "Queued", value: jobs.filter((job) => job.status === "queued").length, className: "bg-ink-subtle" }
+  ];
+  return (
+    <div className="space-y-2">
+      <div className="flex h-1.5 overflow-hidden rounded-full bg-surface-3">
+        {segments.map((segment) => (
+          <div key={segment.label} className={segment.className} style={{ width: `${(segment.value / total) * 100}%` }} />
+        ))}
+      </div>
+      <div className="mono flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-ink-subtle">
+        {segments.map((segment) => (
+          <span key={segment.label}>{segment.label} <span className="text-ink-muted">{segment.value}</span></span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AttentionList({ articles, jobs }: { articles: ArticleDocument[]; jobs: QueueJob[] }) {
+  const items = [
+    ...articles
+      .filter((article) => article.needsReviewReasons.length || article.validation.warnings.length)
+      .map((article) => ({
+        id: article.id,
+        title: article.title,
+        reason: article.needsReviewReasons[0] ?? article.validation.warnings[0],
+        tone: "warn" as const
+      })),
+    ...jobs
+      .filter((job) => job.status === "failed")
+      .map((job) => ({
+        id: job.id,
+        title: job.title,
+        reason: job.fatalError ?? job.needsReviewReasons[0] ?? "Failed before article save",
+        tone: "danger" as const
+      }))
+  ].slice(0, 5);
+
+  if (!items.length) return <div className="text-xs text-ink-subtle">No active review reasons.</div>;
+  return (
+    <div className="divide-y divide-line/70">
+      {items.map((item) => (
+        <div key={item.id} className="py-2 first:pt-0 last:pb-0">
+          <div className="truncate text-[12px] font-medium text-ink">{item.title}</div>
+          <div className={cn("mt-0.5 line-clamp-2 text-[11px] leading-snug", item.tone === "danger" ? "text-danger" : "text-warn")}>{item.reason}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SourceDomainList({ domains }: { domains: SourceDomainSummary[] }) {
+  return (
+    <div className="divide-y divide-line/70">
+      {domains.slice(0, 6).map((domain) => (
+        <div key={domain.domain} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 py-2 first:pt-0 last:pb-0">
+          <div className="min-w-0">
+            <div className="truncate text-[12px] font-medium text-ink">{domain.domain}</div>
+            <div className="mono mt-0.5 text-[10.5px] text-ink-subtle">{domain.accepted} accepted · {domain.articleCount} articles</div>
+          </div>
+          <div className="text-right">
+            <div className="mono text-[12px] font-semibold text-ink">{domain.count}</div>
+            <div className="mono mt-0.5 text-[10.5px] text-ink-subtle">Auth {domain.authority || "-"}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProjectExportReadiness({ articles, jobs, metrics }: { articles: ArticleDocument[]; jobs: QueueJob[]; metrics: QueueMetrics }) {
+  const generated = articles.filter((article) => article.status === "generated").length;
+  const needsReview = articles.filter((article) => article.status === "needs_review" || article.needsReviewReasons.length || article.validation.warnings.length).length;
+  const failed = jobs.filter((job) => job.status === "failed").length;
+  const exportable = articles.length > 0;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+        <MetricLine label="Package" value={exportable ? "Ready" : "Waiting"} />
+        <MetricLine label="Articles" value={articles.length} />
+        <MetricLine label="Generated" value={generated} />
+        <MetricLine label="Needs review" value={needsReview} />
+        <MetricLine label="Failed" value={failed} />
+        <MetricLine label="Success" value={`${metrics.successRate}%`} />
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <ExportLink href="/api/export/project/markdown" label="Markdown" icon={<FileText className="size-3.5" />} disabled={!exportable} block />
+        <ExportLink href="/api/export/project/docx" label="DOCX" icon={<FileArchive className="size-3.5" />} disabled={!exportable} block />
+        <ExportLink href="/api/export/project/html" label="HTML" icon={<FileCode className="size-3.5" />} disabled={!exportable} block />
+        <ExportLink href="/api/export/project/json" label="JSON" icon={<FileJson className="size-3.5" />} disabled={!exportable} block />
+      </div>
+    </div>
+  );
+}
+
+function attentionSummary(article: ArticleDocument | null | undefined, job: QueueJob) {
+  if (article?.needsReviewReasons.length) return article.needsReviewReasons[0];
+  if (article?.validation.warnings.length) return article.validation.warnings[0];
+  if (job.fatalError) return job.fatalError;
+  if (job.needsReviewReasons.length) return job.needsReviewReasons[0];
+  return null;
+}
+
+function ControlFlag({ label, enabled }: { label: string; enabled: boolean }) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-ink-muted">{label}</span>
+      <span className={cn("mono rounded px-1.5 py-0.5 text-[10.5px]", enabled ? "bg-success/10 text-success" : "bg-surface-2 text-ink-subtle")}>
+        {enabled ? "On" : "Off"}
+      </span>
+    </div>
+  );
+}
+
+function ProjectSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between px-1">
+        <PanelTitle title={title} />
+      </div>
+      <div className="rounded-md border border-line bg-surface-1 p-3">{children}</div>
+    </section>
+  );
+}
+
+function ProjectRow({ title, status, meta, onClick }: { title: string; status: string; meta: string[]; onClick?: () => void }) {
+  const content = (
+    <>
+      <div className="flex items-baseline gap-3">
+        <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{title}</div>
+        <div className="mono shrink-0 text-[10.5px] text-ink-subtle">{status}</div>
+      </div>
+      <div className="mono mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[10.5px] text-ink-subtle">
+        {meta.map((item) => <span key={item}>{item}</span>)}
+      </div>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button onClick={onClick} className="block w-full py-2 text-left first:pt-0 last:pb-0 hover:bg-surface-2">
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className="py-2 first:pt-0 last:pb-0">
+      {content}
+    </div>
+  );
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
+      <div className="h-full rounded-full bg-ink" style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} />
+    </div>
   );
 }
 
@@ -486,34 +1007,36 @@ function ArticleListItem({
   const sourceCount = article?.sources.length ?? 0;
   const authority = article ? averageNumber(article.sources.map((source) => source.authorityScore)) : 0;
   const confidence = article?.qualityScore ?? 0;
+  const displayStatus = displayStatusLabel(job, article);
+  const summary = attentionSummary(article, job);
+  const facts = article
+    ? [`${formatNumber(article.wordCount)} words`, `${sourceCount} sources`, `Q${confidence}`, `Auth ${authority}`, relativeDate(article.updatedAt)]
+    : [`Attempt ${job.attempts}`, relativeDate(job.updatedAt)];
   return (
     <div className="group relative">
       {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
       <button
         onClick={onSelect}
         className={cn(
-          "flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors",
+          "flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors",
           active ? "bg-ink/[0.06]" : "hover:bg-surface-3"
         )}
       >
         <span className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", statusColor(job.status), job.status === "processing" && "animate-pulse")} />
         <span className="min-w-0 flex-1">
-          <span className={cn("block truncate text-[13px] leading-snug text-ink", active ? "font-semibold" : "font-medium")}>{article?.title ?? job.title}</span>
-          <span className="mono mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] text-ink-subtle">
-            <span>{statusLabel(job.status)}</span>
-            <span className="text-line-strong">·</span>
-            <span>{article?.wordCount ? `${formatNumber(article.wordCount)} w` : `Attempt ${job.attempts}`}</span>
-            <span className="text-line-strong">·</span>
-            <span>{sourceCount} src</span>
-            {article ? (
-              <>
-                <span className="text-line-strong">·</span>
-                <span>Conf {confidence}</span>
-                <span className="text-line-strong">·</span>
-                <span>Auth {authority}</span>
-              </>
-            ) : null}
+          <span className="flex min-w-0 items-start gap-2">
+            <span className={cn("min-w-0 flex-1 truncate text-[13px] leading-snug text-ink", active ? "font-semibold" : "font-medium")}>{article?.title ?? job.title}</span>
+            <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[10px]", statusBadgeTone(job.status))}>{displayStatus}</span>
           </span>
+          <span className="mono mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] text-ink-subtle">
+            {facts.map((fact, index) => (
+              <span key={`${fact}-${index}`} className="contents">
+                {index > 0 && <span className="text-line-strong">·</span>}
+                <span>{fact}</span>
+              </span>
+            ))}
+          </span>
+          {summary && <span className={cn("mt-1 block truncate text-[11px]", job.status === "failed" ? "text-danger" : "text-warn")}>{summary}</span>}
         </span>
       </button>
       {job.status === "failed" && (
@@ -525,7 +1048,23 @@ function ArticleListItem({
   );
 }
 
-function ArticleToolbar({ article }: { article: ArticleDocument | null }) {
+function ArticleToolbar({
+  article,
+  busy,
+  running,
+  onGenerate,
+  onRunQueue,
+  onStopRun,
+  onRetryFailed
+}: {
+  article: ArticleDocument | null;
+  busy: boolean;
+  running: boolean;
+  onGenerate: () => void;
+  onRunQueue: () => void;
+  onStopRun: () => void;
+  onRetryFailed: () => void;
+}) {
   const viewModes = [
     { label: "Read", icon: FileText },
     { label: "MD", icon: Code2 },
@@ -534,8 +1073,19 @@ function ArticleToolbar({ article }: { article: ArticleDocument | null }) {
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
       <div className="flex shrink-0 items-center gap-1">
-        {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
+        <button onClick={onGenerate} disabled={busy || running} className="flex h-8 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
+          <Play className="size-3.5 fill-current" /> Generate next
+        </button>
+        <button onClick={running ? onStopRun : onRunQueue} disabled={busy && !running} className="flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-50">
+          {running ? <Square className="size-3.5" /> : <RotateCw className="size-3.5" />}
+          {running ? "Stop" : "Run queue"}
+        </button>
+        <button onClick={onRetryFailed} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+          <RotateCw className="size-3.5" /> Retry failed
+        </button>
       </div>
+      <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
+      {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
       <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
       <div className="flex shrink-0 items-center gap-0.5">
         {[Bold, Italic, LinkIcon, Heading2, Heading3, List, ListOrdered].map((Icon, index) => (
@@ -566,6 +1116,7 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
     );
   }
   if (!article) return <div className="h-24 p-5" />;
+  const readingTime = Math.max(1, Math.round(article.wordCount / 230));
   return (
     <div className="px-6 pb-3 pt-5 lg:px-8">
       <div className="flex gap-4">
@@ -579,6 +1130,7 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
         <span className="h-3 w-px bg-line" />
         <span><span className="text-ink-subtle">Sources</span> <span className="text-ink">{article.sources.length}</span></span>
         <span><span className="text-ink-subtle">Words</span> <span className="text-ink">{formatNumber(article.wordCount)}</span></span>
+        <span><span className="text-ink-subtle">Read</span> <span className="text-ink">{readingTime}m</span></span>
         <span><span className="text-ink-subtle">Authority</span> <span className="text-ink">{averageNumber(article.sources.map((source) => source.authorityScore))}</span></span>
         {article.needsReviewReasons.length > 0 && (
           <button onClick={onReviewClick} className="text-warn hover:underline">
@@ -587,6 +1139,32 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
         )}
       </div>
     </div>
+  );
+}
+
+function ArticleMetricsRail({ article }: { article: ArticleDocument }) {
+  const headings = countMarkdownHeadings(article.markdown);
+  const readingTime = Math.max(1, Math.round(article.wordCount / 230));
+  return (
+    <div className="hairline-t mono flex h-8 shrink-0 items-center gap-5 bg-surface-2/40 px-6 text-[10.5px] text-ink-muted">
+      <MetricRailItem label="Words" value={formatNumber(article.wordCount)} />
+      <MetricRailItem label="Read" value={`${readingTime}m`} />
+      <MetricRailItem label="Quality" value={`Q${article.qualityScore}`} />
+      <MetricRailItem label="Sources" value={article.sources.length} />
+      <MetricRailItem label="Headings" value={headings} />
+      <MetricRailItem label="Warnings" value={article.validation.warnings.length} warn={article.validation.warnings.length > 0} />
+      <div className="flex-1" />
+      <span className="truncate text-ink-subtle">Updated {formatTime(article.updatedAt)}</span>
+    </div>
+  );
+}
+
+function MetricRailItem({ label, value, warn = false }: { label: string; value: string | number; warn?: boolean }) {
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="text-ink-subtle">{label}</span>
+      <span className={cn("text-ink-muted", warn && "text-warn")}>{value}</span>
+    </span>
   );
 }
 
@@ -603,12 +1181,28 @@ function QualityBadge({ value }: { value: number }) {
 
 function ArticleExportActions({ articleId }: { articleId: string }) {
   return (
-    <div className="flex shrink-0 items-start gap-1">
-      <ExportLink href={`/api/export/article/${articleId}/markdown`} label="Markdown" icon={<FileText className="size-3.5" />} />
-      <ExportLink href={`/api/export/article/${articleId}/docx`} label="DOCX" icon={<FileArchive className="size-3.5" />} />
-      <ExportLink href={`/api/export/article/${articleId}/html`} label="HTML" icon={<FileCode className="size-3.5" />} />
-      <ExportLink href={`/api/export/article/${articleId}/json`} label="JSON" icon={<FileJson className="size-3.5" />} />
-    </div>
+    <details className="group relative shrink-0">
+      <summary className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3">
+        <Download className="size-3.5" />
+        Export
+        <ChevronDown className="size-3 text-ink-subtle transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="absolute left-0 top-9 z-20 w-44 rounded-md border border-line bg-surface-1 p-1 shadow-lg">
+        <ExportMenuLink href={`/api/export/article/${articleId}/markdown`} label="Markdown" icon={<FileText className="size-3.5" />} />
+        <ExportMenuLink href={`/api/export/article/${articleId}/docx`} label="DOCX" icon={<FileArchive className="size-3.5" />} />
+        <ExportMenuLink href={`/api/export/article/${articleId}/html`} label="HTML" icon={<FileCode className="size-3.5" />} />
+        <ExportMenuLink href={`/api/export/article/${articleId}/json`} label="JSON" icon={<FileJson className="size-3.5" />} />
+      </div>
+    </details>
+  );
+}
+
+function ExportMenuLink({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) {
+  return (
+    <a href={href} className="flex h-8 items-center gap-2 rounded px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+      {icon}
+      <span>{label}</span>
+    </a>
   );
 }
 
@@ -782,27 +1376,49 @@ function ExportLink({
 }
 
 function JobPlaceholder({ job }: { job: QueueJob }) {
+  const runtime = calculatePipelineRuntime(job.pipeline);
   if (job.status !== "failed") {
     return (
-      <div className="mx-auto mt-10 max-w-2xl rounded-md border border-line bg-surface-1 p-5 shadow-sm">
-        <h2 className="font-semibold text-ink">{statusLabel(job.status)}</h2>
-        <p className="mt-2 text-sm text-ink-muted">
+      <div className="mx-auto max-w-[760px] px-8 py-10">
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(job.status)}</div>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight text-ink">{job.title}</h2>
+        <p className="mt-4 max-w-2xl text-sm leading-6 text-ink-muted">
           {job.status === "processing"
             ? "This title is currently moving through research and writing."
             : "This title is waiting for its turn in the queue."}
         </p>
-        <div className="mono mt-3 text-xs text-ink-subtle">Attempt {job.attempts}</div>
+        <div className="mt-6 grid max-w-xl grid-cols-2 gap-x-6 gap-y-2 text-xs">
+          <MetricLine label="Attempt" value={job.attempts} />
+          <MetricLine label="Created" value={formatDate(job.createdAt)} />
+          <MetricLine label="Updated" value={relativeDate(job.updatedAt)} />
+          <MetricLine label="Runtime" value={formatDuration(runtime.totalMs)} />
+        </div>
+        <div className="mt-8 max-w-xl">
+          <PanelTitle title="Pipeline state" />
+          <CompactPipelineList pipeline={job.pipeline} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto mt-10 max-w-2xl rounded-md border border-danger/30 bg-surface-1 p-5 shadow-sm">
-      <h2 className="font-semibold text-danger">Technical failure</h2>
-      <p className="mt-2 text-sm text-ink-muted">
+    <div className="mx-auto max-w-[760px] px-8 py-10">
+      <div className="mono text-[10px] uppercase tracking-[0.18em] text-danger">Failed</div>
+      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-ink">{job.title}</h2>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-ink-muted">
         This job has no saved article because it hit a technical failure before draft save.
       </p>
-      <pre className="mono mt-3 whitespace-pre-wrap rounded bg-surface-2 p-3 text-xs text-danger">{job.fatalError ?? "No fatal error recorded."}</pre>
+      <div className="mt-6 grid max-w-xl grid-cols-2 gap-x-6 gap-y-2 text-xs">
+        <MetricLine label="Attempt" value={job.attempts} />
+        <MetricLine label="Updated" value={relativeDate(job.updatedAt)} />
+        <MetricLine label="Runtime" value={formatDuration(runtime.totalMs)} />
+        <MetricLine label="Failed stage" value={job.pipeline.find((step) => step.status === "failed")?.stage ?? "-"} />
+      </div>
+      <pre className="mono mt-6 max-w-2xl whitespace-pre-wrap rounded-md bg-surface-2 p-3 text-xs leading-relaxed text-danger">{job.fatalError ?? "No fatal error recorded."}</pre>
+      <div className="mt-8 max-w-xl">
+        <PanelTitle title="Pipeline state" />
+        <CompactPipelineList pipeline={job.pipeline} />
+      </div>
     </div>
   );
 }
@@ -917,9 +1533,23 @@ function ResearchPanel({ research, article }: { research: ResearchPack | null; a
       <SectionTitle title="Accepted sources" />
       <SourceList sources={sources.slice(0, 6)} />
       <PanelTitle title="Useful facts" />
-      <ul className="space-y-1 text-xs leading-snug text-ink-muted">
-        {(research?.usefulFacts ?? []).map((fact) => <li key={fact}>{fact}</li>)}
-      </ul>
+      {(research?.usefulFacts ?? []).length ? (
+        <ul className="space-y-1 text-xs leading-snug text-ink-muted">
+          {(research?.usefulFacts ?? []).map((fact) => <li key={fact}>{fact}</li>)}
+        </ul>
+      ) : <Empty text="No useful facts recorded." />}
+      <PanelTitle title="Questions found" />
+      {(research?.questionsFound ?? []).length ? (
+        <ul className="space-y-1 text-xs leading-snug text-ink-muted">
+          {(research?.questionsFound ?? []).map((question) => <li key={question}>{question}</li>)}
+        </ul>
+      ) : <Empty text="No questions recorded." />}
+      <PanelTitle title="Headings found" />
+      {(research?.headingsFound ?? []).length ? (
+        <ul className="space-y-1 text-xs leading-snug text-ink-muted">
+          {(research?.headingsFound ?? []).map((heading) => <li key={heading}>{heading}</li>)}
+        </ul>
+      ) : <Empty text="No headings recorded." />}
     </div>
   );
 }
@@ -986,33 +1616,36 @@ function PipelinePanel({
   const runtime = calculatePipelineRuntime(pipeline);
   return (
     <div className="space-y-4">
-      <MetricGrid items={[
+      <MetricGrid compact items={[
         ["Total", formatDuration(runtime.totalMs)],
         ["Research", formatDuration(runtime.researchMs)],
         ["Generation", formatDuration(runtime.generationMs)],
         ["Validation", formatDuration(runtime.validationMs)],
         ["Save", formatDuration(runtime.saveMs)]
       ]} />
-      <ol className="space-y-2">
+      <ol className="relative space-y-2.5 pl-5">
+        <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
         {pipeline.map((step) => (
-          <li key={step.stage}>
+          <li key={step.stage} className="relative">
+            <span className="absolute -left-[18px] top-1 grid size-3 place-items-center bg-surface-2">
+              {pipelineIcon(step.status)}
+            </span>
             <button
               onClick={() => {
                 setSelectedStage(step.stage);
                 if (step.stage === "research" && article) setTab("research");
               }}
               className={cn(
-                "w-full rounded-md border border-line bg-surface-1 p-2 text-left hover:border-ink-subtle",
-                selected?.stage === step.stage && "border-ink-subtle"
+                "w-full rounded px-1.5 py-1 text-left hover:bg-surface-3",
+                selected?.stage === step.stage && "bg-surface-1"
               )}
             >
-          <div className="flex items-center gap-2">
-            {step.status === "done" ? <CheckCircle2 className="size-4 text-success" /> : step.status === "failed" ? <AlertCircle className="size-4 text-danger" /> : <Search className="size-4 text-ink-subtle" />}
-            <span className="font-medium capitalize">{step.stage}</span>
-            <span className="mono ml-auto text-xs text-ink-subtle">{step.durationMs ? `${(step.durationMs / 1000).toFixed(1)}s` : step.status}</span>
-          </div>
-          {step.error && <p className="mt-1 text-xs text-danger">{step.error}</p>}
-          {step.message && <p className="mt-1 text-xs text-ink-muted">{step.message}</p>}
+              <div className="flex items-baseline gap-2">
+                <span className="text-[12.5px] font-medium capitalize text-ink">{step.stage}</span>
+                <span className="mono ml-auto text-[10.5px] text-ink-subtle">{step.durationMs ? `${(step.durationMs / 1000).toFixed(1)}s` : step.status}</span>
+              </div>
+              {step.error && <p className="mt-1 text-[11px] leading-snug text-danger">{step.error}</p>}
+              {step.message && <p className="mt-1 text-[11px] leading-snug text-ink-muted">{step.message}</p>}
             </button>
         </li>
       ))}
@@ -1020,6 +1653,35 @@ function PipelinePanel({
       {selected && <StageDetails step={selected} article={article} details={details} />}
     </div>
   );
+}
+
+function CompactPipelineList({ pipeline }: { pipeline: ArticleDocument["pipeline"] }) {
+  if (!pipeline.length) return <Empty text="No pipeline steps recorded." />;
+  return (
+    <ol className="relative mt-3 space-y-2.5 pl-5">
+      <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
+      {pipeline.map((step) => (
+        <li key={step.stage} className="relative">
+          <span className="absolute -left-[18px] top-1 grid size-3 place-items-center bg-background">
+            {pipelineIcon(step.status)}
+          </span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[12.5px] font-medium capitalize text-ink">{step.stage}</span>
+            <span className="mono ml-auto text-[10.5px] text-ink-subtle">{step.durationMs ? `${(step.durationMs / 1000).toFixed(1)}s` : step.status}</span>
+          </div>
+          {step.error && <div className="mt-1 text-[11px] leading-snug text-danger">{step.error}</div>}
+          {step.message && <div className="mt-1 text-[11px] leading-snug text-ink-muted">{step.message}</div>}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function pipelineIcon(status: ArticleDocument["pipeline"][number]["status"]) {
+  if (status === "done") return <CheckCircle2 className="size-3 text-success" />;
+  if (status === "failed") return <AlertCircle className="size-3 text-danger" />;
+  if (status === "running") return <Search className="size-3 animate-pulse text-info" />;
+  return <span className="size-2 rounded-full border border-line-strong bg-surface-2" />;
 }
 
 function StageDetails({ step, article, details }: { step: ArticleDocument["pipeline"][number]; article: ArticleDocument | null; details: Details }) {
@@ -1112,6 +1774,7 @@ function ValidationPanel({
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
 }) {
+  const reviewItems = [...article.needsReviewReasons, ...article.validation.warnings];
   return (
     <div className="space-y-4">
       <MetricGrid items={[
@@ -1127,10 +1790,10 @@ function ValidationPanel({
           highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
         )}
       >
-        <PanelTitle title="Warnings" />
-        {article.validation.warnings.length ? (
+        <PanelTitle title="Review reasons" />
+        {reviewItems.length ? (
           <ul className="mt-2 space-y-2 text-xs text-ink-muted">
-            {article.validation.warnings.map((warning) => <li key={warning} className="rounded-md bg-surface-1 p-2">{warning}</li>)}
+            {reviewItems.map((warning) => <li key={warning} className="rounded-md bg-surface-1 p-2">{warning}</li>)}
           </ul>
         ) : <Empty text="No validation warnings." />}
       </div>
@@ -1293,6 +1956,26 @@ function statusColor(status: JobStatus) {
   }[status];
 }
 
+function statusBadgeTone(status: JobStatus) {
+  return {
+    queued: "bg-surface-3 text-ink-muted",
+    processing: "bg-info/10 text-info",
+    generated: "bg-success/10 text-success",
+    needs_review: "bg-warn/10 text-warn",
+    failed: "bg-danger/10 text-danger"
+  }[status];
+}
+
+function statusTextTone(status: JobStatus) {
+  return {
+    queued: "text-ink-subtle",
+    processing: "text-info",
+    generated: "text-success",
+    needs_review: "text-warn",
+    failed: "text-danger"
+  }[status];
+}
+
 function statusLabel(status: JobStatus) {
   return {
     queued: "Queued",
@@ -1301,6 +1984,24 @@ function statusLabel(status: JobStatus) {
     needs_review: "Needs review",
     failed: "Failed"
   }[status];
+}
+
+function displayStatusLabel(job: QueueJob, article?: ArticleDocument | null) {
+  if (job.status !== "processing") return statusLabel(article?.status ?? job.status);
+  const activeStage = currentPipelineStage(job.pipeline);
+  if (activeStage === "research") return "Researching";
+  if (activeStage === "outline") return "Outlining";
+  if (activeStage === "generation" || activeStage === "editor" || activeStage === "save") return "Writing";
+  if (activeStage === "validation") return "Validating";
+  if (activeStage === "export") return "Exporting";
+  return "Writing";
+}
+
+function currentPipelineStage(pipeline: QueueJob["pipeline"]) {
+  return pipeline.find((step) => step.status === "running")?.stage
+    ?? [...pipeline].reverse().find((step) => step.status === "done")?.stage
+    ?? pipeline[0]?.stage
+    ?? null;
 }
 
 function filterLabel(filter: Filter) {
@@ -1312,6 +2013,14 @@ function filterLabel(filter: Filter) {
     needs_review: "Review",
     failed: "Failed"
   }[filter];
+}
+
+function metricsLabel(metrics: QueueMetrics) {
+  if (metrics.processingCount) return `${metrics.processingCount} writing`;
+  if (metrics.failed) return `${metrics.failed} failed`;
+  if (metrics.needsReview) return `${metrics.needsReview} review`;
+  if (metrics.remaining) return `${metrics.remaining} queued`;
+  return "Ready";
 }
 
 interface QueueMetrics {
@@ -1359,6 +2068,14 @@ interface RunSummary {
   averageRuntimeMs: number | null;
 }
 
+interface SourceDomainSummary {
+  domain: string;
+  count: number;
+  accepted: number;
+  articleCount: number;
+  authority: number;
+}
+
 function calculateProjectSummary(state: AppState, metrics: QueueMetrics): ProjectSummary {
   const articles = state.articles;
   const sourceScores = articles.flatMap((article) => article.sources.map((source) => source.authorityScore));
@@ -1383,6 +2100,32 @@ function calculateProjectSummary(state: AppState, metrics: QueueMetrics): Projec
     averageConfidence: averageNumber(confidenceScores),
     successRate: metrics.successRate
   };
+}
+
+function buildTopDomains(articles: ArticleDocument[]): SourceDomainSummary[] {
+  const domains = new Map<string, { count: number; accepted: number; articleIds: Set<string>; authorityScores: number[] }>();
+  for (const article of articles) {
+    for (const source of article.sources) {
+      const key = source.domain || safeDomain(source.url);
+      if (!key) continue;
+      const current = domains.get(key) ?? { count: 0, accepted: 0, articleIds: new Set<string>(), authorityScores: [] };
+      current.count += 1;
+      if (source.accepted) current.accepted += 1;
+      current.articleIds.add(article.id);
+      current.authorityScores.push(source.authorityScore);
+      domains.set(key, current);
+    }
+  }
+
+  return [...domains.entries()]
+    .map(([domain, data]) => ({
+      domain,
+      count: data.count,
+      accepted: data.accepted,
+      articleCount: data.articleIds.size,
+      authority: averageNumber(data.authorityScores)
+    }))
+    .sort((a, b) => b.count - a.count || b.authority - a.authority);
 }
 
 function buildRunHistory(jobs: QueueJob[], articles: ArticleDocument[]): RunSummary[] {
@@ -1519,8 +2262,33 @@ function formatDate(value?: string | null) {
   }).format(new Date(value));
 }
 
+function relativeDate(value?: string | null) {
+  if (!value) return "-";
+  const diff = Date.now() - new Date(value).getTime();
+  const minutes = Math.max(0, Math.floor(diff / 60_000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return formatDate(value);
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-GB").format(value);
+}
+
+function safeDomain(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function countMarkdownHeadings(markdown: string) {
+  return (markdown.match(/^#{1,3}\s+/gm) ?? []).length;
 }
 
 function averageNumber(values: number[]) {
