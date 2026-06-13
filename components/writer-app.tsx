@@ -103,6 +103,7 @@ function Workbench() {
   const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, articles, tick), [articles, displayJobs, tick]);
   const runHistory = useMemo(() => buildRunHistory(displayJobs, articles), [articles, displayJobs]);
   const projectSummary = useMemo(() => state ? calculateProjectSummary(state, queueMetrics) : null, [queueMetrics, state]);
+  const shouldPollState = running || busy || displayJobs.some((job) => job.status === "queued" || job.status === "processing");
 
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
@@ -128,6 +129,14 @@ function Workbench() {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!shouldPollState) return;
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [selectedArticleId, shouldPollState]);
 
   useEffect(() => {
     if (!selectedArticle) return;
@@ -1511,7 +1520,7 @@ function Inspector({
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
-      {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
+      {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
@@ -1599,6 +1608,7 @@ function SourceList({ sources, rejected = false }: { sources: ResearchSource[]; 
 function PipelinePanel({
   pipeline,
   article,
+  job,
   details,
   selectedStage,
   setSelectedStage,
@@ -1606,6 +1616,7 @@ function PipelinePanel({
 }: {
   pipeline: ArticleDocument["pipeline"];
   article: ArticleDocument | null;
+  job: QueueJob | null;
   details: Details;
   selectedStage: string;
   setSelectedStage: (stage: string) => void;
@@ -1616,12 +1627,13 @@ function PipelinePanel({
   return (
     <div className="space-y-4">
       <MetricGrid compact items={[
-        ["Total", formatDuration(runtime.totalMs)],
+        ["Active total", formatDuration(runtime.totalMs)],
         ["Research", formatDuration(runtime.researchMs)],
         ["Generation", formatDuration(runtime.generationMs)],
         ["Validation", formatDuration(runtime.validationMs)],
         ["Save", formatDuration(runtime.saveMs)]
       ]} />
+      <PipelineTimingDiagnostics pipeline={pipeline} article={article} job={job} />
       <ol className="relative space-y-2.5 pl-5">
         <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
         {pipeline.map((step) => (
@@ -1650,6 +1662,32 @@ function PipelinePanel({
       ))}
     </ol>
       {selected && <StageDetails step={selected} article={article} details={details} />}
+    </div>
+  );
+}
+
+function PipelineTimingDiagnostics({ pipeline, article, job }: { pipeline: ArticleDocument["pipeline"]; article: ArticleDocument | null; job: QueueJob | null }) {
+  const timing = calculateTimingDiagnostics(pipeline, article, job);
+  if (!timing) return null;
+  return (
+    <div className="rounded-md border border-line bg-surface-1 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <PanelTitle title="Timing diagnostics" />
+        <span className="mono text-[10.5px] text-ink-subtle">Existing timestamps</span>
+      </div>
+      <MetricGrid items={[
+        ["Queued", formatTime(timing.queuedAt)],
+        ["Started", formatTime(timing.startedAt)],
+        ["Generated", formatTime(timing.generatedAt)],
+        ["Pipeline active", formatDuration(timing.pipelineDurationMs)],
+        ["End-to-end", formatDuration(timing.endToEndMs)],
+        ["Waiting / visibility", formatDuration(timing.waitingMs)]
+      ]} />
+      <div className="mt-3 space-y-1.5 text-[11.5px] leading-snug text-ink-muted">
+        <div>Active time is the sum of recorded stage durations.</div>
+        <div>End-to-end runs from queue creation to generated article visibility in saved state.</div>
+        {timing.waitingMs > 0 && <div>Difference includes queue wait, cron cadence gaps, storage/list freshness, and UI polling delay.</div>}
+      </div>
     </div>
   );
 }
@@ -2216,6 +2254,33 @@ function calculatePipelineRuntime(pipeline: ArticleDocument["pipeline"]) {
     validationMs: stageMs("validation"),
     saveMs: stageMs("save")
   };
+}
+
+function calculateTimingDiagnostics(pipeline: ArticleDocument["pipeline"], article: ArticleDocument | null, job: QueueJob | null) {
+  const queuedAt = job?.createdAt ?? article?.createdAt ?? null;
+  const startedAt = earliestTimestamp(pipeline.map((step) => step.startedAt));
+  const generatedAt = article?.updatedAt ?? completedGeneratedJobAt(job);
+  if (!queuedAt && !startedAt && !generatedAt) return null;
+  const pipelineDurationMs = calculatePipelineRuntime(pipeline).totalMs;
+  const endToEndMs = queuedAt && generatedAt ? Math.max(0, new Date(generatedAt).getTime() - new Date(queuedAt).getTime()) : null;
+  const waitingMs = endToEndMs !== null ? Math.max(0, endToEndMs - pipelineDurationMs) : null;
+  return {
+    queuedAt,
+    startedAt,
+    generatedAt,
+    pipelineDurationMs,
+    endToEndMs,
+    waitingMs: waitingMs ?? 0
+  };
+}
+
+function completedGeneratedJobAt(job: QueueJob | null) {
+  if (!job || (job.status !== "generated" && job.status !== "needs_review")) return null;
+  return job.updatedAt;
+}
+
+function earliestTimestamp(values: Array<string | undefined>) {
+  return values.filter(Boolean).sort()[0] ?? null;
 }
 
 function averageStageRuntime(articles: ArticleDocument[], stage: string) {
