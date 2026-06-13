@@ -2,6 +2,7 @@
 
 import { AlertCircle, Bold, CheckCircle2, ChevronDown, ChevronRight, Code2, Columns2, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +74,7 @@ function Workbench() {
   const stopRequested = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
   const warningsRef = useRef<HTMLDivElement | null>(null);
+  const visibleRecordedRef = useRef<Set<string>>(new Set());
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -144,6 +146,18 @@ function Workbench() {
       .then((res) => res.ok ? res.json() : { research: null, debug: null })
       .then((data: Details) => setDetails(data));
   }, [selectedArticle?.id]);
+
+  useEffect(() => {
+    for (const article of articles) {
+      if (!article.timings?.generated_at || article.timings.visible_at || visibleRecordedRef.current.has(article.id)) continue;
+      visibleRecordedRef.current.add(article.id);
+      void fetch("/api/analytics/article-visible", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ articleId: article.id })
+      });
+    }
+  }, [articles]);
 
   async function addTitles() {
     setBusy(true);
@@ -528,10 +542,19 @@ function ProjectDashboard({
   summary: ProjectSummary | null;
   onSelectArticle: (id: string) => void;
 }) {
+  const [dashboardTab, setDashboardTab] = useState<"overview" | "performance">("overview");
+  const [analytics, setAnalytics] = useState<ProjectAnalytics | null>(null);
   const attentionJobs = jobs.filter((job) => job.status === "needs_review" || job.status === "failed" || job.status === "processing").slice(0, 8);
   const contentInventory = [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
   const latestRun = history[0] ?? null;
   const generatedWords = articles.reduce((sum, article) => sum + article.wordCount, 0);
+
+  useEffect(() => {
+    if (dashboardTab !== "performance") return;
+    void fetch("/api/analytics/project", { cache: "no-store" })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: ProjectAnalytics | null) => setAnalytics(data));
+  }, [dashboardTab, articles.length, jobs.length]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -549,10 +572,23 @@ function ProjectDashboard({
           </div>
           <ProjectExportMenu summary={summary} />
         </div>
+        <div className="mt-4 flex h-8 w-fit items-center rounded-md bg-surface-2 p-0.5">
+          {(["overview", "performance"] as const).map((item) => (
+            <button
+              key={item}
+              onClick={() => setDashboardTab(item)}
+              className={cn("h-7 rounded px-3 text-[12px] font-medium capitalize", dashboardTab === item ? "bg-surface-1 text-ink shadow-[0_1px_0_var(--line)]" : "text-ink-muted hover:text-ink")}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8">
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+        {dashboardTab === "performance" ? (
+          <ProjectPerformanceTab analytics={analytics} />
+        ) : <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="min-w-0 space-y-5">
             <div className="grid grid-cols-4 gap-3">
               <DashboardStat label="Generated" value={metrics.generated} detail={`${formatNumber(generatedWords)} words`} />
@@ -620,7 +656,7 @@ function ProjectDashboard({
               )}
             </ProjectSection>
           </section>
-        </div>
+        </div>}
       </div>
     </div>
   );
@@ -762,6 +798,74 @@ function DashboardStat({ label, value, detail, warn = false, danger = false }: {
       <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">{label}</div>
       <div className={cn("mono mt-2 text-2xl font-semibold text-ink", warn && "text-warn", danger && "text-danger")}>{value}</div>
       <div className="mt-1 truncate text-xs text-ink-muted">{detail}</div>
+    </div>
+  );
+}
+
+function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | null }) {
+  if (!analytics) return <Empty text="Loading performance analytics." />;
+  const bottlenecks = new Map(analytics.bottlenecks.averages.map((item) => [item.key, item.average_ms]));
+  return (
+    <div className="space-y-5">
+      <ProjectSection title="Performance overview">
+        <div className="grid grid-cols-4 gap-3">
+          <DashboardStat label="Average active" value={formatDuration(analytics.performance.average_active_total_ms)} detail="Recorded stage time" />
+          <DashboardStat label="End-to-end" value={formatDuration(analytics.performance.average_end_to_end_ms)} detail="Queued to completed" />
+          <DashboardStat label="Articles/hr" value={analytics.throughput.articles_per_hour ?? "-"} detail="Across completed window" />
+          <DashboardStat label="Words/hr" value={analytics.throughput.words_per_hour ? formatNumber(analytics.throughput.words_per_hour) : "-"} detail="Across completed window" />
+        </div>
+      </ProjectSection>
+
+      <ProjectSection title="Bottlenecks">
+        <div className="grid grid-cols-4 gap-3">
+          <DashboardStat label="Queue wait" value={formatDuration(bottlenecks.get("queue_wait_ms") ?? null)} detail="Started minus queued" />
+          <DashboardStat label="Generation" value={formatDuration(bottlenecks.get("generation_duration_ms") ?? null)} detail="Model writing time" />
+          <DashboardStat label="Visibility delay" value={formatDuration(bottlenecks.get("visibility_delay_ms") ?? null)} detail="Visible minus generated" />
+          <DashboardStat label="Save" value={formatDuration(bottlenecks.get("save_duration_ms") ?? null)} detail="Article persistence" />
+        </div>
+        <div className="mt-4 divide-y divide-line/70">
+          {analytics.bottlenecks.ranked.map((item, index) => (
+            <div key={item.key} className="grid grid-cols-[32px_minmax(0,1fr)_auto] gap-3 py-2 text-xs">
+              <span className="mono text-ink-subtle">#{index + 1}</span>
+              <span className="font-medium text-ink">{item.label}</span>
+              <span className="mono text-ink-muted">{formatDuration(item.average_ms)}</span>
+            </div>
+          ))}
+        </div>
+      </ProjectSection>
+
+      <ProjectSection title="Recent runs">
+        {analytics.recent_articles.length ? (
+          <div className="overflow-hidden">
+            <div className="grid grid-cols-[minmax(0,1fr)_64px_64px_64px_92px_92px_92px_86px] gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+              <span>Title</span>
+              <span className="text-right">Words</span>
+              <span className="text-right">Sources</span>
+              <span className="text-right">Quality</span>
+              <span className="text-right">Active</span>
+              <span className="text-right">End-to-end</span>
+              <span className="text-right">Queue wait</span>
+              <span>Status</span>
+            </div>
+            <div className="divide-y divide-line/70">
+              {analytics.recent_articles.map((article) => (
+                <div key={article.article_id} className="grid grid-cols-[minmax(0,1fr)_64px_64px_64px_92px_92px_92px_86px] gap-2 px-1 py-2 text-[12px]">
+                  <span className="truncate font-medium text-ink">{article.title}</span>
+                  <span className="mono text-right text-[10.5px] text-ink-subtle">{formatNumber(article.words)}</span>
+                  <span className="mono text-right text-[10.5px] text-ink-subtle">{article.sources}</span>
+                  <span className="mono text-right text-[10.5px] text-ink-subtle">{article.quality}</span>
+                  <span className="mono text-right text-[10.5px] text-ink-subtle">{formatDuration(article.active_total_ms)}</span>
+                  <span className="mono text-right text-[10.5px] text-ink-subtle">{formatDuration(article.end_to_end_ms)}</span>
+                  <span className="mono text-right text-[10.5px] text-ink-subtle">{formatDuration(article.queue_wait_ms)}</span>
+                  <span className={cn("mono text-[10.5px]", article.status === "needs_review" ? "text-warn" : "text-success")}>{article.status === "needs_review" ? "Review" : "Generated"}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <Empty text="Completed articles will appear here." />
+        )}
+      </ProjectSection>
     </div>
   );
 }

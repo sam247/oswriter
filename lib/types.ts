@@ -36,6 +36,22 @@ export interface PipelineStep {
   meta?: Record<string, unknown>;
 }
 
+export interface ArticleTiming {
+  queued_at?: string;
+  started_at?: string;
+  research_started_at?: string;
+  research_completed_at?: string;
+  generation_started_at?: string;
+  generation_completed_at?: string;
+  validation_started_at?: string;
+  validation_completed_at?: string;
+  save_started_at?: string;
+  save_completed_at?: string;
+  generated_at?: string;
+  visible_at?: string;
+  completed_at?: string;
+}
+
 export interface QueueJob {
   id: string;
   projectId: string;
@@ -48,6 +64,7 @@ export interface QueueJob {
   needsReviewReasons: string[];
   fatalError?: string;
   pipeline: PipelineStep[];
+  timings?: ArticleTiming;
 }
 
 export interface ResearchSource {
@@ -109,6 +126,7 @@ export interface ArticleDocument {
   pipeline: PipelineStep[];
   sources: ResearchSource[];
   needsReviewReasons: string[];
+  timings?: ArticleTiming;
 }
 
 export interface DebugEvent {
