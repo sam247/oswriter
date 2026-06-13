@@ -102,38 +102,41 @@ export class QueueRunner {
     await Promise.all(mismatched.map((job) => {
       const article = articlesByJob.get(job.id);
       if (!article) return Promise.resolve();
+      const reconciledAt = nowIso();
       return this.store.saveJob({
         ...job,
         status: article.status,
         needsReviewReasons: article.needsReviewReasons,
         pipeline: article.pipeline,
-        timings: article.timings,
-        updatedAt: nowIso(),
+        timings: { ...article.timings, state_reconciled_at: article.timings?.state_reconciled_at ?? reconciledAt },
+        updatedAt: reconciledAt,
         fatalError: undefined
       });
     }));
     return mismatched.length;
   }
 
-  async processNext(projectId = DEFAULT_PROJECT_ID) {
+  async processNext(projectId = DEFAULT_PROJECT_ID, context: { source?: "manual" | "worker" } = {}) {
     await this.reclaimStale(projectId);
     const jobs = await this.store.listJobs(projectId);
     const job = jobs.find((item) => item.status === "processing") ?? jobs.find((item) => item.status === "queued");
     if (!job) return { processed: false, job: null };
-    return { processed: true, job: await this.processJobStep(job) };
+    return { processed: true, job: await this.processJobStep(job, context) };
   }
 
-  private async processJobStep(initial: QueueJob) {
+  private async processJobStep(initial: QueueJob, context: { source?: "manual" | "worker" }) {
+    const startedAt = nowIso();
     let job: QueueJob = {
       ...initial,
       status: "processing",
       attempts: initial.status === "queued" ? initial.attempts + 1 : initial.attempts,
-      updatedAt: nowIso(),
+      updatedAt: startedAt,
       fatalError: undefined,
       timings: {
         ...initial.timings,
         queued_at: initial.timings?.queued_at ?? initial.createdAt,
-        started_at: initial.timings?.started_at ?? nowIso()
+        started_at: initial.timings?.started_at ?? startedAt,
+        started_by: initial.timings?.started_by ?? context.source ?? "unknown"
       }
     };
     let debug: DebugDocument = {

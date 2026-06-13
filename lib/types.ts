@@ -39,6 +39,11 @@ export interface PipelineStep {
 export interface ArticleTiming {
   queued_at?: string;
   started_at?: string;
+  started_by?: "manual" | "worker" | "unknown";
+  worker_first_seen_at?: string;
+  worker_lease_requested_at?: string;
+  worker_lease_acquired_at?: string;
+  worker_lease_blocked_at?: string;
   research_started_at?: string;
   research_completed_at?: string;
   generation_started_at?: string;
@@ -49,6 +54,7 @@ export interface ArticleTiming {
   save_completed_at?: string;
   generated_at?: string;
   visible_at?: string;
+  state_reconciled_at?: string;
   completed_at?: string;
 }
 

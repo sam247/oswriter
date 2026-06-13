@@ -15,6 +15,11 @@ export interface ArticlePerformanceMetrics {
   generated_at: string | null;
   visible_at: string | null;
   completed_at: string | null;
+  started_by: string | null;
+  worker_first_seen_at: string | null;
+  worker_lease_requested_at: string | null;
+  worker_lease_acquired_at: string | null;
+  state_reconciled_at: string | null;
   queue_wait_ms: number | null;
   research_duration_ms: number | null;
   generation_duration_ms: number | null;
@@ -24,6 +29,16 @@ export interface ArticlePerformanceMetrics {
   end_to_end_ms: number | null;
   waiting_overhead_ms: number | null;
   visibility_delay_ms: number | null;
+  queue_wait_breakdown: QueueWaitBreakdown;
+}
+
+export interface QueueWaitBreakdown {
+  cron_delay_ms: number | null;
+  queue_position_ms: number | null;
+  worker_lease_ms: number | null;
+  worker_availability_ms: number | null;
+  state_sync_ms: number | null;
+  other_ms: number | null;
 }
 
 export interface ProjectAnalytics {
@@ -56,6 +71,10 @@ export interface ProjectAnalytics {
     averages: Array<{ key: string; label: string; average_ms: number | null }>;
     ranked: Array<{ key: string; label: string; average_ms: number }>;
   };
+  queue_wait_breakdown: {
+    averages: Array<{ key: keyof QueueWaitBreakdown; label: string; average_ms: number | null; percent_of_queue_wait: number | null }>;
+    ranked: Array<{ key: keyof QueueWaitBreakdown; label: string; average_ms: number; percent_of_queue_wait: number | null }>;
+  };
   recent_articles: ArticlePerformanceMetrics[];
   missing_timestamps: Record<string, number>;
 }
@@ -73,10 +92,11 @@ export function buildProjectAnalytics({
     .filter((article) => article.status === "generated" || article.status === "needs_review")
     .sort((a, b) => completedAtForArticle(b, jobs).localeCompare(completedAtForArticle(a, jobs)));
   const researchByArticle = new Map(researchPacks.map((pack) => [pack.articleId, pack]));
-  const metrics = completedArticles.map((article) => {
+  const baseMetrics = completedArticles.map((article) => {
     const job = jobs.find((item) => item.id === article.jobId || item.articleId === article.id) ?? null;
     return buildArticlePerformanceMetrics(article, job, researchByArticle.get(article.id) ?? null);
   });
+  const metrics = withQueueWaitBreakdowns(baseMetrics);
   const recent = metrics.slice(0, 20);
   const bottleneckAverages = [
     { key: "queue_wait_ms", label: "Queue Wait", average_ms: averageMetric(recent, "queue_wait_ms") },
@@ -90,6 +110,7 @@ export function buildProjectAnalytics({
   const failedJobs = jobs.filter((job) => job.status === "failed").length;
   const completedJobs = successfulJobs + failedJobs;
   const throughputWindowMs = projectWindowMs(metrics);
+  const queueBreakdownAverages = buildQueueBreakdownAverages(recent, averageMetric(recent, "queue_wait_ms"));
 
   return {
     total_articles: completedArticles.length,
@@ -121,6 +142,12 @@ export function buildProjectAnalytics({
       averages: bottleneckAverages,
       ranked: bottleneckAverages
         .filter((item): item is { key: string; label: string; average_ms: number } => item.average_ms !== null)
+        .sort((a, b) => b.average_ms - a.average_ms)
+    },
+    queue_wait_breakdown: {
+      averages: queueBreakdownAverages,
+      ranked: queueBreakdownAverages
+        .filter((item): item is { key: keyof QueueWaitBreakdown; label: string; average_ms: number; percent_of_queue_wait: number | null } => item.average_ms !== null)
         .sort((a, b) => b.average_ms - a.average_ms)
     },
     recent_articles: recent,
@@ -159,6 +186,11 @@ function buildArticlePerformanceMetrics(article: ArticleDocument, job: QueueJob 
     generated_at: generatedAt,
     visible_at: visibleAt,
     completed_at: completedAt,
+    started_by: timings.started_by ?? null,
+    worker_first_seen_at: timings.worker_first_seen_at ?? null,
+    worker_lease_requested_at: timings.worker_lease_requested_at ?? null,
+    worker_lease_acquired_at: timings.worker_lease_acquired_at ?? null,
+    state_reconciled_at: timings.state_reconciled_at ?? null,
     queue_wait_ms: durationFromTiming(queuedAt, startedAt),
     research_duration_ms: researchMs,
     generation_duration_ms: generationMs,
@@ -167,7 +199,51 @@ function buildArticlePerformanceMetrics(article: ArticleDocument, job: QueueJob 
     active_total_ms: activeTotalMs,
     end_to_end_ms: endToEndMs,
     waiting_overhead_ms: endToEndMs !== null ? Math.max(0, endToEndMs - activeTotalMs) : null,
-    visibility_delay_ms: visibilityDelayMs
+    visibility_delay_ms: visibilityDelayMs,
+    queue_wait_breakdown: emptyQueueWaitBreakdown()
+  };
+}
+
+function withQueueWaitBreakdowns(metrics: ArticlePerformanceMetrics[]) {
+  const byStarted = [...metrics].sort((a, b) => timestampMs(a.started_at) - timestampMs(b.started_at));
+  const previousCompleted = new Map<string, ArticlePerformanceMetrics | null>();
+  for (const metric of byStarted) {
+    const started = timestampMs(metric.started_at);
+    const previous = byStarted
+      .filter((candidate) => candidate.article_id !== metric.article_id && timestampMs(candidate.completed_at) <= started)
+      .sort((a, b) => timestampMs(b.completed_at) - timestampMs(a.completed_at))[0] ?? null;
+    previousCompleted.set(metric.article_id, previous);
+  }
+
+  return metrics.map((metric) => {
+    const breakdown = calculateQueueWaitBreakdown(metric, previousCompleted.get(metric.article_id) ?? null);
+    return { ...metric, queue_wait_breakdown: breakdown };
+  });
+}
+
+function calculateQueueWaitBreakdown(metric: ArticlePerformanceMetrics, previous: ArticlePerformanceMetrics | null): QueueWaitBreakdown {
+  if (metric.queue_wait_ms === null || !metric.queued_at || !metric.started_at) return emptyQueueWaitBreakdown();
+  const queued = timestampMs(metric.queued_at);
+  const started = timestampMs(metric.started_at);
+  const workerSeen = metric.worker_first_seen_at ? timestampMs(metric.worker_first_seen_at) : null;
+  const previousCompleted = previous?.completed_at ? timestampMs(previous.completed_at) : null;
+  const cronDelay = metric.started_by === "worker" && workerSeen !== null ? clampDuration(workerSeen - queued, metric.queue_wait_ms) : 0;
+  const workerLease = durationFromTiming(metric.worker_lease_requested_at, metric.worker_lease_acquired_at) ?? 0;
+  const queueBase = Math.max(queued, workerSeen ?? queued);
+  const queuePosition = previousCompleted !== null && previousCompleted > queueBase
+    ? clampDuration(previousCompleted - queueBase, metric.queue_wait_ms)
+    : 0;
+  const availabilityBase = Math.max(queued, workerSeen ?? queued, previousCompleted ?? queued);
+  const workerAvailability = clampDuration(started - availabilityBase - workerLease, metric.queue_wait_ms);
+  const stateSync = durationFromTiming(metric.generated_at, metric.state_reconciled_at) ?? 0;
+  const known = cronDelay + queuePosition + workerLease + workerAvailability + stateSync;
+  return {
+    cron_delay_ms: cronDelay,
+    queue_position_ms: queuePosition,
+    worker_lease_ms: workerLease,
+    worker_availability_ms: workerAvailability,
+    state_sync_ms: stateSync,
+    other_ms: Math.max(0, metric.queue_wait_ms - known)
   };
 }
 
@@ -199,6 +275,36 @@ function averageMetric(items: ArticlePerformanceMetrics[], key: keyof ArticlePer
   return average(items.map((item) => item[key]).filter((value): value is number => typeof value === "number"));
 }
 
+function buildQueueBreakdownAverages(metrics: ArticlePerformanceMetrics[], averageQueueWaitMs: number | null) {
+  const fields: Array<{ key: keyof QueueWaitBreakdown; label: string }> = [
+    { key: "cron_delay_ms", label: "Cron Delay" },
+    { key: "queue_position_ms", label: "Queue Position" },
+    { key: "worker_lease_ms", label: "Worker Lease" },
+    { key: "worker_availability_ms", label: "Worker Availability" },
+    { key: "state_sync_ms", label: "State Sync" },
+    { key: "other_ms", label: "Other" }
+  ];
+  return fields.map((field) => {
+    const averageMs = average(metrics.map((metric) => metric.queue_wait_breakdown[field.key]));
+    return {
+      ...field,
+      average_ms: averageMs,
+      percent_of_queue_wait: averageMs !== null && averageQueueWaitMs ? roundTo((averageMs / averageQueueWaitMs) * 100, 1) : null
+    };
+  });
+}
+
+function emptyQueueWaitBreakdown(): QueueWaitBreakdown {
+  return {
+    cron_delay_ms: null,
+    queue_position_ms: null,
+    worker_lease_ms: null,
+    worker_availability_ms: null,
+    state_sync_ms: null,
+    other_ms: null
+  };
+}
+
 function average(values: Array<number | null | undefined>) {
   const valid = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   if (!valid.length) return null;
@@ -211,6 +317,17 @@ function projectWindowMs(metrics: ArticlePerformanceMetrics[]) {
   if (!starts.length || !ends.length) return null;
   const duration = Math.max(...ends) - Math.min(...starts);
   return duration > 0 ? duration : null;
+}
+
+function timestampMs(value: string | null) {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.POSITIVE_INFINITY;
+}
+
+function clampDuration(value: number, max: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(max, value));
 }
 
 function countMissingTimestamps(metrics: ArticlePerformanceMetrics[]) {

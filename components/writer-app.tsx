@@ -834,6 +834,29 @@ function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | nu
         </div>
       </ProjectSection>
 
+      <ProjectSection title="Queue wait breakdown">
+        <div className="grid grid-cols-3 gap-3">
+          {analytics.queue_wait_breakdown.averages.map((item) => (
+            <DashboardStat
+              key={item.key}
+              label={item.label}
+              value={formatDuration(item.average_ms)}
+              detail={item.percent_of_queue_wait !== null ? `${item.percent_of_queue_wait}% of queue wait` : "Awaiting timestamps"}
+            />
+          ))}
+        </div>
+        <div className="mt-4 divide-y divide-line/70">
+          {analytics.queue_wait_breakdown.ranked.map((item, index) => (
+            <div key={item.key} className="grid grid-cols-[32px_minmax(0,1fr)_auto_auto] gap-3 py-2 text-xs">
+              <span className="mono text-ink-subtle">#{index + 1}</span>
+              <span className="font-medium text-ink">{item.label}</span>
+              <span className="mono text-ink-muted">{formatDuration(item.average_ms)}</span>
+              <span className="mono text-ink-subtle">{item.percent_of_queue_wait !== null ? `${item.percent_of_queue_wait}%` : "-"}</span>
+            </div>
+          ))}
+        </div>
+      </ProjectSection>
+
       <ProjectSection title="Recent runs">
         {analytics.recent_articles.length ? (
           <div className="overflow-hidden">

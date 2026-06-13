@@ -43,8 +43,14 @@ export async function drainQueueWithLease({
   leaseTtlMs?: number;
 }): Promise<WorkerDrainResult> {
   const startedAt = now();
+  const leaseRequestedAt = new Date(startedAt).toISOString();
   const lease = await acquireWorkerLease(store, projectId, now, leaseTtlMs);
   if (!lease) {
+    await recordWorkerObservation(store, projectId, {
+      worker_first_seen_at: leaseRequestedAt,
+      worker_lease_requested_at: leaseRequestedAt,
+      worker_lease_blocked_at: new Date(now()).toISOString()
+    });
     const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
     return {
       processed: 0,
@@ -58,12 +64,17 @@ export async function drainQueueWithLease({
   }
 
   try {
+    await recordWorkerObservation(store, projectId, {
+      worker_first_seen_at: leaseRequestedAt,
+      worker_lease_requested_at: leaseRequestedAt,
+      worker_lease_acquired_at: lease.acquiredAt
+    });
     await runner.reclaimStale(projectId);
     let processed = 0;
     while (now() - startedAt < budgetMs) {
       const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
       if (now() - startedAt > heavyStageStartCutoffMs && snapshot.nextJob?.heavy) break;
-      const result = await runner.processNext(projectId);
+      const result = await runner.processNext(projectId, { source: "worker" });
       if (!result.processed) break;
       processed += 1;
     }
@@ -102,6 +113,26 @@ export async function acquireWorkerLease(
 
   const created = await store.createWorkerLeaseIfAbsent(lease, projectId);
   return created ? lease : null;
+}
+
+async function recordWorkerObservation(store: WorkspaceStore, projectId: string, timings: {
+  worker_first_seen_at: string;
+  worker_lease_requested_at: string;
+  worker_lease_acquired_at?: string;
+  worker_lease_blocked_at?: string;
+}) {
+  const jobs = await store.listJobs(projectId);
+  const observed = jobs.filter((job) => job.status === "queued" || job.status === "processing");
+  await Promise.all(observed.map((job) => store.saveJob({
+    ...job,
+    timings: {
+      ...job.timings,
+      worker_first_seen_at: job.timings?.worker_first_seen_at ?? timings.worker_first_seen_at,
+      worker_lease_requested_at: job.timings?.worker_lease_requested_at ?? timings.worker_lease_requested_at,
+      worker_lease_acquired_at: job.timings?.worker_lease_acquired_at ?? timings.worker_lease_acquired_at,
+      worker_lease_blocked_at: job.timings?.worker_lease_blocked_at ?? timings.worker_lease_blocked_at
+    }
+  })));
 }
 
 export async function releaseWorkerLease(store: WorkspaceStore, lease: WorkerLeaseDocument, projectId = DEFAULT_PROJECT_ID) {

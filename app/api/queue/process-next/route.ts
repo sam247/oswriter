@@ -8,6 +8,6 @@ export async function POST() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
   const { runner } = createRuntime();
-  const result = await runner.processNext();
+  const result = await runner.processNext(undefined, { source: "manual" });
   return NextResponse.json(result);
 }
