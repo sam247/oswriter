@@ -6,6 +6,7 @@ export class BlobStorageAdapter implements StorageAdapter {
     const found = await this.find(path);
     if (!found) return null;
     const res = await fetch(found.url, { cache: "no-store" });
+    if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Blob read failed for ${path}: ${res.status}`);
     return res.json() as Promise<T>;
   }
