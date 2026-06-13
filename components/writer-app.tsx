@@ -1,13 +1,13 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, ChevronDown, Download, FileArchive, FileCode, FileJson, FileText, Loader2, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Bold, CheckCircle2, ChevronDown, Code2, Columns2, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
-import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack } from "@/lib/types";
+import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
-type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug";
+type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug" | "sources";
 
 export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
   const [authed, setAuthed] = useState(initialAuthed);
@@ -82,8 +82,11 @@ function Workbench() {
     [articles, selectedArticleId]
   );
   const selectedJob = useMemo(
-    () => jobs.find((job) => job.articleId === selectedArticleId) ?? null,
-    [jobs, selectedArticleId]
+    () => {
+      const article = articles.find((item) => item.id === selectedArticleId);
+      return jobs.find((job) => job.articleId === selectedArticleId || job.id === article?.jobId) ?? null;
+    },
+    [articles, jobs, selectedArticleId]
   );
   const displayJobs = useMemo(() => jobs.map((job) => {
     const article = articles.find((item) => item.jobId === job.id);
@@ -99,6 +102,7 @@ function Workbench() {
   }), [displayJobs]);
   const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, articles, tick), [articles, displayJobs, tick]);
   const runHistory = useMemo(() => buildRunHistory(displayJobs, articles), [articles, displayJobs]);
+  const projectSummary = useMemo(() => state ? calculateProjectSummary(state, queueMetrics) : null, [queueMetrics, state]);
 
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
@@ -280,96 +284,123 @@ function Workbench() {
   }
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden bg-background text-ink">
-      <header className="hairline-b flex h-10 items-center gap-3 bg-surface-1 px-3">
-        <div className="font-semibold tracking-tight">OS Writer V2</div>
-        <span className="mono text-xs text-ink-subtle">No clever blocking logic</span>
+    <main className="flex h-screen w-screen flex-col overflow-hidden bg-background text-ink">
+      <header className="hairline-b flex h-10 select-none items-center bg-surface-2/85 px-3 backdrop-blur">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px]">
+          <button className="mr-1 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Projects">
+            <PanelLeft className="size-3.5" />
+          </button>
+          <button className="mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Inspector">
+            <PanelRight className="size-3.5" />
+          </button>
+          <span className="font-semibold tracking-tight text-ink">OS Writer V2</span>
+          <span className="text-ink-subtle">/</span>
+          <span className="truncate text-ink-muted">{state?.project.name ?? "Loading project"}</span>
+          {selectedArticle || selectedJob ? (
+            <>
+              <span className="text-ink-subtle">/</span>
+              <span className="truncate text-ink">{selectedArticle?.title ?? selectedJob?.title}</span>
+            </>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={processNext} disabled={busy || running} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
+            <Play className="size-3 fill-current" /> Generate
+          </button>
+          <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+            {running ? "Stop run" : "Run queue"}
+          </button>
+        </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(420px,1fr)_360px]">
-        <aside className="hairline-r flex min-h-0 flex-col bg-surface-2">
-          <div className="shrink-0 space-y-2 p-2">
-            <ProjectSummaryPanel state={state} metrics={queueMetrics} />
-            <CurrentRunPanel metrics={queueMetrics} />
-            <ReliabilityPanel metrics={queueMetrics} history={runHistory} />
-            <HistoryPanel history={runHistory} />
+      <div className="grid min-h-0 flex-1 grid-cols-[340px_minmax(460px,1fr)_380px]">
+        <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
+          <div className="hairline-b px-3 pb-3 pt-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</div>
+                <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-ink-subtle">
+                  <span>{projectSummary?.articleCount ?? jobs.length} articles</span>
+                  <span>{projectSummary?.totalWords ? formatNumber(projectSummary.totalWords) : 0} words</span>
+                  <span>{queueMetrics.successRate}% success</span>
+                </div>
+              </div>
+              <ProjectExportMenu summary={projectSummary} />
+            </div>
+            <div className="mono mt-3 grid grid-cols-4 gap-2 text-[10.5px]">
+              <MetricPill label="Review" value={stats.needs_review} warn={stats.needs_review > 0} />
+              <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} />
+              <MetricPill label="Queue" value={stats.queued} />
+              <MetricPill label="Writing" value={stats.processing} />
+            </div>
           </div>
 
-          <section className="hairline-t flex min-h-0 flex-1 flex-col bg-surface-2">
-            <div className="hairline-b shrink-0 p-3">
-              <PanelTitle title="Queue" />
-              <textarea
-                value={titles}
-                onChange={(e) => setTitles(e.target.value)}
-                placeholder="Paste one title per line"
-                rows={3}
-                className="mono mt-2 w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-xs outline-none focus:border-ink"
-              />
-              <div className="mt-2 flex gap-1">
-                <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-xs font-medium text-white disabled:opacity-50">
-                  <Upload className="size-3.5" /> Queue
-                </button>
-                <button onClick={processNext} disabled={busy || running} className="flex h-8 items-center gap-1 rounded-md border border-line bg-surface-1 px-2 text-xs">
-                  <Play className="size-3.5" /> Next
-                </button>
-              </div>
-              <div className="mt-2 grid grid-cols-3 gap-1">
-                <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-8 rounded-md border border-line bg-surface-1 text-xs">{running ? "Stop run" : "Start run"}</button>
-                <button onClick={stopRun} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><Square className="size-3" /> Stop</button>
-                <button onClick={() => post("/api/queue/retry-failed", "Failed jobs requeued.")} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><RotateCw className="size-3" /> Retry</button>
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-1">
-                <button onClick={() => post("/api/queue/recover", "Stale processing jobs recovered.")} className="h-8 rounded-md border border-line bg-surface-1 text-xs">Recover</button>
-                <button onClick={clearQueue} className="flex h-8 items-center justify-center gap-1 rounded-md border border-danger/30 bg-surface-1 text-xs text-danger"><Trash2 className="size-3" /> Clear queue</button>
-              </div>
-              <div className="mt-2 rounded-md border border-line bg-surface-1 p-2">
-                <label className="flex items-center justify-between text-xs text-ink-muted">
-                  <span>Target words</span>
-                  <input
-                    type="number"
-                    min={300}
-                    max={5000}
-                    step={100}
-                    value={controls?.lengthTargetWords ?? 1400}
-                    onChange={(event) => updateLengthTarget(Number(event.target.value))}
-                    className="mono h-7 w-24 rounded border border-line bg-background px-2 text-right text-xs text-ink outline-none focus:border-ink"
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div className="hairline-b flex shrink-0 flex-wrap gap-1 p-2">
+          <div className="hairline-b px-2 py-2">
+            <div className="flex flex-wrap gap-px">
               {(["all", "queued", "processing", "generated", "needs_review", "failed"] as Filter[]).map((item) => (
-                <button key={item} onClick={() => setFilter(item)} className={cn("rounded px-2 py-1 text-[11px]", filter === item ? "bg-ink text-white" : "bg-surface-1 text-ink-muted")}>
-                  {item.replace("_", " ")} <span className="mono">{item === "all" ? jobs.length : stats[item]}</span>
+                <button key={item} onClick={() => setFilter(item)} className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors", filter === item ? "bg-ink/[0.08] text-ink" : "text-ink-muted hover:bg-surface-3 hover:text-ink")}>
+                  <span>{filterLabel(item)}</span>
+                  <span className="mono text-[10px] text-ink-subtle">{item === "all" ? jobs.length : stats[item]}</span>
                 </button>
               ))}
             </div>
+          </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-            {visibleJobs.map((job) => (
-              <div key={job.id} className="hairline-b flex w-full gap-2 px-3 py-2 hover:bg-surface-3">
-                <button onClick={() => setSelectedArticleId(job.articleId)} className="flex min-w-0 flex-1 gap-2 text-left">
-                  <span className={cn("status-dot mt-1.5 shrink-0", statusColor(job.status))} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{job.title}</span>
-                  <span className="mono mt-1 block text-[11px] text-ink-subtle">
-                    {statusLabel(job.status)} - Attempt {job.attempts}
-                  </span>
-                </span>
-                </button>
-                {job.status === "failed" && (
-                  <button onClick={() => retryOne(job.id)} className="self-center rounded border border-line bg-surface-1 px-2 py-1 text-[11px] text-ink-muted hover:text-ink">
-                    Retry
-                  </button>
-                )}
-              </div>
-            ))}
+          <div className="min-h-0 flex-1 overflow-y-auto py-1">
+            {visibleJobs.length ? visibleJobs.map((job) => {
+              const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
+              return (
+                <ArticleListItem
+                  key={job.id}
+                  job={job}
+                  article={article}
+                  active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
+                  onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
+                  onRetry={() => retryOne(job.id)}
+                />
+              );
+            }) : <Empty text="No articles in this view." />}
+          </div>
+
+          <div className="hairline-t px-3 pb-3 pt-2">
+            <div className="mb-1 flex items-center justify-between px-1">
+              <PanelTitle title="Add titles" />
+              <button onClick={clearQueue} className="flex items-center gap-1 text-[10.5px] text-ink-subtle hover:text-danger">
+                <Trash2 className="size-3" /> Clear
+              </button>
             </div>
-          </section>
+            <textarea
+              value={titles}
+              onChange={(e) => setTitles(e.target.value)}
+              placeholder="Paste one title per line"
+              rows={3}
+              className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
+            />
+            <div className="mt-1.5 flex gap-1">
+              <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
+                <Upload className="size-3.5" /> Add
+              </button>
+              <button onClick={() => post("/api/queue/retry-failed", "Failed jobs requeued.")} className="flex h-7 items-center justify-center gap-1 rounded-md px-2 text-[11.5px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+                <RotateCw className="size-3.5" /> Retry
+              </button>
+              <button onClick={() => post("/api/queue/recover", "Stale processing jobs recovered.")} className="h-7 rounded-md px-2 text-[11.5px] text-ink-muted hover:bg-surface-3 hover:text-ink">Recover</button>
+            </div>
+            <label className="mt-2 flex items-center justify-between px-1 text-[11.5px] text-ink-muted">
+              <span>Target words</span>
+              <input
+                type="number"
+                min={300}
+                max={5000}
+                step={100}
+                value={controls?.lengthTargetWords ?? 1400}
+                onChange={(event) => updateLengthTarget(Number(event.target.value))}
+                className="mono h-7 w-24 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink"
+              />
+            </label>
+          </div>
         </aside>
 
-        <section className="flex min-h-0 flex-col">
+        <section className="flex min-h-0 flex-col bg-background">
           <ArticleHeader
             article={selectedArticle}
             job={selectedJob}
@@ -380,15 +411,16 @@ function Workbench() {
               window.setTimeout(() => setHighlightWarnings(false), 1800);
             }}
           />
-          <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
+          <ArticleToolbar article={selectedArticle} />
+          <div className="min-h-0 flex-1 overflow-auto">
             {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <JobPlaceholder job={selectedJob} /> : <Empty text="No article selected." />}
           </div>
         </section>
 
         <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
-          <div className="hairline-b flex h-9 shrink-0 items-center gap-1 overflow-x-auto px-2">
-            {(["research", "pipeline", "validation", "seo", "debug"] as const).map((item) => (
-              <button key={item} onClick={() => setTab(item)} className={cn("h-7 rounded px-2 text-xs capitalize", tab === item ? "bg-surface-1 text-ink shadow-sm" : "text-ink-muted")}>{item}</button>
+          <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
+            {(["research", "pipeline", "validation", "seo", "sources", "debug"] as const).map((item) => (
+              <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
             ))}
           </div>
           <Inspector
@@ -405,42 +437,149 @@ function Workbench() {
         </aside>
       </div>
 
-      <footer className="hairline-t mono flex h-7 items-center gap-4 bg-surface-1 px-3 text-[11px] text-ink-muted">
-        <span>{stats.queued} queued</span>
-        <span>{stats.processing} processing</span>
+      <footer className="hairline-t mono flex h-6 items-center gap-3 bg-surface-2/70 px-3 text-[10.5px] text-ink-subtle">
+        <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />{message}</span>
+        <span className="h-3 w-px bg-line" />
         <span>{stats.generated} generated</span>
-        <span>{stats.needs_review} needs review</span>
+        <span>{stats.needs_review} review</span>
         <span className={stats.failed ? "text-danger" : ""}>{stats.failed} failed</span>
-        <span className="ml-auto">{selectedArticle ? `${selectedArticle.wordCount} words · Q${selectedArticle.qualityScore}` : "No article"}</span>
+        <span>{queueMetrics.remaining} remaining</span>
+        <span className="ml-auto">{selectedArticle ? `${formatNumber(selectedArticle.wordCount)} words · Q${selectedArticle.qualityScore} · ${selectedArticle.sources.length} sources` : "No article"}</span>
       </footer>
     </main>
+  );
+}
+
+function ProjectExportMenu({ summary }: { summary: ProjectSummary | null }) {
+  return (
+    <ExportLink
+      href="/api/export/project/package"
+      label="Export"
+      icon={<Download className="size-3.5" />}
+      disabled={!summary?.articleCount}
+    />
+  );
+}
+
+function MetricPill({ label, value, warn = false, danger = false }: { label: string; value: number; warn?: boolean; danger?: boolean }) {
+  return (
+    <div className="rounded bg-surface-1 px-2 py-1">
+      <div className="text-ink-subtle">{label}</div>
+      <div className={cn("mt-0.5 text-[13px] font-semibold text-ink", warn && "text-warn", danger && "text-danger")}>{value}</div>
+    </div>
+  );
+}
+
+function ArticleListItem({
+  job,
+  article,
+  active,
+  onSelect,
+  onRetry
+}: {
+  job: QueueJob;
+  article: ArticleDocument | null;
+  active: boolean;
+  onSelect: () => void;
+  onRetry: () => void;
+}) {
+  const sourceCount = article?.sources.length ?? 0;
+  const authority = article ? averageNumber(article.sources.map((source) => source.authorityScore)) : 0;
+  const confidence = article?.qualityScore ?? 0;
+  return (
+    <div className="group relative">
+      {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
+      <button
+        onClick={onSelect}
+        className={cn(
+          "flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors",
+          active ? "bg-ink/[0.06]" : "hover:bg-surface-3"
+        )}
+      >
+        <span className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", statusColor(job.status), job.status === "processing" && "animate-pulse")} />
+        <span className="min-w-0 flex-1">
+          <span className={cn("block truncate text-[13px] leading-snug text-ink", active ? "font-semibold" : "font-medium")}>{article?.title ?? job.title}</span>
+          <span className="mono mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] text-ink-subtle">
+            <span>{statusLabel(job.status)}</span>
+            <span className="text-line-strong">·</span>
+            <span>{article?.wordCount ? `${formatNumber(article.wordCount)} w` : `Attempt ${job.attempts}`}</span>
+            <span className="text-line-strong">·</span>
+            <span>{sourceCount} src</span>
+            {article ? (
+              <>
+                <span className="text-line-strong">·</span>
+                <span>Conf {confidence}</span>
+                <span className="text-line-strong">·</span>
+                <span>Auth {authority}</span>
+              </>
+            ) : null}
+          </span>
+        </span>
+      </button>
+      {job.status === "failed" && (
+        <button onClick={onRetry} className="invisible absolute right-2 top-2 rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink group-hover:visible">
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ArticleToolbar({ article }: { article: ArticleDocument | null }) {
+  const viewModes = [
+    { label: "Read", icon: FileText },
+    { label: "MD", icon: Code2 },
+    { label: "Split", icon: Columns2 }
+  ];
+  return (
+    <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
+      <div className="flex shrink-0 items-center gap-1">
+        {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
+      </div>
+      <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
+      <div className="flex shrink-0 items-center gap-0.5">
+        {[Bold, Italic, LinkIcon, Heading2, Heading3, List, ListOrdered].map((Icon, index) => (
+          <button key={index} className="grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Formatting control">
+            <Icon className="size-3.5" />
+          </button>
+        ))}
+      </div>
+      <div className="ml-auto flex h-7 items-center rounded-md bg-surface-2 p-0.5">
+        {viewModes.map(({ label, icon: Icon }) => (
+          <button key={label} className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[11.5px]", label === "Read" ? "bg-surface-1 text-ink shadow-[0_1px_0_var(--line)]" : "text-ink-muted hover:text-ink")}>
+            <Icon className="size-3" /> {label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
 function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocument | null; job: QueueJob | null; onReviewClick: () => void }) {
   if (!article && job) {
     return (
-      <div className="hairline-b bg-background px-6 py-4">
-        <div className="mono text-[11px] uppercase tracking-[0.16em] text-danger">{job.status.replace("_", " ")}</div>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{job.title}</h1>
-        <div className="mono mt-2 text-xs text-ink-muted">attempt {job.attempts}</div>
+      <div className="px-6 pb-3 pt-5 lg:px-8">
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(job.status)}</div>
+        <h1 className="mt-1 text-[24px] font-semibold leading-tight tracking-tight text-ink">{job.title}</h1>
+        <div className="mono mt-2 text-[11px] text-ink-muted">Attempt {job.attempts}</div>
       </div>
     );
   }
-  if (!article) return <div className="hairline-b h-24 p-5" />;
+  if (!article) return <div className="h-24 p-5" />;
   return (
-    <div className="hairline-b bg-background px-6 py-4">
+    <div className="px-6 pb-3 pt-5 lg:px-8">
       <div className="flex gap-4">
         <div className="min-w-0 flex-1">
-          <div className="mono text-[11px] uppercase tracking-[0.16em] text-ink-subtle">{article.status.replace("_", " ")}</div>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">{article.title}</h1>
+          <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(article.status)}</div>
+          <h1 className="mt-1 text-[24px] font-semibold leading-tight tracking-tight text-ink">{article.title}</h1>
         </div>
-        <ArticleExportActions articleId={article.id} />
       </div>
-      <div className="mono mt-2 flex flex-wrap gap-3 text-xs text-ink-muted">
-        <span>{article.sources.length} sources</span>
-        <span>{article.wordCount} words</span>
-        <span>Q{article.qualityScore}</span>
+      <div className="mono mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-muted">
+        <QualityBadge value={article.qualityScore} />
+        <span className="h-3 w-px bg-line" />
+        <span><span className="text-ink-subtle">Sources</span> <span className="text-ink">{article.sources.length}</span></span>
+        <span><span className="text-ink-subtle">Words</span> <span className="text-ink">{formatNumber(article.wordCount)}</span></span>
+        <span><span className="text-ink-subtle">Authority</span> <span className="text-ink">{averageNumber(article.sources.map((source) => source.authorityScore))}</span></span>
         {article.needsReviewReasons.length > 0 && (
           <button onClick={onReviewClick} className="text-warn hover:underline">
             {article.needsReviewReasons.length} review reasons
@@ -448,6 +587,17 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
         )}
       </div>
     </div>
+  );
+}
+
+function QualityBadge({ value }: { value: number }) {
+  const tone = value >= 85 ? "text-ink" : value >= 70 ? "text-ink-muted" : "text-warn";
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="text-ink-subtle">Quality</span>
+      <span className={cn("text-[15px] font-semibold leading-none", tone)}>{value}</span>
+      <span className="text-ink-subtle">/100</span>
+    </span>
   );
 }
 
@@ -634,7 +784,7 @@ function ExportLink({
 function JobPlaceholder({ job }: { job: QueueJob }) {
   if (job.status !== "failed") {
     return (
-      <div className="mx-auto max-w-3xl rounded-md border border-line bg-surface-1 p-4">
+      <div className="mx-auto mt-10 max-w-2xl rounded-md border border-line bg-surface-1 p-5 shadow-sm">
         <h2 className="font-semibold text-ink">{statusLabel(job.status)}</h2>
         <p className="mt-2 text-sm text-ink-muted">
           {job.status === "processing"
@@ -647,7 +797,7 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
   }
 
   return (
-    <div className="mx-auto max-w-3xl rounded-md border border-danger/30 bg-surface-1 p-4">
+    <div className="mx-auto mt-10 max-w-2xl rounded-md border border-danger/30 bg-surface-1 p-5 shadow-sm">
       <h2 className="font-semibold text-danger">Technical failure</h2>
       <p className="mt-2 text-sm text-ink-muted">
         This job has no saved article because it hit a technical failure before draft save.
@@ -659,10 +809,65 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
 
 function MarkdownPreview({ markdown }: { markdown: string }) {
   return (
-    <article className="mx-auto max-w-3xl whitespace-pre-wrap text-[15px] leading-7 text-ink">
-      {markdown}
-    </article>
+    <div className="mx-auto max-w-[760px] px-8 py-10">
+      <article className="prose-os">{renderMarkdown(markdown)}</article>
+    </div>
   );
+}
+
+function renderMarkdown(markdown: string) {
+  if (!markdown.trim()) return <p className="text-ink-subtle">This article has not been generated yet.</p>;
+  const nodes: React.ReactElement[] = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    nodes.push(<p key={nodes.length}>{paragraph.join(" ")}</p>);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (!list.length) return;
+    nodes.push(<ul key={nodes.length}>{list.map((item, index) => <li key={index}>{item}</li>)}</ul>);
+    list = [];
+  };
+
+  for (const rawLine of markdown.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    if (line.startsWith("### ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(<h3 key={nodes.length}>{line.slice(4)}</h3>);
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(<h2 key={nodes.length}>{line.slice(3)}</h2>);
+      continue;
+    }
+    if (line.startsWith("# ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(<h1 key={nodes.length}>{line.slice(2)}</h1>);
+      continue;
+    }
+    if (line.startsWith("- ")) {
+      flushParagraph();
+      list.push(line.slice(2));
+      continue;
+    }
+    flushList();
+    paragraph.push(line);
+  }
+  flushParagraph();
+  flushList();
+  return nodes;
 }
 
 function Inspector({
@@ -693,6 +898,7 @@ function Inspector({
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
+      {tab === "sources" && (article ? <SourcesPanel research={details.research} article={article} /> : <Empty text="Sources will appear after research completes." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
   );
@@ -702,26 +908,62 @@ function ResearchPanel({ research, article }: { research: ResearchPack | null; a
   const sources = research?.sources ?? article.sources;
   return (
     <div className="space-y-5">
-      <MetricGrid items={[
+      <MetricGrid compact items={[
         ["Sources", sources.length],
         ["Rejected", research?.rejectedSources.length ?? 0],
         ["Authority", research?.authorityScore ?? 0],
         ["Confidence", research?.confidence ?? 0]
       ]} />
-      <PanelTitle title="Sources" />
-      <ul className="space-y-2">
-        {sources.map((source) => (
-          <li key={source.url} className="rounded-md border border-line bg-surface-1 p-2">
-            <div className="text-xs font-medium leading-snug">{source.title}</div>
-            <a className="mono mt-1 block truncate text-[11px] text-ink-subtle" href={source.url} target="_blank">{source.domain}</a>
-          </li>
-        ))}
-      </ul>
+      <SectionTitle title="Accepted sources" />
+      <SourceList sources={sources.slice(0, 6)} />
       <PanelTitle title="Useful facts" />
       <ul className="space-y-1 text-xs leading-snug text-ink-muted">
         {(research?.usefulFacts ?? []).map((fact) => <li key={fact}>{fact}</li>)}
       </ul>
     </div>
+  );
+}
+
+function SourcesPanel({ research, article }: { research: ResearchPack | null; article: ArticleDocument }) {
+  const accepted = research?.sources ?? article.sources;
+  const rejected = research?.rejectedSources ?? [];
+  return (
+    <div className="space-y-5">
+      <SectionTitle title="Evidence index" />
+      <SourceList sources={accepted} />
+      {rejected.length ? (
+        <>
+          <SectionTitle title="Rejected sources" />
+          <SourceList sources={rejected.slice(0, 12)} rejected />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function SourceList({ sources, rejected = false }: { sources: ResearchSource[]; rejected?: boolean }) {
+  if (!sources.length) return <Empty text="No sources recorded." />;
+  return (
+    <ul className="divide-y divide-line/70">
+      {sources.map((source, index) => (
+        <li key={source.url} className="group px-1 py-2">
+          <div className="flex items-start gap-2">
+            <span className="mono mt-0.5 w-6 shrink-0 text-[10px] text-ink-subtle">#{index + 1}</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-medium leading-snug text-ink">{source.title}</div>
+              <a className="mono mt-0.5 flex items-center gap-1 truncate text-[10.5px] text-ink-subtle hover:text-ink-muted" href={source.url} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-2.5 shrink-0" /> {source.domain || source.url}
+              </a>
+              <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-subtle">
+                <span>Auth <span className="text-ink-muted">{source.authorityScore}</span></span>
+                <span>Rel <span className="text-ink-muted">{source.relevanceScore}</span></span>
+                {rejected && <span className="text-danger">{source.rejectionReason ?? "rejected"}</span>}
+              </div>
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -911,13 +1153,13 @@ function DebugPanel({ debug }: { debug: DebugDocument | null }) {
   );
 }
 
-function MetricGrid({ items }: { items: [string, string | number][] }) {
+function MetricGrid({ items, compact = false }: { items: [string, string | number][]; compact?: boolean }) {
   return (
-    <div className="grid grid-cols-2 gap-2">
+    <div className={cn("grid grid-cols-2", compact ? "gap-x-4 gap-y-2 px-1" : "gap-2")}>
       {items.map(([label, value]) => (
-        <div key={label} className="rounded-md border border-line bg-surface-1 p-2">
+        <div key={label} className={cn(!compact && "rounded-md border border-line bg-surface-1 p-2")}>
           <div className="text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
-          <div className="mono mt-1 text-lg font-semibold">{value}</div>
+          <div className={cn("mono mt-1 font-semibold text-ink", compact ? "text-[15px]" : "text-lg")}>{value}</div>
         </div>
       ))}
     </div>
@@ -1029,8 +1271,16 @@ function PanelTitle({ title }: { title: string }) {
   return <h3 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">{title}</h3>;
 }
 
+function SectionTitle({ title }: { title: string }) {
+  return (
+    <div className="mb-2 flex items-center justify-between px-1">
+      <PanelTitle title={title} />
+    </div>
+  );
+}
+
 function Empty({ text }: { text: string }) {
-  return <div className="rounded-md border border-dashed border-line p-4 text-center text-xs text-ink-subtle">{text}</div>;
+  return <div className="p-5 text-center text-xs text-ink-subtle">{text}</div>;
 }
 
 function statusColor(status: JobStatus) {
@@ -1051,6 +1301,17 @@ function statusLabel(status: JobStatus) {
     needs_review: "Needs review",
     failed: "Failed"
   }[status];
+}
+
+function filterLabel(filter: Filter) {
+  return {
+    all: "All",
+    queued: "Queued",
+    processing: "Writing",
+    generated: "Generated",
+    needs_review: "Review",
+    failed: "Failed"
+  }[filter];
 }
 
 interface QueueMetrics {

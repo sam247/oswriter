@@ -15,7 +15,10 @@ const config: Config = {
           2: "var(--surface-2)",
           3: "var(--surface-3)"
         },
-        line: "var(--line)",
+        line: {
+          DEFAULT: "var(--line)",
+          strong: "var(--line-strong)"
+        },
         ink: {
           DEFAULT: "var(--ink)",
           muted: "var(--ink-muted)",
