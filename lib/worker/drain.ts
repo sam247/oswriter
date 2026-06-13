@@ -14,6 +14,8 @@ export interface WorkerDrainResult {
   durationMs: number;
   leaseAcquired: boolean;
   skippedReason?: string;
+  nextJob?: WorkerQueueSnapshot["nextJob"];
+  lease?: WorkerQueueSnapshot["lease"];
 }
 
 export function isWorkerRequestAuthorized(req: Request) {
@@ -43,13 +45,15 @@ export async function drainQueueWithLease({
   const startedAt = now();
   const lease = await acquireWorkerLease(store, projectId, now, leaseTtlMs);
   if (!lease) {
-    const state = await store.getState(projectId);
+    const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
     return {
       processed: 0,
-      remaining: countRemaining(state.jobs),
+      remaining: snapshot.remaining,
       durationMs: now() - startedAt,
       leaseAcquired: false,
-      skippedReason: "worker lease already held"
+      skippedReason: "worker lease already held",
+      nextJob: snapshot.nextJob,
+      lease: snapshot.lease
     };
   }
 
@@ -57,17 +61,20 @@ export async function drainQueueWithLease({
     await runner.reclaimStale(projectId);
     let processed = 0;
     while (now() - startedAt < budgetMs) {
-      if (now() - startedAt > heavyStageStartCutoffMs && await nextStepIsHeavy(store, projectId)) break;
+      const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
+      if (now() - startedAt > heavyStageStartCutoffMs && snapshot.nextJob?.heavy) break;
       const result = await runner.processNext(projectId);
       if (!result.processed) break;
       processed += 1;
     }
-    const state = await store.getState(projectId);
+    const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
     return {
       processed,
-      remaining: countRemaining(state.jobs),
+      remaining: snapshot.remaining,
       durationMs: now() - startedAt,
-      leaseAcquired: true
+      leaseAcquired: true,
+      nextJob: snapshot.nextJob,
+      lease: snapshot.lease
     };
   } finally {
     await releaseWorkerLease(store, lease, projectId);
@@ -106,10 +113,38 @@ function countRemaining(jobs: Array<{ status: string }>) {
   return jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
 }
 
-async function nextStepIsHeavy(store: WorkspaceStore, projectId = DEFAULT_PROJECT_ID) {
+export async function getWorkerQueueSnapshot(store: WorkspaceStore, projectId = DEFAULT_PROJECT_ID, now = () => Date.now()) {
   const jobs = await store.listJobs(projectId);
+  const lease = await store.getWorkerLease(projectId);
   const job = jobs.find((item) => item.status === "processing") ?? jobs.find((item) => item.status === "queued");
-  if (!job) return false;
-  const nextStage = job.pipeline.find((step) => step.status !== "done" && step.status !== "skipped")?.stage;
-  return nextStage === "generation" || nextStage === "save" || nextStage === "validation";
+  const nextStage = job?.pipeline.find((step) => step.status !== "done" && step.status !== "skipped")?.stage ?? null;
+  const leaseExpiresAtMs = lease ? new Date(lease.expiresAt).getTime() : null;
+  return {
+    counts: {
+      queued: jobs.filter((item) => item.status === "queued").length,
+      processing: jobs.filter((item) => item.status === "processing").length,
+      generated: jobs.filter((item) => item.status === "generated").length,
+      needsReview: jobs.filter((item) => item.status === "needs_review").length,
+      failed: jobs.filter((item) => item.status === "failed").length
+    },
+    remaining: countRemaining(jobs),
+    nextJob: job ? {
+      id: job.id,
+      articleId: job.articleId,
+      title: job.title,
+      status: job.status,
+      attempts: job.attempts,
+      updatedAt: job.updatedAt,
+      nextStage,
+      heavy: nextStage === "generation" || nextStage === "save" || nextStage === "validation"
+    } : null,
+    lease: lease ? {
+      owner: lease.owner,
+      acquiredAt: lease.acquiredAt,
+      expiresAt: lease.expiresAt,
+      expired: leaseExpiresAtMs !== null ? leaseExpiresAtMs <= now() : true
+    } : null
+  };
 }
+
+export type WorkerQueueSnapshot = Awaited<ReturnType<typeof getWorkerQueueSnapshot>>;

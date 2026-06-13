@@ -11,5 +11,6 @@ export async function GET(req: Request) {
 
   const { store, runner } = createRuntime();
   const result = await drainQueueWithLease({ store, runner });
+  console.info("worker.drain", JSON.stringify(result));
   return NextResponse.json(result);
 }
