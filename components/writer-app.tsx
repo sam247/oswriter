@@ -586,12 +586,22 @@ function PipelinePanel({
 }
 
 function StageDetails({ step, article, details }: { step: ArticleDocument["pipeline"][number]; article: ArticleDocument | null; details: Details }) {
+  const summary = (
+    <MetricGrid items={[
+      ["Status", step.status],
+      ["Duration", formatDuration(step.durationMs ?? null)],
+      ["Started", formatTime(step.startedAt)],
+      ["Completed", formatTime(step.completedAt)]
+    ]} />
+  );
+
   if (step.stage === "research") {
     const research = details.research;
     const sources = research?.sources ?? article?.sources ?? [];
     return (
       <div className="space-y-3 rounded-md border border-line bg-surface-1 p-3">
         <PanelTitle title="Research detail" />
+        {summary}
         <MetricGrid items={[
           ["Sources found", sources.length],
           ["Rejected", research?.rejectedSources.length ?? 0],
@@ -631,6 +641,7 @@ function StageDetails({ step, article, details }: { step: ArticleDocument["pipel
     return (
       <div className="space-y-3 rounded-md border border-line bg-surface-1 p-3">
         <PanelTitle title="Validation detail" />
+        {summary}
         <MetricGrid items={[
           ["Quality", article.validation.qualityScore],
           ["FAQ", article.validation.faqScore],
@@ -647,8 +658,9 @@ function StageDetails({ step, article, details }: { step: ArticleDocument["pipel
   }
 
   return (
-    <div className="rounded-md border border-line bg-surface-1 p-3">
+    <div className="space-y-3 rounded-md border border-line bg-surface-1 p-3">
       <PanelTitle title={`${step.stage} detail`} />
+      {summary}
       <pre className="mono mt-2 whitespace-pre-wrap text-xs text-ink-muted">{JSON.stringify(step, null, 2)}</pre>
     </div>
   );
@@ -719,15 +731,46 @@ function MetricGrid({ items }: { items: [string, string | number][] }) {
 
 function QueueMetricsPanel({ metrics }: { metrics: QueueMetrics }) {
   return (
-    <div className="mt-3 rounded-md border border-line bg-surface-1 p-2">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">Queue metrics</div>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-        <MetricLine label="Completed" value={`${metrics.completed}/${metrics.total}`} />
-        <MetricLine label="Remaining" value={metrics.remaining} />
-        <MetricLine label="Current" value={formatDuration(metrics.currentRuntimeMs)} />
-        <MetricLine label="Average" value={formatDuration(metrics.averageRuntimeMs)} />
-        <MetricLine label="ETA" value={formatDuration(metrics.etaMs)} />
-        <MetricLine label="Throughput" value={metrics.throughputPerHour ? `${metrics.throughputPerHour}/hr` : "-"} />
+    <div className="mt-3 space-y-2">
+      <div className="rounded-md border border-line bg-surface-1 p-2">
+        <PanelTitle title="Current queue run" />
+        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <MetricLine label="Queue size" value={metrics.total} />
+          <MetricLine label="Completed" value={`${metrics.completed}/${metrics.total}`} />
+          <MetricLine label="Remaining" value={metrics.remaining} />
+          <MetricLine label="Processing" value={metrics.processingCount} />
+          <MetricLine label="Run started" value={formatTime(metrics.runStartedAt)} />
+          <MetricLine label="Current" value={formatDuration(metrics.currentRuntimeMs)} />
+          <MetricLine label="Average" value={formatDuration(metrics.averageRuntimeMs)} />
+          <MetricLine label="ETA" value={formatDuration(metrics.etaMs)} />
+        </div>
+        {metrics.currentTitle && <div className="mono mt-2 truncate text-[11px] text-ink-subtle">{metrics.currentTitle}</div>}
+      </div>
+
+      <div className="rounded-md border border-line bg-surface-1 p-2">
+        <PanelTitle title="Reliability dashboard" />
+        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <MetricLine label="Generated" value={metrics.generated} />
+          <MetricLine label="Needs review" value={metrics.needsReview} />
+          <MetricLine label="Failed" value={metrics.failed} />
+          <MetricLine label="Success rate" value={`${metrics.successRate}%`} />
+          <MetricLine label="Avg research" value={formatDuration(metrics.averageResearchMs)} />
+          <MetricLine label="Avg generation" value={formatDuration(metrics.averageGenerationMs)} />
+          <MetricLine label="Avg save" value={formatDuration(metrics.averageSaveMs)} />
+          <MetricLine label="Throughput" value={metrics.throughputPerHour ? `${metrics.throughputPerHour}/hr` : "-"} />
+        </div>
+      </div>
+
+      <div className="rounded-md border border-line bg-surface-1 p-2">
+        <PanelTitle title="Reliability history" />
+        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <MetricLine label="Last stored run" value={`${metrics.completed} done`} />
+          <MetricLine label="Last failed" value={metrics.failed} />
+          <MetricLine label="Best stored run" value={`${metrics.completed} done`} />
+          <MetricLine label="Best failed" value={metrics.failed} />
+          <MetricLine label="Lifetime done" value={metrics.completed} />
+          <MetricLine label="Lifetime failed" value={metrics.failed} />
+        </div>
       </div>
     </div>
   );
@@ -774,27 +817,66 @@ interface QueueMetrics {
   total: number;
   completed: number;
   remaining: number;
+  generated: number;
+  needsReview: number;
+  failed: number;
+  processingCount: number;
+  successRate: number;
+  currentTitle: string | null;
+  runStartedAt: string | null;
   currentRuntimeMs: number | null;
   averageRuntimeMs: number | null;
+  averageResearchMs: number | null;
+  averageGenerationMs: number | null;
+  averageSaveMs: number | null;
   etaMs: number | null;
   throughputPerHour: number | null;
 }
 
 function calculateQueueMetrics(jobs: QueueJob[], articles: ArticleDocument[], now: number): QueueMetrics {
   const total = jobs.length;
-  const completed = jobs.filter((job) => job.status === "generated" || job.status === "needs_review" || job.status === "failed").length;
+  const generated = jobs.filter((job) => job.status === "generated").length;
+  const needsReview = jobs.filter((job) => job.status === "needs_review").length;
+  const failed = jobs.filter((job) => job.status === "failed").length;
+  const processingJobs = jobs.filter((job) => job.status === "processing");
+  const processingCount = processingJobs.length;
+  const completed = generated + needsReview + failed;
+  const successful = generated + needsReview;
   const remaining = jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
+  const successRate = completed ? Number(((successful / completed) * 100).toFixed(1)) : 100;
+  const runStartedAt = jobs.map((job) => job.createdAt).sort()[0] ?? null;
   const completedRuntimes = articles
     .map((article) => calculatePipelineRuntime(article.pipeline).totalMs)
     .filter((runtime) => runtime > 0);
+  const averageResearchMs = averageStageRuntime(articles, "research");
+  const averageGenerationMs = averageStageRuntime(articles, "generation");
+  const averageSaveMs = averageStageRuntime(articles, "save");
   const averageRuntimeMs = completedRuntimes.length
     ? Math.round(completedRuntimes.reduce((sum, runtime) => sum + runtime, 0) / completedRuntimes.length)
     : null;
-  const processing = jobs.find((job) => job.status === "processing");
+  const processing = processingJobs[0];
   const currentRuntimeMs = processing ? currentJobRuntime(processing, now) : null;
   const etaMs = averageRuntimeMs ? Math.max(0, averageRuntimeMs * remaining - (currentRuntimeMs ?? 0)) : null;
   const throughputPerHour = averageRuntimeMs ? Math.round(3_600_000 / averageRuntimeMs) : null;
-  return { total, completed, remaining, currentRuntimeMs, averageRuntimeMs, etaMs, throughputPerHour };
+  return {
+    total,
+    completed,
+    remaining,
+    generated,
+    needsReview,
+    failed,
+    processingCount,
+    successRate,
+    currentTitle: processing?.title ?? null,
+    runStartedAt,
+    currentRuntimeMs,
+    averageRuntimeMs,
+    averageResearchMs,
+    averageGenerationMs,
+    averageSaveMs,
+    etaMs,
+    throughputPerHour
+  };
 }
 
 function calculatePipelineRuntime(pipeline: ArticleDocument["pipeline"]) {
@@ -807,6 +889,13 @@ function calculatePipelineRuntime(pipeline: ArticleDocument["pipeline"]) {
     validationMs: stageMs("validation"),
     saveMs: stageMs("save")
   };
+}
+
+function averageStageRuntime(articles: ArticleDocument[], stage: string) {
+  const runtimes = articles
+    .map((article) => article.pipeline.find((step) => step.stage === stage)?.durationMs ?? 0)
+    .filter((runtime) => runtime > 0);
+  return runtimes.length ? Math.round(runtimes.reduce((sum, runtime) => sum + runtime, 0) / runtimes.length) : null;
 }
 
 function currentJobRuntime(job: QueueJob, now: number) {
@@ -825,6 +914,15 @@ function formatDuration(ms: number | null) {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(new Date(value));
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 20_000) {
