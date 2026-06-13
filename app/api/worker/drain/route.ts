@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createRuntime } from "@/lib/server/runtime";
 import { drainQueueWithLease, isWorkerRequestAuthorized } from "@/lib/worker/drain";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function GET(req: Request) {
   if (!isWorkerRequestAuthorized(req)) {
