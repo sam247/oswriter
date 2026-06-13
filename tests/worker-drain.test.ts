@@ -142,4 +142,25 @@ describe("autonomous worker drain", () => {
     assert.equal(state.articles.length, 3);
     assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
   });
+
+  it("does not start a heavy generation step late in the drain window", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Late generation should wait"]);
+    await runner.processNext();
+    await runner.processNext();
+    let calls = 0;
+
+    const result = await drainQueueWithLease({
+      store,
+      runner,
+      now: () => calls++ === 0 ? 0 : 11_000
+    });
+    const state = await store.getState();
+
+    assert.equal(result.leaseAcquired, true);
+    assert.equal(result.processed, 0);
+    assert.equal(result.remaining, 1);
+    assert.equal(state.articles.length, 0);
+    assert.equal(state.jobs[0].status, "processing");
+  });
 });
