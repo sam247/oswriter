@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Loader2, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -286,8 +286,8 @@ function Workbench() {
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(420px,1fr)_360px]">
-        <aside className="hairline-r flex min-h-0 flex-col bg-surface-2">
-          <div className="hairline-b p-3">
+        <aside className="hairline-r flex min-h-0 flex-col overflow-y-auto bg-surface-2">
+          <div className="hairline-b shrink-0 p-3">
             <textarea
               value={titles}
               onChange={(e) => setTitles(e.target.value)}
@@ -329,7 +329,7 @@ function Workbench() {
             <QueueMetricsPanel metrics={queueMetrics} />
           </div>
 
-          <div className="hairline-b flex flex-wrap gap-1 p-2">
+          <div className="hairline-b flex shrink-0 flex-wrap gap-1 p-2">
             {(["all", "queued", "processing", "generated", "needs_review", "failed"] as Filter[]).map((item) => (
               <button key={item} onClick={() => setFilter(item)} className={cn("rounded px-2 py-1 text-[11px]", filter === item ? "bg-ink text-white" : "bg-surface-1 text-ink-muted")}>
                 {item.replace("_", " ")} <span className="mono">{item === "all" ? jobs.length : stats[item]}</span>
@@ -337,7 +337,7 @@ function Workbench() {
             ))}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="pb-4">
             {visibleJobs.map((job) => (
               <div key={job.id} className="hairline-b flex w-full gap-2 px-3 py-2 hover:bg-surface-3">
                 <button onClick={() => setSelectedArticleId(job.articleId)} className="flex min-w-0 flex-1 gap-2 text-left">
@@ -730,11 +730,21 @@ function MetricGrid({ items }: { items: [string, string | number][] }) {
 }
 
 function QueueMetricsPanel({ metrics }: { metrics: QueueMetrics }) {
+  const [open, setOpen] = useState({
+    current: false,
+    reliability: false,
+    history: false
+  });
+
   return (
     <div className="mt-3 space-y-2">
-      <div className="rounded-md border border-line bg-surface-1 p-2">
-        <PanelTitle title="Current queue run" />
-        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+      <CollapsibleMetricCard
+        title="Current queue run"
+        summary={`${metrics.completed}/${metrics.total} done · ETA ${formatDuration(metrics.etaMs)}`}
+        open={open.current}
+        onToggle={() => setOpen((current) => ({ ...current, current: !current.current }))}
+      >
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
           <MetricLine label="Queue size" value={metrics.total} />
           <MetricLine label="Completed" value={`${metrics.completed}/${metrics.total}`} />
           <MetricLine label="Remaining" value={metrics.remaining} />
@@ -745,11 +755,15 @@ function QueueMetricsPanel({ metrics }: { metrics: QueueMetrics }) {
           <MetricLine label="ETA" value={formatDuration(metrics.etaMs)} />
         </div>
         {metrics.currentTitle && <div className="mono mt-2 truncate text-[11px] text-ink-subtle">{metrics.currentTitle}</div>}
-      </div>
+      </CollapsibleMetricCard>
 
-      <div className="rounded-md border border-line bg-surface-1 p-2">
-        <PanelTitle title="Reliability dashboard" />
-        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+      <CollapsibleMetricCard
+        title="Reliability dashboard"
+        summary={`${metrics.successRate}% success · ${metrics.throughputPerHour ? `${metrics.throughputPerHour}/hr` : "throughput pending"}`}
+        open={open.reliability}
+        onToggle={() => setOpen((current) => ({ ...current, reliability: !current.reliability }))}
+      >
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
           <MetricLine label="Generated" value={metrics.generated} />
           <MetricLine label="Needs review" value={metrics.needsReview} />
           <MetricLine label="Failed" value={metrics.failed} />
@@ -759,11 +773,15 @@ function QueueMetricsPanel({ metrics }: { metrics: QueueMetrics }) {
           <MetricLine label="Avg save" value={formatDuration(metrics.averageSaveMs)} />
           <MetricLine label="Throughput" value={metrics.throughputPerHour ? `${metrics.throughputPerHour}/hr` : "-"} />
         </div>
-      </div>
+      </CollapsibleMetricCard>
 
-      <div className="rounded-md border border-line bg-surface-1 p-2">
-        <PanelTitle title="Reliability history" />
-        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+      <CollapsibleMetricCard
+        title="Reliability history"
+        summary={`${metrics.completed} lifetime done · ${metrics.failed} failed`}
+        open={open.history}
+        onToggle={() => setOpen((current) => ({ ...current, history: !current.history }))}
+      >
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
           <MetricLine label="Last stored run" value={`${metrics.completed} done`} />
           <MetricLine label="Last failed" value={metrics.failed} />
           <MetricLine label="Best stored run" value={`${metrics.completed} done`} />
@@ -771,7 +789,34 @@ function QueueMetricsPanel({ metrics }: { metrics: QueueMetrics }) {
           <MetricLine label="Lifetime done" value={metrics.completed} />
           <MetricLine label="Lifetime failed" value={metrics.failed} />
         </div>
-      </div>
+      </CollapsibleMetricCard>
+    </div>
+  );
+}
+
+function CollapsibleMetricCard({
+  title,
+  summary,
+  open,
+  onToggle,
+  children
+}: {
+  title: string;
+  summary: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-line bg-surface-1">
+      <button onClick={onToggle} className="flex w-full items-center gap-2 p-2 text-left">
+        <span className="min-w-0 flex-1">
+          <PanelTitle title={title} />
+          {!open && <span className="mono mt-1 block truncate text-[11px] text-ink-subtle">{summary}</span>}
+        </span>
+        <ChevronDown className={cn("size-3.5 shrink-0 text-ink-subtle transition-transform", open && "rotate-180")} />
+      </button>
+      {open && <div className="px-2 pb-2">{children}</div>}
     </div>
   );
 }
