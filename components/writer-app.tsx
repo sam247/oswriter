@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
-type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug" | "sources";
+type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug";
 
 export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
   const [authed, setAuthed] = useState(initialAuthed);
@@ -467,7 +467,7 @@ function Workbench() {
           {selectedArticle || selectedJob ? (
             <>
               <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
-                {(["research", "pipeline", "validation", "seo", "sources", "debug"] as const).map((item) => (
+                {(["research", "pipeline", "validation", "seo", "debug"] as const).map((item) => (
                   <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
                 ))}
               </div>
@@ -1514,7 +1514,6 @@ function Inspector({
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
-      {tab === "sources" && (article ? <SourcesPanel research={details.research} article={article} /> : <Empty text="Sources will appear after research completes." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
   );
