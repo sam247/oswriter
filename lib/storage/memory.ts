@@ -12,6 +12,12 @@ export class MemoryStorageAdapter implements StorageAdapter {
     this.docs.set(path, JSON.stringify(value));
   }
 
+  async putJsonIfAbsent<T>(path: string, value: T): Promise<boolean> {
+    if (this.docs.has(path)) return false;
+    this.docs.set(path, JSON.stringify(value));
+    return true;
+  }
+
   async putText(path: string, value: string): Promise<void> {
     this.docs.set(path, value);
   }

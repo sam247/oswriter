@@ -10,3 +10,4 @@ export const articleMarkdownPath = (articleId: string, projectId = DEFAULT_PROJE
 export const articlesPrefix = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/articles/`;
 export const researchPath = (articleId: string, projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/research/${articleId}.json`;
 export const debugPath = (articleId: string, projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/debug/${articleId}.json`;
+export const workerLeasePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/worker/lease.json`;

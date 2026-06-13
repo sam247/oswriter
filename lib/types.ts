@@ -126,6 +126,14 @@ export interface DebugDocument {
   updatedAt: string;
 }
 
+export interface WorkerLeaseDocument {
+  id: string;
+  owner: string;
+  token: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
 export interface AppState {
   project: ProjectDocument;
   settings: SettingsDocument;

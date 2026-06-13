@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/queue-runner.test.ts tests/storage-paths.test.ts"
+    "test": "tsx --test tests/queue-runner.test.ts tests/storage-paths.test.ts tests/worker-drain.test.ts"
   },
   "dependencies": {
     "@vercel/blob": "^1.0.2",

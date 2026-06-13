@@ -14,6 +14,22 @@ export class BlobStorageAdapter implements StorageAdapter {
     await this.put(path, JSON.stringify(value, null, 2), "application/json");
   }
 
+  async putJsonIfAbsent<T>(path: string, value: T): Promise<boolean> {
+    try {
+      await put(path, JSON.stringify(value, null, 2), {
+        access: "public",
+        contentType: "application/json",
+        addRandomSuffix: false,
+        allowOverwrite: false
+      } as never);
+      return true;
+    } catch (error) {
+      const existing = await this.find(path).catch(() => null);
+      if (existing) return false;
+      throw error;
+    }
+  }
+
   async putText(path: string, value: string): Promise<void> {
     await this.put(path, value, "text/markdown; charset=utf-8");
   }

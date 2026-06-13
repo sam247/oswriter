@@ -1,10 +1,11 @@
-import type { ArticleDocument, DebugDocument, ProjectDocument, QueueJob, ResearchPack, SettingsDocument } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, ProjectDocument, QueueJob, ResearchPack, SettingsDocument, WorkerLeaseDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
-import { articleMarkdownPath, articlePath, articlesPrefix, debugPath, jobPath, jobsPrefix, researchPath, settingsPath, workspacePath } from "@/lib/storage/paths";
+import { articleMarkdownPath, articlePath, articlesPrefix, debugPath, jobPath, jobsPrefix, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
 
 export interface StorageAdapter {
   getJson<T>(path: string): Promise<T | null>;
   putJson<T>(path: string, value: T): Promise<void>;
+  putJsonIfAbsent<T>(path: string, value: T): Promise<boolean>;
   putText(path: string, value: string): Promise<void>;
   listJson<T>(prefix: string): Promise<T[]>;
   listPaths(prefix: string): Promise<string[]>;
@@ -89,6 +90,18 @@ export class WorkspaceStore {
 
   async getDebug(articleId: string, projectId = DEFAULT_PROJECT_ID) {
     return this.storage.getJson<DebugDocument>(debugPath(articleId, projectId));
+  }
+
+  async getWorkerLease(projectId = DEFAULT_PROJECT_ID) {
+    return this.storage.getJson<WorkerLeaseDocument>(workerLeasePath(projectId));
+  }
+
+  async createWorkerLeaseIfAbsent(lease: WorkerLeaseDocument, projectId = DEFAULT_PROJECT_ID) {
+    return this.storage.putJsonIfAbsent(workerLeasePath(projectId), lease);
+  }
+
+  async deleteWorkerLease(projectId = DEFAULT_PROJECT_ID) {
+    await this.storage.deletePath(workerLeasePath(projectId));
   }
 
   async getSettings(projectId = DEFAULT_PROJECT_ID) {
