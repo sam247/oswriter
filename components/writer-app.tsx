@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Download, FileArchive, FileCode, FileJson, FileText, Loader2, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -98,6 +98,7 @@ function Workbench() {
     failed: displayJobs.filter((job) => job.status === "failed").length
   }), [displayJobs]);
   const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, articles, tick), [articles, displayJobs, tick]);
+  const runHistory = useMemo(() => buildRunHistory(displayJobs, articles), [articles, displayJobs]);
 
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
@@ -286,58 +287,66 @@ function Workbench() {
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(420px,1fr)_360px]">
-        <aside className="hairline-r flex min-h-0 flex-col overflow-y-auto bg-surface-2">
-          <div className="hairline-b shrink-0 p-3">
-            <textarea
-              value={titles}
-              onChange={(e) => setTitles(e.target.value)}
-              placeholder="Paste one title per line"
-              rows={5}
-              className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-xs outline-none focus:border-ink"
-            />
-            <div className="mt-2 flex gap-1">
-              <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-xs font-medium text-white disabled:opacity-50">
-                <Upload className="size-3.5" /> Queue
-              </button>
-              <button onClick={processNext} disabled={busy || running} className="flex h-8 items-center gap-1 rounded-md border border-line bg-surface-1 px-2 text-xs">
-                <Play className="size-3.5" /> Next
-              </button>
-            </div>
-            <div className="mt-2 grid grid-cols-3 gap-1">
-              <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-8 rounded-md border border-line bg-surface-1 text-xs">{running ? "Stop run" : "Start run"}</button>
-              <button onClick={stopRun} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><Square className="size-3" /> Stop</button>
-              <button onClick={() => post("/api/queue/retry-failed", "Failed jobs requeued.")} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><RotateCw className="size-3" /> Retry</button>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-1">
-              <button onClick={() => post("/api/queue/recover", "Stale processing jobs recovered.")} className="h-8 rounded-md border border-line bg-surface-1 text-xs">Recover</button>
-              <button onClick={clearQueue} className="flex h-8 items-center justify-center gap-1 rounded-md border border-danger/30 bg-surface-1 text-xs text-danger"><Trash2 className="size-3" /> Clear queue</button>
-            </div>
-            <div className="mt-3 rounded-md border border-line bg-surface-1 p-2">
-              <label className="flex items-center justify-between text-xs text-ink-muted">
-                <span>Target words</span>
-                <input
-                  type="number"
-                  min={300}
-                  max={5000}
-                  step={100}
-                  value={controls?.lengthTargetWords ?? 1400}
-                  onChange={(event) => updateLengthTarget(Number(event.target.value))}
-                  className="mono h-7 w-24 rounded border border-line bg-background px-2 text-right text-xs text-ink outline-none focus:border-ink"
-                />
-              </label>
-            </div>
-            <QueueMetricsPanel metrics={queueMetrics} />
+        <aside className="hairline-r flex min-h-0 flex-col bg-surface-2">
+          <div className="shrink-0 space-y-2 p-2">
+            <ProjectSummaryPanel state={state} metrics={queueMetrics} />
+            <CurrentRunPanel metrics={queueMetrics} />
+            <ReliabilityPanel metrics={queueMetrics} history={runHistory} />
+            <HistoryPanel history={runHistory} />
           </div>
 
-          <div className="hairline-b flex shrink-0 flex-wrap gap-1 p-2">
-            {(["all", "queued", "processing", "generated", "needs_review", "failed"] as Filter[]).map((item) => (
-              <button key={item} onClick={() => setFilter(item)} className={cn("rounded px-2 py-1 text-[11px]", filter === item ? "bg-ink text-white" : "bg-surface-1 text-ink-muted")}>
-                {item.replace("_", " ")} <span className="mono">{item === "all" ? jobs.length : stats[item]}</span>
-              </button>
-            ))}
-          </div>
+          <section className="hairline-t flex min-h-0 flex-1 flex-col bg-surface-2">
+            <div className="hairline-b shrink-0 p-3">
+              <PanelTitle title="Queue" />
+              <textarea
+                value={titles}
+                onChange={(e) => setTitles(e.target.value)}
+                placeholder="Paste one title per line"
+                rows={3}
+                className="mono mt-2 w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-xs outline-none focus:border-ink"
+              />
+              <div className="mt-2 flex gap-1">
+                <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-xs font-medium text-white disabled:opacity-50">
+                  <Upload className="size-3.5" /> Queue
+                </button>
+                <button onClick={processNext} disabled={busy || running} className="flex h-8 items-center gap-1 rounded-md border border-line bg-surface-1 px-2 text-xs">
+                  <Play className="size-3.5" /> Next
+                </button>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-1">
+                <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-8 rounded-md border border-line bg-surface-1 text-xs">{running ? "Stop run" : "Start run"}</button>
+                <button onClick={stopRun} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><Square className="size-3" /> Stop</button>
+                <button onClick={() => post("/api/queue/retry-failed", "Failed jobs requeued.")} className="flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 text-xs"><RotateCw className="size-3" /> Retry</button>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-1">
+                <button onClick={() => post("/api/queue/recover", "Stale processing jobs recovered.")} className="h-8 rounded-md border border-line bg-surface-1 text-xs">Recover</button>
+                <button onClick={clearQueue} className="flex h-8 items-center justify-center gap-1 rounded-md border border-danger/30 bg-surface-1 text-xs text-danger"><Trash2 className="size-3" /> Clear queue</button>
+              </div>
+              <div className="mt-2 rounded-md border border-line bg-surface-1 p-2">
+                <label className="flex items-center justify-between text-xs text-ink-muted">
+                  <span>Target words</span>
+                  <input
+                    type="number"
+                    min={300}
+                    max={5000}
+                    step={100}
+                    value={controls?.lengthTargetWords ?? 1400}
+                    onChange={(event) => updateLengthTarget(Number(event.target.value))}
+                    className="mono h-7 w-24 rounded border border-line bg-background px-2 text-right text-xs text-ink outline-none focus:border-ink"
+                  />
+                </label>
+              </div>
+            </div>
 
-          <div className="pb-4">
+            <div className="hairline-b flex shrink-0 flex-wrap gap-1 p-2">
+              {(["all", "queued", "processing", "generated", "needs_review", "failed"] as Filter[]).map((item) => (
+                <button key={item} onClick={() => setFilter(item)} className={cn("rounded px-2 py-1 text-[11px]", filter === item ? "bg-ink text-white" : "bg-surface-1 text-ink-muted")}>
+                  {item.replace("_", " ")} <span className="mono">{item === "all" ? jobs.length : stats[item]}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto pb-4">
             {visibleJobs.map((job) => (
               <div key={job.id} className="hairline-b flex w-full gap-2 px-3 py-2 hover:bg-surface-3">
                 <button onClick={() => setSelectedArticleId(job.articleId)} className="flex min-w-0 flex-1 gap-2 text-left">
@@ -356,7 +365,8 @@ function Workbench() {
                 )}
               </div>
             ))}
-          </div>
+            </div>
+          </section>
         </aside>
 
         <section className="flex min-h-0 flex-col">
@@ -420,8 +430,13 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
   if (!article) return <div className="hairline-b h-24 p-5" />;
   return (
     <div className="hairline-b bg-background px-6 py-4">
-      <div className="mono text-[11px] uppercase tracking-[0.16em] text-ink-subtle">{article.status.replace("_", " ")}</div>
-      <h1 className="mt-1 text-2xl font-semibold tracking-tight">{article.title}</h1>
+      <div className="flex gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="mono text-[11px] uppercase tracking-[0.16em] text-ink-subtle">{article.status.replace("_", " ")}</div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">{article.title}</h1>
+        </div>
+        <ArticleExportActions articleId={article.id} />
+      </div>
       <div className="mono mt-2 flex flex-wrap gap-3 text-xs text-ink-muted">
         <span>{article.sources.length} sources</span>
         <span>{article.wordCount} words</span>
@@ -433,6 +448,186 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
         )}
       </div>
     </div>
+  );
+}
+
+function ArticleExportActions({ articleId }: { articleId: string }) {
+  return (
+    <div className="flex shrink-0 items-start gap-1">
+      <ExportLink href={`/api/export/article/${articleId}/markdown`} label="Markdown" icon={<FileText className="size-3.5" />} />
+      <ExportLink href={`/api/export/article/${articleId}/docx`} label="DOCX" icon={<FileArchive className="size-3.5" />} />
+      <ExportLink href={`/api/export/article/${articleId}/html`} label="HTML" icon={<FileCode className="size-3.5" />} />
+      <ExportLink href={`/api/export/article/${articleId}/json`} label="JSON" icon={<FileJson className="size-3.5" />} />
+    </div>
+  );
+}
+
+function ProjectSummaryPanel({ state, metrics }: { state: AppState | null; metrics: QueueMetrics }) {
+  const summary = state ? calculateProjectSummary(state, metrics) : null;
+  return (
+    <SummarySection
+      title="Project Summary"
+      tone="context"
+      defaultOpen
+      summary={summary ? `${summary.articleCount} Articles · ${summary.generatedCount} Generated · ${summary.failedCount} Failed` : "Project context loading"}
+    >
+      {summary ? (
+        <div className="space-y-2">
+          <div>
+            <div className="truncate text-sm font-semibold text-ink">{summary.projectName}</div>
+            <div className="mono mt-1 text-[11px] text-ink-subtle">Created {formatDate(summary.createdDate)} · Last {formatDate(summary.lastActivity)}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+            <MetricLine label="Articles" value={formatNumber(summary.articleCount)} />
+            <MetricLine label="Generated" value={formatNumber(summary.generatedCount)} />
+            <MetricLine label="Needs review" value={formatNumber(summary.reviewCount)} />
+            <MetricLine label="Failed" value={formatNumber(summary.failedCount)} />
+            <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
+            <MetricLine label="Sources" value={formatNumber(summary.totalSources)} />
+            <MetricLine label="Authority" value={summary.averageAuthority || "-"} />
+            <MetricLine label="Confidence" value={summary.averageConfidence || "-"} />
+            <MetricLine label="Success rate" value={`${summary.successRate}%`} />
+          </div>
+          <ExportLink href="/api/export/project/package" label="Export Project" icon={<Download className="size-3.5" />} disabled={!summary.articleCount} block />
+        </div>
+      ) : <Empty text="Project summary will appear once state loads." />}
+    </SummarySection>
+  );
+}
+
+function CurrentRunPanel({ metrics }: { metrics: QueueMetrics }) {
+  return (
+    <SummarySection
+      title="Current Run"
+      tone="active"
+      summary={`${metrics.completed}/${metrics.total} complete · ETA ${formatDuration(metrics.etaMs)}`}
+    >
+      <div className="space-y-2">
+        <div>
+          <div className="mono text-xl font-semibold text-ink">{metrics.completed} / {metrics.total} Complete</div>
+          {metrics.currentTitle && <div className="mt-1 truncate text-xs text-ink-muted">{metrics.currentTitle}</div>}
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <MetricLine label="Completed" value={`${metrics.completed}/${metrics.total}`} />
+          <MetricLine label="Remaining" value={metrics.remaining} />
+          <MetricLine label="Processing" value={metrics.processingCount} />
+          <MetricLine label="Average" value={formatDuration(metrics.averageRuntimeMs)} />
+          <MetricLine label="ETA" value={formatDuration(metrics.etaMs)} />
+          <MetricLine label="Run started" value={formatTime(metrics.runStartedAt)} />
+        </div>
+      </div>
+    </SummarySection>
+  );
+}
+
+function ReliabilityPanel({ metrics, history }: { metrics: QueueMetrics; history: RunSummary[] }) {
+  const largestRun = history.reduce((best, run) => run.total > best ? run.total : best, 0);
+  const fastestRun = history
+    .map((run) => run.averageRuntimeMs)
+    .filter((runtime): runtime is number => runtime !== null)
+    .sort((a, b) => a - b)[0] ?? null;
+  const bestRun = history
+    .map((run) => ({ run, score: run.total ? (run.generated + run.needsReview) / run.total : 0 }))
+    .sort((a, b) => b.score - a.score || b.run.total - a.run.total)[0]?.run ?? null;
+
+  return (
+    <SummarySection
+      title="Reliability"
+      tone="health"
+      summary={`${metrics.successRate}% lifetime success · ${metrics.failed} failed`}
+    >
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        <MetricLine label="Generated" value={metrics.generated} />
+        <MetricLine label="Failed" value={metrics.failed} />
+        <MetricLine label="Needs review" value={metrics.needsReview} />
+        <MetricLine label="Success rate" value={`${metrics.successRate}%`} />
+        <MetricLine label="Best run" value={bestRun ? `${bestRun.generated}/${bestRun.total}` : "-"} />
+        <MetricLine label="Largest run" value={largestRun || "-"} />
+        <MetricLine label="Fastest run" value={formatDuration(fastestRun)} />
+      </div>
+    </SummarySection>
+  );
+}
+
+function HistoryPanel({ history }: { history: RunSummary[] }) {
+  return (
+    <SummarySection
+      title="History"
+      tone="history"
+      summary={history.length ? `${history[0].total} articles in latest run` : "No stored runs yet"}
+    >
+      {history.length ? (
+        <div className="space-y-2">
+          {history.slice(0, 3).map((run, index) => (
+            <details key={run.id} className="rounded border border-line bg-background p-2">
+              <summary className="cursor-pointer text-xs font-medium text-ink">Run #{index + 1}</summary>
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                <MetricLine label="Articles" value={run.total} />
+                <MetricLine label="Generated" value={run.generated} />
+                <MetricLine label="Review" value={run.needsReview} />
+                <MetricLine label="Failed" value={run.failed} />
+                <MetricLine label="Started" value={formatDate(run.startedAt)} />
+                <MetricLine label="Average" value={formatDuration(run.averageRuntimeMs)} />
+              </div>
+            </details>
+          ))}
+        </div>
+      ) : <Empty text="Run history appears after jobs are queued." />}
+    </SummarySection>
+  );
+}
+
+function SummarySection({
+  title,
+  tone,
+  summary,
+  defaultOpen = false,
+  children
+}: {
+  title: string;
+  tone: "context" | "active" | "health" | "history";
+  summary: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={cn("rounded-md border bg-surface-1", sectionTone(tone))}>
+      <button onClick={() => setOpen((current) => !current)} className="flex w-full items-center gap-2 p-2 text-left">
+        <span className="min-w-0 flex-1">
+          <PanelTitle title={title} />
+          {!open && <span className="mono mt-1 block truncate text-[11px] text-ink-subtle">{summary}</span>}
+        </span>
+        <ChevronDown className={cn("size-3.5 shrink-0 text-ink-subtle transition-transform", open && "rotate-180")} />
+      </button>
+      {open && <div className="px-2 pb-2">{children}</div>}
+    </div>
+  );
+}
+
+function ExportLink({
+  href,
+  label,
+  icon,
+  disabled = false,
+  block = false
+}: {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  disabled?: boolean;
+  block?: boolean;
+}) {
+  const className = cn(
+    "inline-flex h-8 items-center justify-center gap-1 rounded-md border border-line bg-surface-1 px-2 text-xs text-ink hover:border-ink-subtle",
+    block && "mt-1 w-full",
+    disabled && "pointer-events-none opacity-45"
+  );
+  return (
+    <a href={href} className={className} aria-disabled={disabled}>
+      {icon}
+      <span className="truncate">{label}</span>
+    </a>
   );
 }
 
@@ -878,6 +1073,90 @@ interface QueueMetrics {
   throughputPerHour: number | null;
 }
 
+interface ProjectSummary {
+  projectName: string;
+  createdDate: string;
+  lastActivity: string;
+  articleCount: number;
+  generatedCount: number;
+  reviewCount: number;
+  failedCount: number;
+  totalWords: number;
+  totalSources: number;
+  averageAuthority: number;
+  averageConfidence: number;
+  successRate: number;
+}
+
+interface RunSummary {
+  id: string;
+  startedAt: string;
+  total: number;
+  generated: number;
+  needsReview: number;
+  failed: number;
+  averageRuntimeMs: number | null;
+}
+
+function calculateProjectSummary(state: AppState, metrics: QueueMetrics): ProjectSummary {
+  const articles = state.articles;
+  const sourceScores = articles.flatMap((article) => article.sources.map((source) => source.authorityScore));
+  const confidenceScores = articles.map((article) => article.qualityScore).filter((score) => Number.isFinite(score));
+  const timestamps = [
+    state.project.updatedAt,
+    ...state.jobs.map((job) => job.updatedAt),
+    ...articles.map((article) => article.updatedAt)
+  ].filter(Boolean).sort();
+
+  return {
+    projectName: state.project.name,
+    createdDate: state.project.createdAt,
+    lastActivity: timestamps[timestamps.length - 1] ?? state.project.createdAt,
+    articleCount: state.jobs.length || articles.length,
+    generatedCount: metrics.generated,
+    reviewCount: metrics.needsReview,
+    failedCount: metrics.failed,
+    totalWords: articles.reduce((sum, article) => sum + article.wordCount, 0),
+    totalSources: articles.reduce((sum, article) => sum + article.sources.length, 0),
+    averageAuthority: averageNumber(sourceScores),
+    averageConfidence: averageNumber(confidenceScores),
+    successRate: metrics.successRate
+  };
+}
+
+function buildRunHistory(jobs: QueueJob[], articles: ArticleDocument[]): RunSummary[] {
+  const sorted = [...jobs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const runs: QueueJob[][] = [];
+
+  for (const job of sorted) {
+    const latestRun = runs[runs.length - 1];
+    const latestJob = latestRun?.[latestRun.length - 1];
+    if (!latestRun || !latestJob || new Date(job.createdAt).getTime() - new Date(latestJob.createdAt).getTime() > 30 * 60 * 1000) {
+      runs.push([job]);
+    } else {
+      latestRun.push(job);
+    }
+  }
+
+  return runs.reverse().map((run) => {
+    const runArticles = run
+      .map((job) => articles.find((article) => article.jobId === job.id))
+      .filter((article): article is ArticleDocument => Boolean(article));
+    const runtimes = runArticles
+      .map((article) => calculatePipelineRuntime(article.pipeline).totalMs)
+      .filter((runtime) => runtime > 0);
+    return {
+      id: run[0]?.id ?? "run",
+      startedAt: run[0]?.createdAt ?? "",
+      total: run.length,
+      generated: run.filter((job) => job.status === "generated").length,
+      needsReview: run.filter((job) => job.status === "needs_review").length,
+      failed: run.filter((job) => job.status === "failed").length,
+      averageRuntimeMs: runtimes.length ? Math.round(runtimes.reduce((sum, runtime) => sum + runtime, 0) / runtimes.length) : null
+    };
+  });
+}
+
 function calculateQueueMetrics(jobs: QueueJob[], articles: ArticleDocument[], now: number): QueueMetrics {
   const total = jobs.length;
   const generated = jobs.filter((job) => job.status === "generated").length;
@@ -968,6 +1247,34 @@ function formatTime(value?: string | null) {
     minute: "2-digit",
     second: "2-digit"
   }).format(new Date(value));
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
+  }).format(new Date(value));
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-GB").format(value);
+}
+
+function averageNumber(values: number[]) {
+  const valid = values.filter((value) => Number.isFinite(value));
+  if (!valid.length) return 0;
+  return Math.round(valid.reduce((sum, value) => sum + value, 0) / valid.length);
+}
+
+function sectionTone(tone: "context" | "active" | "health" | "history") {
+  return {
+    context: "border-info/30",
+    active: "border-success/30",
+    health: "border-warn/30",
+    history: "border-line"
+  }[tone];
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 20_000) {
