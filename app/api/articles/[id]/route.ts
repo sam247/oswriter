@@ -9,9 +9,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (unauth) return unauth;
 
   const { id } = await context.params;
-  const body = await req.json().catch(() => ({})) as { markdown?: string };
-  if (typeof body.markdown !== "string") {
-    return NextResponse.json({ error: "Missing markdown." }, { status: 400 });
+  const body = await req.json().catch(() => ({})) as { markdown?: string; title?: string };
+  const hasMarkdown = typeof body.markdown === "string";
+  const hasTitle = typeof body.title === "string";
+  if (!hasMarkdown && !hasTitle) {
+    return NextResponse.json({ error: "Missing article changes." }, { status: 400 });
   }
 
   const { store } = createRuntime();
@@ -21,8 +23,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
   const updated = {
     ...article,
-    markdown: body.markdown,
-    wordCount: countWords(body.markdown),
+    title: hasTitle ? body.title!.trim() || article.title : article.title,
+    markdown: hasMarkdown ? body.markdown! : article.markdown,
+    wordCount: hasMarkdown ? countWords(body.markdown!) : article.wordCount,
     updatedAt: nowIso()
   };
   await store.saveArticle(updated);

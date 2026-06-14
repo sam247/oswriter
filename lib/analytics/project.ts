@@ -1,4 +1,11 @@
 import type { ArticleDocument, QueueJob, ResearchPack } from "@/lib/types";
+import { calculateArticleScores, type ArticleScores, type ScoreComponent, type ScoreProfileItem } from "@/lib/scoring/article-scores";
+
+export interface ArticleScoreDiagnostics {
+  score: number;
+  components: ScoreComponent[];
+  profile: ScoreProfileItem[];
+}
 
 export interface ArticlePerformanceMetrics {
   article_id: string;
@@ -8,7 +15,13 @@ export interface ArticlePerformanceMetrics {
   words: number;
   sources: number;
   quality: number;
-  authority: number;
+  research: number;
+  evidence: number;
+  score_diagnostics: {
+    quality: ArticleScoreDiagnostics;
+    research: ArticleScoreDiagnostics;
+    evidence: ArticleScoreDiagnostics;
+  };
   confidence: number | null;
   queued_at: string | null;
   started_at: string | null;
@@ -65,7 +78,8 @@ export interface ProjectAnalytics {
   };
   quality: {
     average_quality_score: number | null;
-    average_authority: number | null;
+    average_research_score: number | null;
+    average_evidence_score: number | null;
     average_confidence: number | null;
   };
   bottlenecks: {
@@ -135,8 +149,9 @@ export function buildProjectAnalytics({
       retry_rate: jobs.length ? roundTo((jobs.filter((job) => job.attempts > 1).length / jobs.length) * 100, 1) : 0
     },
     quality: {
-      average_quality_score: average(completedArticles.map((article) => article.qualityScore)),
-      average_authority: average(metrics.map((metric) => metric.authority)),
+      average_quality_score: average(metrics.map((metric) => metric.quality)),
+      average_research_score: average(metrics.map((metric) => metric.research)),
+      average_evidence_score: average(metrics.map((metric) => metric.evidence)),
       average_confidence: average(metrics.map((metric) => metric.confidence))
     },
     bottlenecks: {
@@ -172,6 +187,7 @@ function buildArticlePerformanceMetrics(article: ArticleDocument, job: QueueJob 
   const endToEndMs = durationFromTiming(queuedAt, completedAt);
   const visibilityDelayMs = visibleContext ? durationFromTiming(generatedAt, visibleAt) : null;
   const confidence = research?.confidence ?? numberFromMeta(article, "research", "confidence");
+  const scores = calculateArticleScores(article, research);
 
   return {
     article_id: article.id,
@@ -180,8 +196,10 @@ function buildArticlePerformanceMetrics(article: ArticleDocument, job: QueueJob 
     status: article.status,
     words: article.wordCount,
     sources: article.sources.length,
-    quality: article.qualityScore,
-    authority: average(article.sources.map((source) => source.authorityScore)) ?? 0,
+    quality: scores.quality.score,
+    research: scores.research.score,
+    evidence: scores.evidence.score,
+    score_diagnostics: scoreDiagnostics(scores),
     confidence,
     queued_at: queuedAt,
     started_at: startedAt,
@@ -204,6 +222,26 @@ function buildArticlePerformanceMetrics(article: ArticleDocument, job: QueueJob 
     waiting_overhead_ms: endToEndMs !== null ? Math.max(0, endToEndMs - activeTotalMs) : null,
     visibility_delay_ms: visibilityDelayMs,
     queue_wait_breakdown: emptyQueueWaitBreakdown()
+  };
+}
+
+function scoreDiagnostics(scores: ArticleScores): ArticlePerformanceMetrics["score_diagnostics"] {
+  return {
+    quality: {
+      score: scores.quality.score,
+      components: scores.quality.components,
+      profile: scores.quality.profile
+    },
+    research: {
+      score: scores.research.score,
+      components: scores.research.components,
+      profile: scores.research.profile
+    },
+    evidence: {
+      score: scores.evidence.score,
+      components: scores.evidence.components,
+      profile: scores.evidence.profile
+    }
   };
 }
 

@@ -1,15 +1,15 @@
 "use client";
 
-import { AlertCircle, Bold, CheckCircle2, ChevronDown, ChevronRight, Code2, Columns2, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Pencil, Play, RotateCw, Search, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Bold, CheckCircle2, ChevronDown, ChevronRight, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
+import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
-type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug";
-type ArticleViewMode = "read" | "md" | "split";
+type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" | "debug";
 type FormatCommand = "bold" | "italic" | "link" | "h2" | "h3" | "bullet" | "numbered";
 type TransitionTraceEntry = {
   at: string;
@@ -31,7 +31,6 @@ type TransitionTraceEntry = {
 };
 
 const TRANSITION_TRACE_KEY = "oswriter.transitionTrace";
-const ARTICLE_VIEW_MODE_KEY = "oswriter.articleViewMode";
 
 export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
   const [authed, setAuthed] = useState(initialAuthed);
@@ -90,10 +89,12 @@ function Workbench() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
-  const [tab, setTab] = useState<InspectorTab>("pipeline");
-  const [viewMode, setViewMode] = useState<ArticleViewMode>("read");
+  const [tab, setTab] = useState<InspectorTab>("project");
+  const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalytics | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [selectedStage, setSelectedStage] = useState<string>("research");
   const [highlightWarnings, setHighlightWarnings] = useState(false);
   const [tick, setTick] = useState(Date.now());
@@ -101,6 +102,7 @@ function Workbench() {
   const activeRequest = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const saveRevisionRef = useRef(0);
   const warningsRef = useRef<HTMLDivElement | null>(null);
   const visibleRecordedRef = useRef<Set<string>>(new Set());
   const visibilityBaselineRef = useRef<Set<string> | null>(null);
@@ -121,6 +123,7 @@ function Workbench() {
     [articles, jobs, selectedArticleId]
   );
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
+  const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
   const displayJobs = useMemo(() => jobs.map((job) => {
     const article = articles.find((item) => item.jobId === job.id);
     return article ? { ...job, status: article.status } : job;
@@ -160,16 +163,21 @@ function Workbench() {
   }, []);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(ARTICLE_VIEW_MODE_KEY);
-    if (stored === "read" || stored === "md" || stored === "split") setViewMode(stored);
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
   }, []);
 
   useEffect(() => {
-    if (selectedArticleId) setTab("pipeline");
-  }, [selectedArticleId]);
+    if (!selectedArticleId && tab !== "project") setTab("project");
+  }, [selectedArticleId, tab]);
+
+  useEffect(() => {
+    if (tab !== "project") return;
+    void fetch("/api/analytics/project", { cache: "no-store" })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: ProjectAnalytics | null) => setProjectAnalytics(data));
+  }, [tab, articles.length, jobs.length]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -328,35 +336,41 @@ function Workbench() {
     if (!res.ok) void refresh();
   }
 
-  function setArticleViewMode(mode: ArticleViewMode) {
-    setViewMode(mode);
-    window.localStorage.setItem(ARTICLE_VIEW_MODE_KEY, mode);
-  }
-
-  function updateArticleMarkdown(articleId: string, markdown: string) {
-    setDrafts((current) => ({ ...current, [articleId]: markdown }));
+  function updateArticleDraft(articleId: string, patch: { title?: string; markdown?: string }) {
+    let nextTitle = patch.title;
+    let nextMarkdown = patch.markdown;
+    const currentArticle = state?.articles.find((article) => article.id === articleId);
+    if (!currentArticle) return;
+    if (nextTitle === undefined) nextTitle = titleDrafts[articleId] ?? currentArticle.title;
+    if (nextMarkdown === undefined) nextMarkdown = drafts[articleId] ?? currentArticle.markdown;
+    setDrafts((current) => patch.markdown === undefined ? current : { ...current, [articleId]: patch.markdown });
+    setTitleDrafts((current) => patch.title === undefined ? current : { ...current, [articleId]: patch.title });
     setSaveState("saving");
     setState((current) => current ? {
       ...current,
       articles: current.articles.map((article) => article.id === articleId ? {
         ...article,
-        markdown,
-        wordCount: countWordsLocal(markdown),
+        title: nextTitle,
+        markdown: nextMarkdown,
+        wordCount: countWordsLocal(nextMarkdown),
         updatedAt: new Date().toISOString()
       } : article)
     } : current);
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    const revision = saveRevisionRef.current + 1;
+    saveRevisionRef.current = revision;
     saveTimerRef.current = window.setTimeout(() => {
-      void saveArticleMarkdown(articleId, markdown);
+      void saveArticleDraft(articleId, { title: nextTitle, markdown: nextMarkdown }, revision);
     }, 700);
   }
 
-  async function saveArticleMarkdown(articleId: string, markdown: string) {
+  async function saveArticleDraft(articleId: string, payload: { title: string; markdown: string }, revision: number) {
     const res = await fetch(`/api/articles/${articleId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ markdown })
+      body: JSON.stringify(payload)
     });
+    if (revision !== saveRevisionRef.current) return;
     if (!res.ok) {
       setSaveState("error");
       return;
@@ -367,19 +381,29 @@ function Workbench() {
         ...current,
         articles: current.articles.map((article) => article.id === data.article?.id ? data.article : article)
       } : current);
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[data.article!.id];
+        return next;
+      });
+      setTitleDrafts((current) => {
+        const next = { ...current };
+        delete next[data.article!.id];
+        return next;
+      });
     }
     setSaveState("saved");
+    setLastSavedAt(new Date().toISOString());
   }
 
   function applyFormat(command: FormatCommand) {
     if (!selectedArticle) return;
-    if (viewMode === "read") setArticleViewMode("md");
     const textarea = editorRef.current;
     const markdown = selectedMarkdown;
     const start = textarea?.selectionStart ?? markdown.length;
     const end = textarea?.selectionEnd ?? markdown.length;
     const next = formatMarkdown(markdown, start, end, command);
-    updateArticleMarkdown(selectedArticle.id, next.value);
+    updateArticleDraft(selectedArticle.id, { markdown: next.value });
     window.requestAnimationFrame(() => {
       editorRef.current?.focus();
       editorRef.current?.setSelectionRange(next.selectionStart, next.selectionEnd);
@@ -437,7 +461,7 @@ function Workbench() {
           {selectedArticle || selectedJob ? (
             <>
               <ChevronRight className="size-3 text-ink-subtle" />
-              <span className="truncate text-ink">{selectedArticle?.title ?? selectedJob?.title}</span>
+              <span className="truncate text-ink">{selectedArticle ? selectedTitle : selectedJob?.title}</span>
             </>
           ) : null}
         </div>
@@ -548,6 +572,9 @@ function Workbench() {
               <ArticleHeader
                 article={selectedArticle}
                 job={selectedJob}
+                research={details.research}
+                title={selectedTitle}
+                onTitleChange={(title) => selectedArticle && updateArticleDraft(selectedArticle.id, { title })}
                 onReviewClick={() => {
                   setTab("validation");
                   setHighlightWarnings(true);
@@ -557,18 +584,16 @@ function Workbench() {
               />
               <ArticleToolbar
                 article={selectedArticle}
-                viewMode={viewMode}
                 saveState={saveState}
-                onViewModeChange={setArticleViewMode}
+                lastSavedAt={lastSavedAt}
                 onFormat={applyFormat}
               />
               <div className="min-h-0 flex-1 overflow-auto">
                 {selectedArticle ? (
                   <ArticleWorkspace
                     markdown={selectedMarkdown}
-                    viewMode={viewMode}
                     editorRef={editorRef}
-                    onChange={(markdown) => updateArticleMarkdown(selectedArticle.id, markdown)}
+                    onChange={(markdown) => updateArticleDraft(selectedArticle.id, { markdown })}
                   />
                 ) : selectedJob ? <JobPlaceholder job={selectedJob} /> : null}
               </div>
@@ -579,8 +604,6 @@ function Workbench() {
               state={state}
               articles={articles}
               jobs={displayJobs}
-              metrics={queueMetrics}
-              history={runHistory}
               summary={projectSummary}
               onSelectArticle={setSelectedArticleId}
             />
@@ -588,30 +611,31 @@ function Workbench() {
         </section>
 
         <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
-          {selectedArticle || selectedJob ? (
-            <>
-              <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
-                {(["pipeline", "research", "validation", "seo", "debug"] as const).map((item) => (
-                  <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
-                ))}
-              </div>
-              <Inspector
-                tab={tab}
-                setTab={setTab}
-                article={selectedArticle}
-                job={selectedJob}
-                markdown={selectedMarkdown}
-                onApplyMarkdown={(markdown) => selectedArticle && updateArticleMarkdown(selectedArticle.id, markdown)}
-                details={details}
-                selectedStage={selectedStage}
-                setSelectedStage={setSelectedStage}
-                warningsRef={warningsRef}
-                highlightWarnings={highlightWarnings}
-              />
-            </>
-          ) : (
-            <ProjectInsights state={state} articles={articles} jobs={displayJobs} metrics={queueMetrics} history={runHistory} />
-          )}
+          <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
+            {(["project", "pipeline", "research", "validation", "seo", "debug"] as const).map((item) => (
+              <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
+            ))}
+          </div>
+          <Inspector
+            tab={tab}
+            setTab={setTab}
+            state={state}
+            articles={articles}
+            jobs={displayJobs}
+            metrics={queueMetrics}
+            history={runHistory}
+            summary={projectSummary}
+            analytics={projectAnalytics}
+            article={selectedArticle}
+            job={selectedJob}
+            markdown={selectedMarkdown}
+            onApplyMarkdown={(markdown) => selectedArticle && updateArticleDraft(selectedArticle.id, { markdown })}
+            details={details}
+            selectedStage={selectedStage}
+            setSelectedStage={setSelectedStage}
+            warningsRef={warningsRef}
+            highlightWarnings={highlightWarnings}
+          />
         </aside>
       </div>
 
@@ -632,32 +656,17 @@ function ProjectDashboard({
   state,
   articles,
   jobs,
-  metrics,
-  history,
   summary,
   onSelectArticle
 }: {
   state: AppState | null;
   articles: ArticleDocument[];
   jobs: QueueJob[];
-  metrics: QueueMetrics;
-  history: RunSummary[];
   summary: ProjectSummary | null;
   onSelectArticle: (id: string) => void;
 }) {
-  const [dashboardTab, setDashboardTab] = useState<"overview" | "performance">("overview");
-  const [analytics, setAnalytics] = useState<ProjectAnalytics | null>(null);
   const attentionJobs = jobs.filter((job) => job.status === "needs_review" || job.status === "failed" || job.status === "processing").slice(0, 8);
   const contentInventory = [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
-  const latestRun = history[0] ?? null;
-  const generatedWords = articles.reduce((sum, article) => sum + article.wordCount, 0);
-
-  useEffect(() => {
-    if (dashboardTab !== "performance") return;
-    void fetch("/api/analytics/project", { cache: "no-store" })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data: ProjectAnalytics | null) => setAnalytics(data));
-  }, [dashboardTab, articles.length, jobs.length]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -666,100 +675,30 @@ function ProjectDashboard({
         <div className="mt-1 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
-            <div className="mono mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-muted">
-              <span>{formatNumber(summary?.articleCount ?? jobs.length)} articles</span>
-              <span>{formatNumber(generatedWords)} words</span>
-              <span>{formatNumber(summary?.totalSources ?? 0)} sources</span>
-              <span>{metrics.successRate}% success</span>
-            </div>
+            <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? jobs.length)} articles in this workspace</div>
           </div>
           <ProjectExportMenu summary={summary} />
-        </div>
-        <div className="mt-4 flex h-8 w-fit items-center rounded-md bg-surface-2 p-0.5">
-          {(["overview", "performance"] as const).map((item) => (
-            <button
-              key={item}
-              onClick={() => setDashboardTab(item)}
-              className={cn("h-7 rounded px-3 text-[12px] font-medium capitalize", dashboardTab === item ? "bg-surface-1 text-ink shadow-[0_1px_0_var(--line)]" : "text-ink-muted hover:text-ink")}
-            >
-              {item}
-            </button>
-          ))}
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8">
-        {dashboardTab === "performance" ? (
-          <ProjectPerformanceTab analytics={analytics} />
-        ) : <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <section className="min-w-0 space-y-5">
-            <div className="grid grid-cols-4 gap-3">
-              <DashboardStat label="Generated" value={metrics.generated} detail={`${formatNumber(generatedWords)} words`} />
-              <DashboardStat label="Needs review" value={metrics.needsReview} detail="Editorial attention" warn={metrics.needsReview > 0} />
-              <DashboardStat label="Failed" value={metrics.failed} detail="Retry or inspect" danger={metrics.failed > 0} />
-              <DashboardStat label="Remaining" value={metrics.remaining} detail={metrics.currentTitle ? "Run active" : "Queue depth"} />
-            </div>
+        <div className="space-y-5">
+          <ProjectSection title="Needs attention">
+            {attentionJobs.length ? (
+              <InventoryTable jobs={attentionJobs} articles={articles} onSelectArticle={onSelectArticle} compact />
+            ) : (
+              <Empty text="No articles currently need attention." />
+            )}
+          </ProjectSection>
 
-            <ProjectSection title="Needs attention">
-              {attentionJobs.length ? (
-                <InventoryTable jobs={attentionJobs} articles={articles} onSelectArticle={onSelectArticle} compact />
-              ) : (
-                <Empty text="No articles currently need attention." />
-              )}
-            </ProjectSection>
-
-            <ProjectSection title="Content inventory">
-              {contentInventory.length ? (
-                <InventoryTable jobs={contentInventory} articles={articles} onSelectArticle={onSelectArticle} />
-              ) : (
-                <Empty text="Queued and generated articles will appear here." />
-              )}
-            </ProjectSection>
-          </section>
-
-          <section className="space-y-5">
-            <ProjectSection title="Project profile">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                <MetricLine label="Style" value={state?.settings.controls.styleProfile ?? "-"} />
-                <MetricLine label="Tone" value={state?.settings.controls.targetTone || "-"} />
-                <MetricLine label="Target words" value={state?.settings.controls.lengthTargetWords ?? "-"} />
-                <MetricLine label="Editor" value={state?.settings.controls.runEditor ? "On" : "Off"} />
-              </div>
-            </ProjectSection>
-
-            <ProjectSection title="Current run">
-              <div className="space-y-3">
-                <div>
-                  <div className="mono text-2xl font-semibold text-ink">{metrics.completed}/{metrics.total}</div>
-                  <div className="mt-1 text-xs text-ink-muted">complete across the active project</div>
-                </div>
-                <ProgressBar value={metrics.total ? metrics.completed / metrics.total : 0} />
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                  <MetricLine label="Processing" value={metrics.processingCount} />
-                  <MetricLine label="ETA" value={formatDuration(metrics.etaMs)} />
-                  <MetricLine label="Average" value={formatDuration(metrics.averageRuntimeMs)} />
-                  <MetricLine label="Throughput" value={metrics.throughputPerHour ? `${metrics.throughputPerHour}/hr` : "-"} />
-                </div>
-                {metrics.currentTitle && <div className="truncate text-xs text-ink-muted">{metrics.currentTitle}</div>}
-              </div>
-            </ProjectSection>
-
-            <ProjectSection title="Latest run">
-              {latestRun ? (
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                  <MetricLine label="Articles" value={latestRun.total} />
-                  <MetricLine label="Generated" value={latestRun.generated} />
-                  <MetricLine label="Review" value={latestRun.needsReview} />
-                  <MetricLine label="Failed" value={latestRun.failed} />
-                  <MetricLine label="Started" value={formatDate(latestRun.startedAt)} />
-                  <MetricLine label="Average" value={formatDuration(latestRun.averageRuntimeMs)} />
-                </div>
-              ) : (
-                <Empty text="Run history appears after jobs are queued." />
-              )}
-            </ProjectSection>
-          </section>
-        </div>}
+          <ProjectSection title="Content inventory">
+            {contentInventory.length ? (
+              <InventoryTable jobs={contentInventory} articles={articles} onSelectArticle={onSelectArticle} />
+            ) : (
+              <Empty text="Queued and generated articles will appear here." />
+            )}
+          </ProjectSection>
+        </div>
       </div>
     </div>
   );
@@ -781,8 +720,7 @@ function ProjectInsights({
   const sourceCount = articles.reduce((sum, article) => sum + article.sources.length, 0);
   const warnings = articles.reduce((sum, article) => sum + article.validation.warnings.length, 0);
   const reviewReasons = articles.reduce((sum, article) => sum + article.needsReviewReasons.length, 0);
-  const authority = averageNumber(articles.flatMap((article) => article.sources.map((source) => source.authorityScore)));
-  const quality = averageNumber(articles.map((article) => article.qualityScore));
+  const scoreAverages = averageArticleScores(articles.map((article) => calculateArticleScores(article)));
   const failed = jobs.filter((job) => job.status === "failed").slice(0, 5);
   const topDomains = buildTopDomains(articles);
 
@@ -810,7 +748,9 @@ function ProjectInsights({
         <ProjectSection title="Content quality">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-              <MetricLine label="Average Q" value={quality || "-"} />
+              <MetricLine label="Average Q" value={scoreAverages.quality || "-"} />
+              <MetricLine label="Research" value={scoreAverages.research || "-"} />
+              <MetricLine label="Evidence" value={scoreAverages.evidence || "-"} />
               <MetricLine label="Warnings" value={warnings} />
               <MetricLine label="Review reasons" value={reviewReasons} />
               <MetricLine label="Validated" value={articles.filter((article) => article.validation.pass).length} />
@@ -822,7 +762,8 @@ function ProjectInsights({
         <ProjectSection title="Research coverage">
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <MetricLine label="Sources" value={sourceCount} />
-            <MetricLine label="Authority" value={authority || "-"} />
+            <MetricLine label="Research" value={scoreAverages.research || "-"} />
+            <MetricLine label="Evidence" value={scoreAverages.evidence || "-"} />
             <MetricLine label="With sources" value={articles.filter((article) => article.sources.length > 0).length} />
             <MetricLine label="Avg/article" value={articles.length ? Math.round(sourceCount / articles.length) : "-"} />
           </div>
@@ -1112,7 +1053,7 @@ function SourceDomainList({ domains }: { domains: SourceDomainSummary[] }) {
           </div>
           <div className="text-right">
             <div className="mono text-[12px] font-semibold text-ink">{domain.count}</div>
-            <div className="mono mt-0.5 text-[10.5px] text-ink-subtle">Auth {domain.authority || "-"}</div>
+            <div className="mono mt-0.5 text-[10.5px] text-ink-subtle">Source {domain.sourceAuthority || "-"}</div>
           </div>
         </div>
       ))}
@@ -1244,12 +1185,11 @@ function ArticleListItem({
   onRetry: () => void;
 }) {
   const sourceCount = article?.sources.length ?? 0;
-  const authority = article ? averageNumber(article.sources.map((source) => source.authorityScore)) : 0;
-  const confidence = article?.qualityScore ?? 0;
+  const scores = article ? calculateArticleScores(article) : null;
   const displayStatus = displayStatusLabel(job, article);
   const summary = attentionSummary(article, job);
   const facts = article
-    ? [`${formatNumber(article.wordCount)} words`, `${sourceCount} sources`, `Q${confidence}`, `Auth ${authority}`, relativeDate(article.updatedAt)]
+    ? [`${formatNumber(article.wordCount)} words`, `${sourceCount} sources`, `Q${scores?.quality.score ?? 0}`, `R${scores?.research.score ?? 0}`, `E${scores?.evidence.score ?? 0}`, relativeDate(article.updatedAt)]
     : [`Attempt ${job.attempts}`, relativeDate(job.updatedAt)];
   return (
     <div className="group relative">
@@ -1289,22 +1229,15 @@ function ArticleListItem({
 
 function ArticleToolbar({
   article,
-  viewMode,
   saveState,
-  onViewModeChange,
+  lastSavedAt,
   onFormat
 }: {
   article: ArticleDocument | null;
-  viewMode: ArticleViewMode;
   saveState: "saved" | "saving" | "error";
-  onViewModeChange: (mode: ArticleViewMode) => void;
+  lastSavedAt: string | null;
   onFormat: (command: FormatCommand) => void;
 }) {
-  const viewModes = [
-    { label: "Read", mode: "read" as const, icon: FileText },
-    { label: "MD", mode: "md" as const, icon: Code2 },
-    { label: "Split", mode: "split" as const, icon: Columns2 }
-  ];
   const formatting = [
     { command: "bold" as const, icon: Bold, title: "Bold" },
     { command: "italic" as const, icon: Italic, title: "Italic" },
@@ -1316,12 +1249,6 @@ function ArticleToolbar({
   ];
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
-      <div className="flex shrink-0 items-center gap-1">
-        <button onClick={() => onViewModeChange("md")} disabled={!article} className="flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-50">
-          <Pencil className="size-3.5" /> Edit
-        </button>
-      </div>
-      <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
       <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
       <div className="flex shrink-0 items-center gap-0.5">
@@ -1332,20 +1259,28 @@ function ArticleToolbar({
         ))}
       </div>
       <span className={cn("mono text-[10.5px]", saveState === "error" ? "text-danger" : "text-ink-subtle")}>
-        {saveState === "saving" ? "Saving" : saveState === "error" ? "Save failed" : "Saved"}
+        {formatSaveState(saveState, lastSavedAt)}
       </span>
-      <div className="ml-auto flex h-7 items-center rounded-md bg-surface-2 p-0.5">
-        {viewModes.map(({ label, mode, icon: Icon }) => (
-          <button key={label} onClick={() => onViewModeChange(mode)} className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[11.5px]", viewMode === mode ? "bg-surface-1 text-ink shadow-[0_1px_0_var(--line)]" : "text-ink-muted hover:text-ink")}>
-            <Icon className="size-3" /> {label}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }
 
-function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocument | null; job: QueueJob | null; onReviewClick: () => void }) {
+function ArticleHeader({
+  article,
+  job,
+  research,
+  title,
+  onTitleChange,
+  onReviewClick
+}: {
+  article: ArticleDocument | null;
+  job: QueueJob | null;
+  research: ResearchPack | null;
+  title: string;
+  onTitleChange: (title: string) => void;
+  onReviewClick: () => void;
+}) {
+  const [openScore, setOpenScore] = useState<keyof ArticleScores | null>(null);
   if (!article && job) {
     return (
       <div className="px-6 pb-3 pt-5 lg:px-8">
@@ -1357,27 +1292,38 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
   }
   if (!article) return <div className="h-24 p-5" />;
   const readingTime = Math.max(1, Math.round(article.wordCount / 230));
+  const scores = calculateArticleScores(article, research);
+  const selectedScore = openScore ? scores[openScore] : null;
   return (
     <div className="px-6 pb-3 pt-5 lg:px-8">
       <div className="flex gap-4">
         <div className="min-w-0 flex-1">
           <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(article.status)}</div>
-          <h1 className="mt-1 text-[24px] font-semibold leading-tight tracking-tight text-ink">{article.title}</h1>
+          <textarea
+            value={title}
+            onChange={(event) => onTitleChange(event.target.value)}
+            rows={Math.max(1, Math.ceil(title.length / 72))}
+            spellCheck
+            className="mt-1 block min-h-[2.2rem] w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[24px] font-semibold leading-tight tracking-tight text-ink outline-none placeholder:text-ink-subtle"
+            placeholder="Untitled article"
+          />
         </div>
       </div>
       <div className="mono mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-muted">
-        <QualityBadge value={article.qualityScore} />
+        <ScoreMetricButton score={scores.quality} active={openScore === "quality"} onClick={() => setOpenScore(openScore === "quality" ? null : "quality")} />
+        <ScoreMetricButton score={scores.research} active={openScore === "research"} onClick={() => setOpenScore(openScore === "research" ? null : "research")} />
+        <ScoreMetricButton score={scores.evidence} active={openScore === "evidence"} onClick={() => setOpenScore(openScore === "evidence" ? null : "evidence")} />
         <span className="h-3 w-px bg-line" />
         <span><span className="text-ink-subtle">Sources</span> <span className="text-ink">{article.sources.length}</span></span>
         <span><span className="text-ink-subtle">Words</span> <span className="text-ink">{formatNumber(article.wordCount)}</span></span>
         <span><span className="text-ink-subtle">Read</span> <span className="text-ink">{readingTime}m</span></span>
-        <span><span className="text-ink-subtle">Authority</span> <span className="text-ink">{averageNumber(article.sources.map((source) => source.authorityScore))}</span></span>
         {article.needsReviewReasons.length > 0 && (
           <button onClick={onReviewClick} className="text-warn hover:underline">
             {article.needsReviewReasons.length} review reasons
           </button>
         )}
       </div>
+      {selectedScore && <ScoreDetailPanel score={selectedScore} />}
     </div>
   );
 }
@@ -1385,11 +1331,14 @@ function ArticleHeader({ article, job, onReviewClick }: { article: ArticleDocume
 function ArticleMetricsRail({ article }: { article: ArticleDocument }) {
   const headings = countMarkdownHeadings(article.markdown);
   const readingTime = Math.max(1, Math.round(article.wordCount / 230));
+  const scores = calculateArticleScores(article);
   return (
     <div className="hairline-t mono flex h-8 shrink-0 items-center gap-5 bg-surface-2/40 px-6 text-[10.5px] text-ink-muted">
       <MetricRailItem label="Words" value={formatNumber(article.wordCount)} />
       <MetricRailItem label="Read" value={`${readingTime}m`} />
-      <MetricRailItem label="Quality" value={`Q${article.qualityScore}`} />
+      <MetricRailItem label="Quality" value={`Q${scores.quality.score}`} />
+      <MetricRailItem label="Research" value={scores.research.score} />
+      <MetricRailItem label="Evidence" value={scores.evidence.score} />
       <MetricRailItem label="Sources" value={article.sources.length} />
       <MetricRailItem label="Headings" value={headings} />
       <MetricRailItem label="Warnings" value={article.validation.warnings.length} warn={article.validation.warnings.length > 0} />
@@ -1399,22 +1348,66 @@ function ArticleMetricsRail({ article }: { article: ArticleDocument }) {
   );
 }
 
+function ScoreMetricButton({ score, active, onClick }: { score: ArticleScore; active: boolean; onClick: () => void }) {
+  const tone = score.score >= 85 ? "text-ink" : score.score >= 70 ? "text-ink-muted" : "text-warn";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={score.tooltip}
+      className={cn(
+        "inline-flex items-baseline gap-1 rounded px-1 py-0.5 text-left hover:bg-surface-3",
+        active && "bg-surface-3"
+      )}
+    >
+      <span className="text-ink-subtle">{score.label}</span>
+      <span className={cn("text-[15px] font-semibold leading-none", tone)}>{score.score}</span>
+    </button>
+  );
+}
+
+function ScoreDetailPanel({ score }: { score: ArticleScore }) {
+  return (
+    <div className="mt-3 max-w-3xl rounded-md border border-line bg-surface-1 p-3">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <PanelTitle title={`${score.label} Profile`} />
+          <p className="mt-1 text-[11.5px] leading-snug text-ink-muted">{score.tooltip}</p>
+        </div>
+        <div className="mono text-right text-[20px] font-semibold text-ink">{score.score}</div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1.5 text-xs md:grid-cols-3">
+        {score.profile.map((item) => (
+          <MetricLine key={item.label} label={item.label} value={item.value} />
+        ))}
+      </div>
+      <div className="mt-3 rounded border border-line bg-surface-2/45 p-2.5">
+        <div className="mono mb-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Score diagnostics</div>
+        <div className="space-y-2">
+          {score.components.map((component) => (
+            <div key={component.key}>
+              <div className="flex items-baseline gap-2 text-[11.5px]">
+                <span className="font-medium text-ink">{component.label}</span>
+                <span className="mono text-ink-subtle">{Math.round(component.weight * 100)}%</span>
+                <span className="mono ml-auto text-ink-muted">{component.value} → {component.contribution.toFixed(1)}</span>
+              </div>
+              <div className="mt-1 h-1 rounded-full bg-line">
+                <div className="h-1 rounded-full bg-ink-muted" style={{ width: `${component.value}%` }} />
+              </div>
+              <p className="mt-1 text-[10.5px] leading-snug text-ink-subtle">{component.description}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MetricRailItem({ label, value, warn = false }: { label: string; value: string | number; warn?: boolean }) {
   return (
     <span className="inline-flex items-baseline gap-1">
       <span className="text-ink-subtle">{label}</span>
       <span className={cn("text-ink-muted", warn && "text-warn")}>{value}</span>
-    </span>
-  );
-}
-
-function QualityBadge({ value }: { value: number }) {
-  const tone = value >= 85 ? "text-ink" : value >= 70 ? "text-ink-muted" : "text-warn";
-  return (
-    <span className="inline-flex items-baseline gap-1">
-      <span className="text-ink-subtle">Quality</span>
-      <span className={cn("text-[15px] font-semibold leading-none", tone)}>{value}</span>
-      <span className="text-ink-subtle">/100</span>
     </span>
   );
 }
@@ -1468,8 +1461,9 @@ function ProjectSummaryPanel({ state, metrics }: { state: AppState | null; metri
             <MetricLine label="Failed" value={formatNumber(summary.failedCount)} />
             <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
             <MetricLine label="Sources" value={formatNumber(summary.totalSources)} />
-            <MetricLine label="Authority" value={summary.averageAuthority || "-"} />
-            <MetricLine label="Confidence" value={summary.averageConfidence || "-"} />
+            <MetricLine label="Quality" value={summary.averageQuality || "-"} />
+            <MetricLine label="Research" value={summary.averageResearch || "-"} />
+            <MetricLine label="Evidence" value={summary.averageEvidence || "-"} />
             <MetricLine label="Success rate" value={`${summary.successRate}%`} />
           </div>
           <ExportLink href="/api/export/project/package" label="Export Project" icon={<Download className="size-3.5" />} disabled={!summary.articleCount} block />
@@ -1657,37 +1651,18 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
 
 function ArticleWorkspace({
   markdown,
-  viewMode,
   editorRef,
   onChange
 }: {
   markdown: string;
-  viewMode: ArticleViewMode;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (markdown: string) => void;
 }) {
-  if (viewMode === "md") {
-    return (
-      <div className="h-full p-6 lg:p-8">
-        <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />
-      </div>
-    );
-  }
-
-  if (viewMode === "split") {
-    return (
-      <div className="grid h-full min-h-[560px] grid-cols-2 divide-x divide-line">
-        <div className="min-h-0 p-5">
-          <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />
-        </div>
-        <div className="min-h-0 overflow-auto">
-          <MarkdownPreview markdown={markdown} />
-        </div>
-      </div>
-    );
-  }
-
-  return <MarkdownPreview markdown={markdown} />;
+  return (
+    <div className="h-full px-6 py-6 lg:px-8">
+      <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />
+    </div>
+  );
 }
 
 function MarkdownEditor({
@@ -1705,77 +1680,22 @@ function MarkdownEditor({
       value={markdown}
       onChange={(event) => onChange(event.target.value)}
       spellCheck
-      className="mono h-full min-h-[520px] w-full resize-none rounded-md border border-line bg-surface-1 p-4 text-[13px] leading-6 text-ink outline-none focus:border-line-strong"
+      className="h-full min-h-[620px] w-full resize-none border-0 bg-transparent px-2 py-4 text-[18px] leading-8 text-ink outline-none placeholder:text-ink-subtle lg:px-8"
+      placeholder="Start writing..."
     />
   );
-}
-
-function MarkdownPreview({ markdown }: { markdown: string }) {
-  return (
-    <div className="mx-auto max-w-[760px] px-8 py-10">
-      <article className="prose-os">{renderMarkdown(markdown)}</article>
-    </div>
-  );
-}
-
-function renderMarkdown(markdown: string) {
-  if (!markdown.trim()) return <p className="text-ink-subtle">This article has not been generated yet.</p>;
-  const nodes: React.ReactElement[] = [];
-  let paragraph: string[] = [];
-  let list: string[] = [];
-
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    nodes.push(<p key={nodes.length}>{paragraph.join(" ")}</p>);
-    paragraph = [];
-  };
-  const flushList = () => {
-    if (!list.length) return;
-    nodes.push(<ul key={nodes.length}>{list.map((item, index) => <li key={index}>{item}</li>)}</ul>);
-    list = [];
-  };
-
-  for (const rawLine of markdown.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-    if (line.startsWith("### ")) {
-      flushParagraph();
-      flushList();
-      nodes.push(<h3 key={nodes.length}>{line.slice(4)}</h3>);
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      flushParagraph();
-      flushList();
-      nodes.push(<h2 key={nodes.length}>{line.slice(3)}</h2>);
-      continue;
-    }
-    if (line.startsWith("# ")) {
-      flushParagraph();
-      flushList();
-      nodes.push(<h1 key={nodes.length}>{line.slice(2)}</h1>);
-      continue;
-    }
-    if (line.startsWith("- ")) {
-      flushParagraph();
-      list.push(line.slice(2));
-      continue;
-    }
-    flushList();
-    paragraph.push(line);
-  }
-  flushParagraph();
-  flushList();
-  return nodes;
 }
 
 function Inspector({
   tab,
   setTab,
+  state,
+  articles,
+  jobs,
+  metrics,
+  history,
+  summary,
+  analytics,
   article,
   job,
   markdown,
@@ -1788,6 +1708,13 @@ function Inspector({
 }: {
   tab: InspectorTab;
   setTab: (tab: InspectorTab) => void;
+  state: AppState | null;
+  articles: ArticleDocument[];
+  jobs: QueueJob[];
+  metrics: QueueMetrics;
+  history: RunSummary[];
+  summary: ProjectSummary | null;
+  analytics: ProjectAnalytics | null;
   article: ArticleDocument | null;
   job: QueueJob | null;
   markdown: string;
@@ -1798,9 +1725,9 @@ function Inspector({
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
 }) {
-  if (!article && !job) return <Empty text="No article selected." />;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
+      {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} />}
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
@@ -1810,6 +1737,97 @@ function Inspector({
   );
 }
 
+function ProjectContextPanel({
+  state,
+  articles,
+  jobs,
+  metrics,
+  history,
+  summary,
+  analytics
+}: {
+  state: AppState | null;
+  articles: ArticleDocument[];
+  jobs: QueueJob[];
+  metrics: QueueMetrics;
+  history: RunSummary[];
+  summary: ProjectSummary | null;
+  analytics: ProjectAnalytics | null;
+}) {
+  const controls = state?.settings.controls ?? null;
+  const latestRun = history[0] ?? null;
+  const averageLength = articles.length && summary ? Math.round(summary.totalWords / articles.length) : null;
+  const queueWaitMs = analytics?.performance.average_queue_wait_ms ?? null;
+  const queuedCount = jobs.filter((job) => job.status === "queued").length;
+  const status = projectStatus(metrics, jobs);
+  return (
+    <div className="space-y-5">
+      {state && summary ? (
+        <ProjectSection title="Project overview">
+          <div className="space-y-3">
+            <div>
+              <div className="truncate text-[13px] font-semibold text-ink">{state.project.name}</div>
+              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{status}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+              <MetricLine label="Articles" value={formatNumber(summary.articleCount)} />
+              <MetricLine label="Generated" value={metrics.generated} />
+              <MetricLine label="Review" value={metrics.needsReview} />
+              <MetricLine label="Failed" value={metrics.failed} />
+              <MetricLine label="Queued" value={queuedCount} />
+              <MetricLine label="Processing" value={metrics.processingCount} />
+            </div>
+          </div>
+        </ProjectSection>
+      ) : null}
+
+      {summary && articles.length ? (
+        <ProjectSection title="Content metrics">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <MetricLine label="Average Quality" value={summary.averageQuality || "-"} />
+            <MetricLine label="Average Research" value={summary.averageResearch || "-"} />
+            <MetricLine label="Average Evidence" value={summary.averageEvidence || "-"} />
+            <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
+            {averageLength !== null && <MetricLine label="Avg length" value={formatNumber(averageLength)} />}
+            <MetricLine label="Sources" value={formatNumber(summary.totalSources)} />
+          </div>
+        </ProjectSection>
+      ) : null}
+
+      {controls ? (
+        <ProjectSection title="Generation settings">
+          <div className="space-y-2">
+            <MetricLine label="Target words" value={controls.lengthTargetWords} />
+            <ControlFlag label="FAQ enabled" enabled={controls.includeFaq} />
+            <ControlFlag label="TL;DR enabled" enabled={controls.includeTldr} />
+            <ControlFlag label="AI Editor enabled" enabled={controls.runEditor} />
+          </div>
+        </ProjectSection>
+      ) : null}
+
+      {jobs.length || analytics ? (
+        <ProjectSection title="Operational health">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <MetricLine label="Success rate" value={`${metrics.successRate}%`} />
+            {metrics.throughputPerHour !== null && <MetricLine label="Throughput" value={`${metrics.throughputPerHour}/hr`} />}
+            {metrics.averageGenerationMs !== null && <MetricLine label="Avg generation" value={formatDuration(metrics.averageGenerationMs)} />}
+            {queueWaitMs !== null && <MetricLine label="Avg queue wait" value={formatDuration(queueWaitMs)} />}
+            {latestRun && <MetricLine label="Last run" value={formatDate(latestRun.startedAt)} />}
+          </div>
+        </ProjectSection>
+      ) : null}
+    </div>
+  );
+}
+
+function projectStatus(metrics: QueueMetrics, jobs: QueueJob[]) {
+  if (metrics.processingCount > 0) return "Processing";
+  if (jobs.some((job) => job.status === "queued")) return "Queued";
+  if (metrics.failed > 0) return "Needs attention";
+  if (jobs.length > 0) return "Ready";
+  return "No articles queued";
+}
+
 function ResearchPanel({ research, article }: { research: ResearchPack | null; article: ArticleDocument }) {
   const sources = research?.sources ?? article.sources;
   return (
@@ -1817,7 +1835,7 @@ function ResearchPanel({ research, article }: { research: ResearchPack | null; a
       <MetricGrid compact items={[
         ["Sources", sources.length],
         ["Rejected", research?.rejectedSources.length ?? 0],
-        ["Authority", research?.authorityScore ?? 0],
+        ["Avg source authority", research?.authorityScore ?? 0],
         ["Confidence", research?.confidence ?? 0]
       ]} />
       <SectionTitle title="Accepted sources" />
@@ -1875,7 +1893,7 @@ function SourceList({ sources, rejected = false }: { sources: ResearchSource[]; 
                 <ExternalLink className="size-2.5 shrink-0" /> {source.domain || source.url}
               </a>
               <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-subtle">
-                <span>Auth <span className="text-ink-muted">{source.authorityScore}</span></span>
+                <span>Source <span className="text-ink-muted">{source.authorityScore}</span></span>
                 <span>Rel <span className="text-ink-muted">{source.relevanceScore}</span></span>
                 {rejected && <span className="text-danger">{source.rejectionReason ?? "rejected"}</span>}
               </div>
@@ -2001,7 +2019,7 @@ function StageDetails({ step, article, details }: { step: ArticleDocument["pipel
         <MetricGrid items={[
           ["Sources found", sources.length],
           ["Rejected", research?.rejectedSources.length ?? 0],
-          ["Authority", research?.authorityScore ?? 0],
+          ["Avg source authority", research?.authorityScore ?? 0],
           ["Confidence", research?.confidence ?? 0]
         ]} />
         {research?.queries?.length ? (
@@ -2627,8 +2645,9 @@ interface ProjectSummary {
   failedCount: number;
   totalWords: number;
   totalSources: number;
-  averageAuthority: number;
-  averageConfidence: number;
+  averageQuality: number;
+  averageResearch: number;
+  averageEvidence: number;
   successRate: number;
 }
 
@@ -2647,13 +2666,12 @@ interface SourceDomainSummary {
   count: number;
   accepted: number;
   articleCount: number;
-  authority: number;
+  sourceAuthority: number;
 }
 
 function calculateProjectSummary(state: AppState, metrics: QueueMetrics): ProjectSummary {
   const articles = state.articles;
-  const sourceScores = articles.flatMap((article) => article.sources.map((source) => source.authorityScore));
-  const confidenceScores = articles.map((article) => article.qualityScore).filter((score) => Number.isFinite(score));
+  const scoreAverages = averageArticleScores(articles.map((article) => calculateArticleScores(article)));
   const timestamps = [
     state.project.updatedAt,
     ...state.jobs.map((job) => job.updatedAt),
@@ -2670,8 +2688,9 @@ function calculateProjectSummary(state: AppState, metrics: QueueMetrics): Projec
     failedCount: metrics.failed,
     totalWords: articles.reduce((sum, article) => sum + article.wordCount, 0),
     totalSources: articles.reduce((sum, article) => sum + article.sources.length, 0),
-    averageAuthority: averageNumber(sourceScores),
-    averageConfidence: averageNumber(confidenceScores),
+    averageQuality: scoreAverages.quality,
+    averageResearch: scoreAverages.research,
+    averageEvidence: scoreAverages.evidence,
     successRate: metrics.successRate
   };
 }
@@ -2697,9 +2716,9 @@ function buildTopDomains(articles: ArticleDocument[]): SourceDomainSummary[] {
       count: data.count,
       accepted: data.accepted,
       articleCount: data.articleIds.size,
-      authority: averageNumber(data.authorityScores)
+      sourceAuthority: averageNumber(data.authorityScores)
     }))
-    .sort((a, b) => b.count - a.count || b.authority - a.authority);
+    .sort((a, b) => b.count - a.count || b.sourceAuthority - a.sourceAuthority);
 }
 
 function buildRunHistory(jobs: QueueJob[], articles: ArticleDocument[]): RunSummary[] {
@@ -2843,6 +2862,15 @@ function formatDuration(ms: number | null) {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatSaveState(saveState: "saved" | "saving" | "error", savedAt: string | null) {
+  if (saveState === "saving") return "Saving...";
+  if (saveState === "error") return "Save failed";
+  if (!savedAt) return "Saved";
+  const diffSeconds = Math.floor((Date.now() - new Date(savedAt).getTime()) / 1000);
+  if (diffSeconds < 60) return "Saved just now";
+  return `Saved ${formatTime(savedAt).slice(0, 5)}`;
 }
 
 function formatTime(value?: string | null) {
