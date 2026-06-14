@@ -5,7 +5,7 @@ import type { WorkerLeaseDocument } from "@/lib/types";
 import { slugId } from "@/lib/text";
 
 export const WORKER_LEASE_TTL_MS = 2 * 60_000;
-export const WORKER_DRAIN_BUDGET_MS = 35_000;
+export const WORKER_DRAIN_BUDGET_MS = 60_000;
 export const WORKER_HEAVY_STAGE_START_CUTOFF_MS = 5_000;
 
 export interface WorkerDrainResult {
