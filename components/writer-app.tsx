@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Bold, CheckCircle2, ChevronDown, ChevronRight, Code2, Columns2, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Square, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Bold, CheckCircle2, ChevronDown, ChevronRight, Code2, Columns2, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Pencil, Play, RotateCw, Search, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
 type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug";
+type ArticleViewMode = "read" | "md" | "split";
+type FormatCommand = "bold" | "italic" | "link" | "h2" | "h3" | "bullet" | "numbered";
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -29,6 +31,7 @@ type TransitionTraceEntry = {
 };
 
 const TRANSITION_TRACE_KEY = "oswriter.transitionTrace";
+const ARTICLE_VIEW_MODE_KEY = "oswriter.articleViewMode";
 
 export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
   const [authed, setAuthed] = useState(initialAuthed);
@@ -88,11 +91,16 @@ function Workbench() {
   const [message, setMessage] = useState("Ready");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("pipeline");
+  const [viewMode, setViewMode] = useState<ArticleViewMode>("read");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [selectedStage, setSelectedStage] = useState<string>("research");
   const [highlightWarnings, setHighlightWarnings] = useState(false);
   const [tick, setTick] = useState(Date.now());
   const stopRequested = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const saveTimerRef = useRef<number | null>(null);
   const warningsRef = useRef<HTMLDivElement | null>(null);
   const visibleRecordedRef = useRef<Set<string>>(new Set());
   const visibilityBaselineRef = useRef<Set<string> | null>(null);
@@ -112,6 +120,7 @@ function Workbench() {
     },
     [articles, jobs, selectedArticleId]
   );
+  const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   const displayJobs = useMemo(() => jobs.map((job) => {
     const article = articles.find((item) => item.jobId === job.id);
     return article ? { ...job, status: article.status } : job;
@@ -148,6 +157,14 @@ function Workbench() {
 
   useEffect(() => {
     void refresh();
+  }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(ARTICLE_VIEW_MODE_KEY);
+    if (stored === "read" || stored === "md" || stored === "split") setViewMode(stored);
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -309,6 +326,64 @@ function Workbench() {
       body: JSON.stringify({ lengthTargetWords })
     });
     if (!res.ok) void refresh();
+  }
+
+  function setArticleViewMode(mode: ArticleViewMode) {
+    setViewMode(mode);
+    window.localStorage.setItem(ARTICLE_VIEW_MODE_KEY, mode);
+  }
+
+  function updateArticleMarkdown(articleId: string, markdown: string) {
+    setDrafts((current) => ({ ...current, [articleId]: markdown }));
+    setSaveState("saving");
+    setState((current) => current ? {
+      ...current,
+      articles: current.articles.map((article) => article.id === articleId ? {
+        ...article,
+        markdown,
+        wordCount: countWordsLocal(markdown),
+        updatedAt: new Date().toISOString()
+      } : article)
+    } : current);
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      void saveArticleMarkdown(articleId, markdown);
+    }, 700);
+  }
+
+  async function saveArticleMarkdown(articleId: string, markdown: string) {
+    const res = await fetch(`/api/articles/${articleId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markdown })
+    });
+    if (!res.ok) {
+      setSaveState("error");
+      return;
+    }
+    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument };
+    if (data.article) {
+      setState((current) => current ? {
+        ...current,
+        articles: current.articles.map((article) => article.id === data.article?.id ? data.article : article)
+      } : current);
+    }
+    setSaveState("saved");
+  }
+
+  function applyFormat(command: FormatCommand) {
+    if (!selectedArticle) return;
+    if (viewMode === "read") setArticleViewMode("md");
+    const textarea = editorRef.current;
+    const markdown = selectedMarkdown;
+    const start = textarea?.selectionStart ?? markdown.length;
+    const end = textarea?.selectionEnd ?? markdown.length;
+    const next = formatMarkdown(markdown, start, end, command);
+    updateArticleMarkdown(selectedArticle.id, next.value);
+    window.requestAnimationFrame(() => {
+      editorRef.current?.focus();
+      editorRef.current?.setSelectionRange(next.selectionStart, next.selectionEnd);
+    });
   }
 
   async function retryOne(jobId: string) {
@@ -482,15 +557,20 @@ function Workbench() {
               />
               <ArticleToolbar
                 article={selectedArticle}
-                busy={busy}
-                running={running}
-                onGenerate={processNext}
-                onRunQueue={runSequential}
-                onStopRun={stopRun}
-                onRetryFailed={() => post("/api/queue/retry-failed", "Failed jobs requeued.")}
+                viewMode={viewMode}
+                saveState={saveState}
+                onViewModeChange={setArticleViewMode}
+                onFormat={applyFormat}
               />
               <div className="min-h-0 flex-1 overflow-auto">
-                {selectedArticle ? <MarkdownPreview markdown={selectedArticle.markdown} /> : selectedJob ? <JobPlaceholder job={selectedJob} /> : null}
+                {selectedArticle ? (
+                  <ArticleWorkspace
+                    markdown={selectedMarkdown}
+                    viewMode={viewMode}
+                    editorRef={editorRef}
+                    onChange={(markdown) => updateArticleMarkdown(selectedArticle.id, markdown)}
+                  />
+                ) : selectedJob ? <JobPlaceholder job={selectedJob} /> : null}
               </div>
               {selectedArticle && <ArticleMetricsRail article={selectedArticle} />}
             </>
@@ -520,6 +600,8 @@ function Workbench() {
                 setTab={setTab}
                 article={selectedArticle}
                 job={selectedJob}
+                markdown={selectedMarkdown}
+                onApplyMarkdown={(markdown) => selectedArticle && updateArticleMarkdown(selectedArticle.id, markdown)}
                 details={details}
                 selectedStage={selectedStage}
                 setSelectedStage={setSelectedStage}
@@ -1207,53 +1289,54 @@ function ArticleListItem({
 
 function ArticleToolbar({
   article,
-  busy,
-  running,
-  onGenerate,
-  onRunQueue,
-  onStopRun,
-  onRetryFailed
+  viewMode,
+  saveState,
+  onViewModeChange,
+  onFormat
 }: {
   article: ArticleDocument | null;
-  busy: boolean;
-  running: boolean;
-  onGenerate: () => void;
-  onRunQueue: () => void;
-  onStopRun: () => void;
-  onRetryFailed: () => void;
+  viewMode: ArticleViewMode;
+  saveState: "saved" | "saving" | "error";
+  onViewModeChange: (mode: ArticleViewMode) => void;
+  onFormat: (command: FormatCommand) => void;
 }) {
   const viewModes = [
-    { label: "Read", icon: FileText },
-    { label: "MD", icon: Code2 },
-    { label: "Split", icon: Columns2 }
+    { label: "Read", mode: "read" as const, icon: FileText },
+    { label: "MD", mode: "md" as const, icon: Code2 },
+    { label: "Split", mode: "split" as const, icon: Columns2 }
+  ];
+  const formatting = [
+    { command: "bold" as const, icon: Bold, title: "Bold" },
+    { command: "italic" as const, icon: Italic, title: "Italic" },
+    { command: "link" as const, icon: LinkIcon, title: "Link" },
+    { command: "h2" as const, icon: Heading2, title: "Heading 2" },
+    { command: "h3" as const, icon: Heading3, title: "Heading 3" },
+    { command: "bullet" as const, icon: List, title: "Bullet list" },
+    { command: "numbered" as const, icon: ListOrdered, title: "Numbered list" }
   ];
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
       <div className="flex shrink-0 items-center gap-1">
-        <button onClick={onGenerate} disabled={busy || running} className="flex h-8 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
-          <Play className="size-3.5 fill-current" /> Generate next
-        </button>
-        <button onClick={running ? onStopRun : onRunQueue} disabled={busy && !running} className="flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-50">
-          {running ? <Square className="size-3.5" /> : <RotateCw className="size-3.5" />}
-          {running ? "Stop" : "Run queue"}
-        </button>
-        <button onClick={onRetryFailed} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
-          <RotateCw className="size-3.5" /> Retry failed
+        <button onClick={() => onViewModeChange("md")} disabled={!article} className="flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-50">
+          <Pencil className="size-3.5" /> Edit
         </button>
       </div>
       <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
       <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
       <div className="flex shrink-0 items-center gap-0.5">
-        {[Bold, Italic, LinkIcon, Heading2, Heading3, List, ListOrdered].map((Icon, index) => (
-          <button key={index} className="grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Formatting control">
+        {formatting.map(({ command, icon: Icon, title }) => (
+          <button key={command} onClick={() => onFormat(command)} disabled={!article} className="grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink disabled:opacity-40" title={title}>
             <Icon className="size-3.5" />
           </button>
         ))}
       </div>
+      <span className={cn("mono text-[10.5px]", saveState === "error" ? "text-danger" : "text-ink-subtle")}>
+        {saveState === "saving" ? "Saving" : saveState === "error" ? "Save failed" : "Saved"}
+      </span>
       <div className="ml-auto flex h-7 items-center rounded-md bg-surface-2 p-0.5">
-        {viewModes.map(({ label, icon: Icon }) => (
-          <button key={label} className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[11.5px]", label === "Read" ? "bg-surface-1 text-ink shadow-[0_1px_0_var(--line)]" : "text-ink-muted hover:text-ink")}>
+        {viewModes.map(({ label, mode, icon: Icon }) => (
+          <button key={label} onClick={() => onViewModeChange(mode)} className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[11.5px]", viewMode === mode ? "bg-surface-1 text-ink shadow-[0_1px_0_var(--line)]" : "text-ink-muted hover:text-ink")}>
             <Icon className="size-3" /> {label}
           </button>
         ))}
@@ -1572,6 +1655,61 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
   );
 }
 
+function ArticleWorkspace({
+  markdown,
+  viewMode,
+  editorRef,
+  onChange
+}: {
+  markdown: string;
+  viewMode: ArticleViewMode;
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+  onChange: (markdown: string) => void;
+}) {
+  if (viewMode === "md") {
+    return (
+      <div className="h-full p-6 lg:p-8">
+        <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />
+      </div>
+    );
+  }
+
+  if (viewMode === "split") {
+    return (
+      <div className="grid h-full min-h-[560px] grid-cols-2 divide-x divide-line">
+        <div className="min-h-0 p-5">
+          <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />
+        </div>
+        <div className="min-h-0 overflow-auto">
+          <MarkdownPreview markdown={markdown} />
+        </div>
+      </div>
+    );
+  }
+
+  return <MarkdownPreview markdown={markdown} />;
+}
+
+function MarkdownEditor({
+  markdown,
+  editorRef,
+  onChange
+}: {
+  markdown: string;
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+  onChange: (markdown: string) => void;
+}) {
+  return (
+    <textarea
+      ref={editorRef}
+      value={markdown}
+      onChange={(event) => onChange(event.target.value)}
+      spellCheck
+      className="mono h-full min-h-[520px] w-full resize-none rounded-md border border-line bg-surface-1 p-4 text-[13px] leading-6 text-ink outline-none focus:border-line-strong"
+    />
+  );
+}
+
 function MarkdownPreview({ markdown }: { markdown: string }) {
   return (
     <div className="mx-auto max-w-[760px] px-8 py-10">
@@ -1640,6 +1778,8 @@ function Inspector({
   setTab,
   article,
   job,
+  markdown,
+  onApplyMarkdown,
   details,
   selectedStage,
   setSelectedStage,
@@ -1650,6 +1790,8 @@ function Inspector({
   setTab: (tab: InspectorTab) => void;
   article: ArticleDocument | null;
   job: QueueJob | null;
+  markdown: string;
+  onApplyMarkdown: (markdown: string) => void;
   details: Details;
   selectedStage: string;
   setSelectedStage: (stage: string) => void;
@@ -1662,7 +1804,7 @@ function Inspector({
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
-      {tab === "seo" && (article ? <SeoPanel article={article} /> : <Empty text="No article available for SEO checks." />)}
+      {tab === "seo" && (article ? <SeoPanel article={article} markdown={markdown} onApplyMarkdown={onApplyMarkdown} /> : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
   );
@@ -1956,10 +2098,197 @@ function ValidationPanel({
   );
 }
 
-function SeoPanel({ article }: { article: ArticleDocument }) {
-  const headings = (article.markdown.match(/^## /gm) ?? []).length;
-  const faqs = (article.markdown.match(/^### .*\\?/gm) ?? []).length;
-  return <MetricGrid items={[["Words", article.wordCount], ["H2s", headings], ["FAQs", faqs], ["Sources", article.sources.length]]} />;
+function SeoPanel({ article, markdown, onApplyMarkdown }: { article: ArticleDocument; markdown: string; onApplyMarkdown: (markdown: string) => void }) {
+  const [preview, setPreview] = useState<{ title: string; markdown: string } | null>(null);
+  const recommendations = buildSeoRecommendations(article, markdown);
+  const headings = (markdown.match(/^## /gm) ?? []).length;
+  const faqs = (markdown.match(/^### .*\?/gm) ?? []).length;
+  return (
+    <div className="space-y-4">
+      <MetricGrid items={[["Words", countWordsLocal(markdown)], ["H2s", headings], ["FAQs", faqs], ["Sources", article.sources.length]]} />
+      <SectionTitle title="Recommendations" />
+      <div className="space-y-2">
+        {recommendations.map((item) => (
+          <div key={item.title} className="rounded-md border border-line bg-surface-1 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold text-ink">{item.title}</div>
+                <p className="mt-1 text-[11.5px] leading-snug text-ink-muted">{item.why}</p>
+                <div className="mono mt-2 text-[10.5px] text-ink-subtle">Impact: {item.impact}</div>
+              </div>
+              <button onClick={() => setPreview({ title: item.title, markdown: item.apply(markdown, article) })} className="shrink-0 rounded-md border border-line bg-background px-2 py-1 text-[11px] font-medium text-ink hover:bg-surface-3">
+                {item.action}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {preview && (
+        <div className="rounded-md border border-line bg-surface-1 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <PanelTitle title={preview.title} />
+            <div className="flex gap-1">
+              <button onClick={() => setPreview(null)} className="rounded px-2 py-1 text-[11px] text-ink-muted hover:bg-surface-3">Reject</button>
+              <button
+                onClick={() => {
+                  onApplyMarkdown(preview.markdown);
+                  setPreview(null);
+                }}
+                className="rounded bg-ink px-2 py-1 text-[11px] font-medium text-white"
+              >
+                Accept
+              </button>
+            </div>
+          </div>
+          <pre className="mono mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background p-3 text-[11px] leading-relaxed text-ink-muted">{preview.markdown}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type SeoRecommendation = {
+  title: string;
+  why: string;
+  impact: string;
+  action: string;
+  apply: (markdown: string, article: ArticleDocument) => string;
+};
+
+function buildSeoRecommendations(article: ArticleDocument, markdown: string): SeoRecommendation[] {
+  const h2s = [...markdown.matchAll(/^##\s+(.+)$/gm)].map((match) => match[1]);
+  const hasFaq = /^##\s+FAQ\b/im.test(markdown);
+  const hasLinks = /\[[^\]]+\]\([^)]+\)/.test(markdown);
+  const firstParagraph = firstBodyParagraph(markdown);
+  const sourceDomains = [...new Set(article.sources.map((source) => source.domain).filter(Boolean))].slice(0, 4);
+  const titleTopic = article.title.replace(/[?:].*$/, "").trim();
+  const recommendations: SeoRecommendation[] = [];
+
+  if (!hasFaq) {
+    recommendations.push({
+      title: `Add FAQ section for ${titleTopic}`,
+      why: "The article has no FAQ block, so it misses long-tail question coverage around the topic.",
+      impact: "High",
+      action: "Preview",
+      apply: addFaqSection
+    });
+  }
+  if (firstParagraph.split(/\s+/).filter(Boolean).length < 95) {
+    recommendations.push({
+      title: "Strengthen introduction",
+      why: `The opening is concise; a stronger intro can frame ${titleTopic} and the reader problem more clearly.`,
+      impact: "Medium",
+      action: "Preview",
+      apply: strengthenIntroduction
+    });
+  }
+  if (h2s.length < 5) {
+    recommendations.push({
+      title: "Expand topic coverage",
+      why: `Only ${h2s.length} H2 sections are present. Broader coverage can improve topical completeness.`,
+      impact: "High",
+      action: "Preview",
+      apply: expandTopicCoverage
+    });
+  }
+  if (!hasLinks) {
+    recommendations.push({
+      title: "Add internal link opportunities",
+      why: "No markdown links are present. Suggested anchors make internal linking explicit before export.",
+      impact: "Medium",
+      action: "Preview",
+      apply: addInternalLinkSuggestions
+    });
+  }
+  recommendations.push({
+    title: "Increase entity coverage",
+    why: sourceDomains.length ? `Source domains such as ${sourceDomains.join(", ")} indicate entities worth reinforcing.` : "The article can make important entities and source context clearer.",
+    impact: "Medium",
+    action: "Preview",
+    apply: increaseEntityCoverage
+  });
+  recommendations.push({
+    title: "Add statistics and examples",
+    why: `${article.sources.length} sources are available; a short examples section can turn evidence into more concrete reader value.`,
+    impact: "Medium",
+    action: "Preview",
+    apply: addStatisticsExamples
+  });
+
+  return recommendations.slice(0, 6);
+}
+
+function addFaqSection(markdown: string, article: ArticleDocument) {
+  if (/^##\s+FAQ\b/im.test(markdown)) return markdown;
+  const topic = article.title.replace(/\?$/, "");
+  return `${markdown.trim()}
+
+## FAQ
+
+### What is the main issue in ${topic}?
+The central issue is how the underlying pressures, incentives, and practical trade-offs affect the people or organisations involved.
+
+### Why does ${topic} matter now?
+It matters because readers need a clear explanation of the current situation, the evidence behind it, and the likely consequences.
+
+### What should readers look at next?
+Readers should compare the evidence, check the assumptions behind each claim, and look for examples that show how the issue plays out in practice.
+`;
+}
+
+function strengthenIntroduction(markdown: string, article: ArticleDocument) {
+  const paragraph = firstBodyParagraph(markdown);
+  if (!paragraph) return markdown;
+  const replacement = `${paragraph} This article explains the issue through the evidence, the operational pressures behind it, and the practical implications for readers trying to understand ${article.title.toLowerCase()}.`;
+  return markdown.replace(paragraph, replacement);
+}
+
+function expandTopicCoverage(markdown: string, article: ArticleDocument) {
+  return `${markdown.trim()}
+
+## What This Means In Practice
+
+For readers evaluating ${article.title}, the practical question is not only what is happening, but which forces are driving the change and which outcomes are most likely. The evidence should be read alongside the incentives of the organisations involved, the constraints they face, and the trade-offs that shape their decisions.
+`;
+}
+
+function addInternalLinkSuggestions(markdown: string, article: ArticleDocument) {
+  const anchors = article.title.split(/[:?]/)[0].split(/\s+/).filter((word) => word.length > 4).slice(0, 4);
+  return `${markdown.trim()}
+
+## Internal Link Opportunities
+
+- Link "${article.title}" to the most relevant pillar page for this topic.
+- Add a supporting link using the anchor "${anchors.join(" ").trim() || article.title}".
+- Link from related glossary, comparison, or explainer content back to this article.
+`;
+}
+
+function increaseEntityCoverage(markdown: string, article: ArticleDocument) {
+  const domains = [...new Set(article.sources.map((source) => source.domain).filter(Boolean))].slice(0, 5);
+  const entityLine = domains.length ? domains.join(", ") : "the key organisations, regulations, markets, and stakeholders involved";
+  return `${markdown.trim()}
+
+## Key Entities And Signals
+
+Important entities connected to this topic include ${entityLine}. Referencing these clearly helps readers understand where the evidence comes from and how the article connects to the wider subject area.
+`;
+}
+
+function addStatisticsExamples(markdown: string, article: ArticleDocument) {
+  return `${markdown.trim()}
+
+## Evidence, Statistics, And Examples
+
+The article draws on ${article.sources.length} sources. Where possible, add concrete figures, named examples, or before-and-after comparisons to support the main claims and make the analysis easier to verify.
+`;
+}
+
+function firstBodyParagraph(markdown: string) {
+  return markdown
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .find((block) => block && !block.startsWith("#") && !block.startsWith("- ") && !/^\d+\.\s/.test(block)) ?? "";
 }
 
 function DebugPanel({ debug }: { debug: DebugDocument | null }) {
@@ -2139,6 +2468,56 @@ function statusLabel(status: JobStatus) {
     needs_review: "Needs review",
     failed: "Failed"
   }[status];
+}
+
+function formatMarkdown(markdown: string, start: number, end: number, command: FormatCommand) {
+  const selected = markdown.slice(start, end);
+  const lineStart = markdown.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const lineEndIndex = markdown.indexOf("\n", end);
+  const lineEnd = lineEndIndex === -1 ? markdown.length : lineEndIndex;
+  const selectedLines = markdown.slice(lineStart, lineEnd);
+
+  if (command === "bold") return wrapSelection(markdown, start, end, "**", selected || "bold text");
+  if (command === "italic") return wrapSelection(markdown, start, end, "*", selected || "italic text");
+  if (command === "link") {
+    const label = selected || "link text";
+    const insertion = `[${label}](https://example.com)`;
+    return replaceRange(markdown, start, end, insertion, start + 1, start + 1 + label.length);
+  }
+  if (command === "h2" || command === "h3") {
+    const prefix = command === "h2" ? "## " : "### ";
+    const cleaned = selectedLines.replace(/^#{1,6}\s+/gm, "");
+    return replaceRange(markdown, lineStart, lineEnd, prefixLines(cleaned || "Heading", prefix), lineStart + prefix.length, lineStart + prefix.length + (cleaned || "Heading").length);
+  }
+  if (command === "bullet") {
+    const next = prefixLines(selectedLines || "List item", "- ");
+    return replaceRange(markdown, lineStart, lineEnd, next, lineStart + 2, lineStart + next.length);
+  }
+  const lines = (selectedLines || "List item").split("\n");
+  const next = lines.map((line, index) => `${index + 1}. ${line.replace(/^\d+\.\s+/, "")}`).join("\n");
+  return replaceRange(markdown, lineStart, lineEnd, next, lineStart + 3, lineStart + next.length);
+}
+
+function wrapSelection(markdown: string, start: number, end: number, marker: string, fallback: string) {
+  const selected = markdown.slice(start, end) || fallback;
+  const insertion = `${marker}${selected}${marker}`;
+  return replaceRange(markdown, start, end, insertion, start + marker.length, start + marker.length + selected.length);
+}
+
+function replaceRange(markdown: string, start: number, end: number, insertion: string, selectionStart: number, selectionEnd: number) {
+  return {
+    value: `${markdown.slice(0, start)}${insertion}${markdown.slice(end)}`,
+    selectionStart,
+    selectionEnd
+  };
+}
+
+function prefixLines(value: string, prefix: string) {
+  return value.split("\n").map((line) => `${prefix}${line.replace(/^[-*]\s+/, "")}`).join("\n");
+}
+
+function countWordsLocal(markdown: string) {
+  return markdown.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function resetTransitionTrace() {
