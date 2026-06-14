@@ -95,6 +95,9 @@ function Workbench() {
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [showLeftPane, setShowLeftPane] = useState(true);
+  const [showRightPane, setShowRightPane] = useState(true);
   const [selectedStage, setSelectedStage] = useState<string>("research");
   const [highlightWarnings, setHighlightWarnings] = useState(false);
   const [tick, setTick] = useState(Date.now());
@@ -139,6 +142,7 @@ function Workbench() {
   const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, articles, tick), [articles, displayJobs, tick]);
   const runHistory = useMemo(() => buildRunHistory(displayJobs, articles), [articles, displayJobs]);
   const projectSummary = useMemo(() => state ? calculateProjectSummary(state, queueMetrics) : null, [queueMetrics, state]);
+  const accountStats = useMemo(() => calculateAccountOutcomeStats(articles), [articles]);
   const shouldPollState = running || busy || displayJobs.some((job) => job.status === "queued" || job.status === "processing");
 
   async function refresh() {
@@ -336,6 +340,64 @@ function Workbench() {
     if (!res.ok) void refresh();
   }
 
+  async function renameProject() {
+    const current = state?.project.name ?? "Default Project";
+    const name = window.prompt("Rename project", current)?.trim();
+    if (!name || name === current) return;
+    const res = await fetch("/api/project", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    setProjectMenuOpen(false);
+    setMessage(res.ok ? "Project renamed." : "Project rename failed.");
+    await refresh();
+  }
+
+  async function createProject() {
+    const name = window.prompt("New project name", "Untitled Project")?.trim();
+    if (!name) return;
+    if (!window.confirm("Create a new project in the current workspace? This clears the current articles and queue.")) return;
+    const res = await fetch("/api/project", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    setProjectMenuOpen(false);
+    if (res.ok) {
+      setSelectedArticleId(null);
+      setDetails({ research: null, debug: null });
+      setMessage("New project created.");
+    } else {
+      setMessage("New project failed.");
+    }
+    await refresh();
+  }
+
+  async function deleteProject() {
+    if (!window.confirm("Delete this project data and reset to Default Project? This removes the current queue, articles, research packs, and debug logs.")) return;
+    const res = await fetch("/api/project", { method: "DELETE" });
+    setProjectMenuOpen(false);
+    if (res.ok) {
+      setSelectedArticleId(null);
+      setDetails({ research: null, debug: null });
+      setMessage("Project deleted.");
+    } else {
+      setMessage("Project delete failed.");
+    }
+    await refresh();
+  }
+
+  async function shareAccountStats() {
+    const text = `I have saved roughly ${formatSavedTime(accountStats.savedMinutes)} with OS Writer, written ${formatNumber(accountStats.words)} words, and delivered ${formatNumber(accountStats.articles)} articles. My keyboard is considering early retirement.`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage("Share text copied.");
+    } catch {
+      setMessage(text);
+    }
+  }
+
   function updateArticleDraft(articleId: string, patch: { title?: string; markdown?: string }) {
     let nextTitle = patch.title;
     let nextMarkdown = patch.markdown;
@@ -449,12 +511,6 @@ function Workbench() {
     <main className="flex h-screen w-screen flex-col overflow-hidden bg-background text-ink">
       <header className="hairline-b flex h-10 select-none items-center bg-surface-2/85 px-3 backdrop-blur">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px]">
-          <button className="mr-1 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Projects">
-            <PanelLeft className="size-3.5" />
-          </button>
-          <button className="mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Inspector">
-            <PanelRight className="size-3.5" />
-          </button>
           <span className="font-semibold tracking-tight text-ink">OS Writer V2</span>
           <ChevronRight className="size-3 text-ink-subtle" />
           <span className="truncate text-ink-muted">{state?.project.name ?? "Loading project"}</span>
@@ -466,6 +522,12 @@ function Workbench() {
           ) : null}
         </div>
         <div className="flex items-center gap-1">
+          <button onClick={() => setShowLeftPane((visible) => !visible)} className={cn("grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showLeftPane && "bg-surface-3 text-ink")} title={showLeftPane ? "Hide articles" : "Show articles"}>
+            <PanelLeft className="size-3.5" />
+          </button>
+          <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
+            <PanelRight className="size-3.5" />
+          </button>
           <button onClick={processNext} disabled={busy || running} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
             <Play className="size-3 fill-current" /> Generate
           </button>
@@ -475,18 +537,44 @@ function Workbench() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[340px_minmax(460px,1fr)_380px]">
-        <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
+      <div className={cn(
+        "grid min-h-0 flex-1",
+        showLeftPane && showRightPane && "grid-cols-[340px_minmax(460px,1fr)_380px]",
+        showLeftPane && !showRightPane && "grid-cols-[340px_minmax(460px,1fr)]",
+        !showLeftPane && showRightPane && "grid-cols-[minmax(460px,1fr)_380px]",
+        !showLeftPane && !showRightPane && "grid-cols-1"
+      )}>
+        {showLeftPane && <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
           <div className="hairline-b px-3 pb-3 pt-3">
             <div className="flex items-start justify-between gap-3">
-              <button onClick={() => setSelectedArticleId(null)} className="min-w-0 text-left">
-                <div className="truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</div>
-                <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-ink-subtle">
-                  <span>{projectSummary?.articleCount ?? jobs.length} articles</span>
-                  <span>{projectSummary?.totalWords ? formatNumber(projectSummary.totalWords) : 0} words</span>
-                  <span>{queueMetrics.successRate}% success</span>
-                </div>
-              </button>
+              <div className="relative min-w-0 flex-1">
+                <button onClick={() => setProjectMenuOpen((open) => !open)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-3">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-md bg-ink text-white">
+                    <PanelLeft className="size-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
+                    <span className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-ink-subtle">
+                      <span>{projectSummary?.articleCount ?? jobs.length} articles</span>
+                      <span>{projectSummary?.totalWords ? formatNumber(projectSummary.totalWords) : 0} words</span>
+                      <span>{queueMetrics.successRate}% success</span>
+                    </span>
+                  </span>
+                  <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
+                </button>
+                {projectMenuOpen && (
+                  <ProjectMenu
+                    projectName={state?.project.name ?? "Project"}
+                    onOverview={() => {
+                      setSelectedArticleId(null);
+                      setProjectMenuOpen(false);
+                    }}
+                    onNew={createProject}
+                    onRename={renameProject}
+                    onDelete={deleteProject}
+                  />
+                )}
+              </div>
               <ProjectExportMenu summary={projectSummary} />
             </div>
             <div className="mono mt-3 grid grid-cols-4 gap-2 text-[10.5px]">
@@ -564,7 +652,7 @@ function Workbench() {
               />
             </label>
           </div>
-        </aside>
+        </aside>}
 
         <section className="flex min-h-0 flex-col bg-background">
           {selectedArticle || selectedJob ? (
@@ -610,7 +698,7 @@ function Workbench() {
           )}
         </section>
 
-        <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
+        {showRightPane && <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
           <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
             {(["project", "pipeline", "research", "validation", "seo", "debug"] as const).map((item) => (
               <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
@@ -636,7 +724,7 @@ function Workbench() {
             warningsRef={warningsRef}
             highlightWarnings={highlightWarnings}
           />
-        </aside>
+        </aside>}
       </div>
 
       <footer className="hairline-t mono flex h-6 items-center gap-3 bg-surface-2/70 px-3 text-[10.5px] text-ink-subtle">
@@ -646,7 +734,9 @@ function Workbench() {
         <span>{stats.needs_review} review</span>
         <span className={stats.failed ? "text-danger" : ""}>{stats.failed} failed</span>
         <span>{queueMetrics.remaining} remaining</span>
-        <span className="ml-auto">{selectedArticle ? `${formatNumber(selectedArticle.wordCount)} words · Q${selectedArticle.qualityScore} · ${selectedArticle.sources.length} sources` : "No article"}</span>
+        <button onClick={shareAccountStats} className="ml-auto rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
+          Words {formatNumber(accountStats.words)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
+        </button>
       </footer>
     </main>
   );
@@ -1117,6 +1207,46 @@ function ProjectSection({ title, children }: { title: string; children: React.Re
   );
 }
 
+function ProjectMenu({
+  projectName,
+  onOverview,
+  onNew,
+  onRename,
+  onDelete
+}: {
+  projectName: string;
+  onOverview: () => void;
+  onNew: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="absolute left-0 top-12 z-30 w-[320px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
+      <div className="px-2 pb-2 pt-1">
+        <div className="text-[13px] font-semibold text-ink">Projects</div>
+        <div className="mono mt-1 truncate text-[10.5px] text-ink-subtle">Current workspace: {projectName}</div>
+      </div>
+      <button onClick={onOverview} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
+        <span>Project overview</span>
+        <span className="mono text-[10.5px] text-ink-subtle">Open</span>
+      </button>
+      <div className="my-1 h-px bg-line" />
+      <ProjectMenuAction label="New project" detail="Reset workspace" onClick={onNew} />
+      <ProjectMenuAction label="Rename project" detail="Edit name" onClick={onRename} />
+      <ProjectMenuAction label="Delete project" detail="Reset default" onClick={onDelete} danger />
+    </div>
+  );
+}
+
+function ProjectMenuAction({ label, detail, onClick, danger = false }: { label: string; detail: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button onClick={onClick} className={cn("flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3", danger ? "text-danger" : "text-ink")}>
+      <span>{label}</span>
+      <span className="mono text-[10.5px] text-ink-subtle">{detail}</span>
+    </button>
+  );
+}
+
 function ProjectRow({ title, status, meta, onClick }: { title: string; status: string; meta: string[]; onClick?: () => void }) {
   const content = (
     <>
@@ -1184,13 +1314,16 @@ function ArticleListItem({
   onSelect: () => void;
   onRetry: () => void;
 }) {
-  const sourceCount = article?.sources.length ?? 0;
   const scores = article ? calculateArticleScores(article) : null;
   const displayStatus = displayStatusLabel(job, article);
   const summary = attentionSummary(article, job);
+  const runtime = article ? calculatePipelineRuntime(article.pipeline).totalMs : job.status === "processing" ? currentJobRuntime(job, Date.now()) : null;
   const facts = article
-    ? [`${formatNumber(article.wordCount)} words`, `${sourceCount} sources`, `Q${scores?.quality.score ?? 0}`, `R${scores?.research.score ?? 0}`, `E${scores?.evidence.score ?? 0}`, relativeDate(article.updatedAt)]
+    ? [`${formatNumber(article.wordCount)} words`, formatDuration(runtime)]
     : [`Attempt ${job.attempts}`, relativeDate(job.updatedAt)];
+  const scoreFacts = article && scores
+    ? [`Q${scores.quality.score}`, `R${scores.research.score}`, `E${scores.evidence.score}`]
+    : [];
   return (
     <div className="group relative">
       {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
@@ -1215,6 +1348,11 @@ function ArticleListItem({
               </span>
             ))}
           </span>
+          {scoreFacts.length > 0 && (
+            <span className="mono mt-1 flex flex-wrap items-center gap-x-2 text-[10.5px] text-ink-subtle">
+              {scoreFacts.map((fact) => <span key={fact}>{fact}</span>)}
+            </span>
+          )}
           {summary && <span className={cn("mt-1 block truncate text-[11px]", job.status === "failed" ? "text-danger" : "text-warn")}>{summary}</span>}
         </span>
       </button>
@@ -1295,7 +1433,7 @@ function ArticleHeader({
   const scores = calculateArticleScores(article, research);
   const selectedScore = openScore ? scores[openScore] : null;
   return (
-    <div className="px-6 pb-3 pt-5 lg:px-8">
+    <div className="relative px-6 pb-3 pt-5 lg:px-8">
       <div className="flex gap-4">
         <div className="min-w-0 flex-1">
           <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(article.status)}</div>
@@ -1368,7 +1506,7 @@ function ScoreMetricButton({ score, active, onClick }: { score: ArticleScore; ac
 
 function ScoreDetailPanel({ score }: { score: ArticleScore }) {
   return (
-    <div className="mt-3 max-w-3xl rounded-md border border-line bg-surface-1 p-3">
+    <div className="absolute left-6 top-[calc(100%-0.25rem)] z-30 max-h-[460px] w-[560px] max-w-[calc(100%-3rem)] overflow-auto rounded-md border border-line bg-surface-1 p-3 shadow-lg lg:left-8">
       <div className="flex items-start justify-between gap-4">
         <div>
           <PanelTitle title={`${score.label} Profile`} />
@@ -1376,14 +1514,14 @@ function ScoreDetailPanel({ score }: { score: ArticleScore }) {
         </div>
         <div className="mono text-right text-[20px] font-semibold text-ink">{score.score}</div>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1.5 text-xs md:grid-cols-3">
+      <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1.5 text-xs">
         {score.profile.map((item) => (
           <MetricLine key={item.label} label={item.label} value={item.value} />
         ))}
       </div>
       <div className="mt-3 rounded border border-line bg-surface-2/45 p-2.5">
         <div className="mono mb-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Score diagnostics</div>
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {score.components.map((component) => (
             <div key={component.key}>
               <div className="flex items-baseline gap-2 text-[11.5px]">
@@ -1391,10 +1529,9 @@ function ScoreDetailPanel({ score }: { score: ArticleScore }) {
                 <span className="mono text-ink-subtle">{Math.round(component.weight * 100)}%</span>
                 <span className="mono ml-auto text-ink-muted">{component.value} → {component.contribution.toFixed(1)}</span>
               </div>
-              <div className="mt-1 h-1 rounded-full bg-line">
-                <div className="h-1 rounded-full bg-ink-muted" style={{ width: `${component.value}%` }} />
+              <div className="mt-1 h-0.5 rounded-full bg-line">
+                <div className="h-0.5 rounded-full bg-ink-muted" style={{ width: `${component.value}%` }} />
               </div>
-              <p className="mt-1 text-[10.5px] leading-snug text-ink-subtle">{component.description}</p>
             </div>
           ))}
         </div>
@@ -1754,7 +1891,6 @@ function ProjectContextPanel({
   summary: ProjectSummary | null;
   analytics: ProjectAnalytics | null;
 }) {
-  const controls = state?.settings.controls ?? null;
   const latestRun = history[0] ?? null;
   const averageLength = articles.length && summary ? Math.round(summary.totalWords / articles.length) : null;
   const queueWaitMs = analytics?.performance.average_queue_wait_ms ?? null;
@@ -1769,14 +1905,18 @@ function ProjectContextPanel({
               <div className="truncate text-[13px] font-semibold text-ink">{state.project.name}</div>
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{status}</div>
             </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-              <MetricLine label="Articles" value={formatNumber(summary.articleCount)} />
-              <MetricLine label="Generated" value={metrics.generated} />
-              <MetricLine label="Review" value={metrics.needsReview} />
-              <MetricLine label="Failed" value={metrics.failed} />
-              <MetricLine label="Queued" value={queuedCount} />
-              <MetricLine label="Processing" value={metrics.processingCount} />
+            <div className="grid grid-cols-2 gap-2">
+              <ProjectStatCard label="Articles" value={formatNumber(summary.articleCount)} />
+              <ProjectStatCard label="Generated" value={metrics.generated} tone="success" />
+              <ProjectStatCard label="Review" value={metrics.needsReview} tone={metrics.needsReview > 0 ? "warn" : "neutral"} />
+              <ProjectStatCard label="Failed" value={metrics.failed} tone={metrics.failed > 0 ? "danger" : "neutral"} />
             </div>
+            {(queuedCount > 0 || metrics.processingCount > 0) && (
+              <div className="mono flex gap-3 text-[10.5px] text-ink-subtle">
+                <span>Queued {queuedCount}</span>
+                <span>Processing {metrics.processingCount}</span>
+              </div>
+            )}
           </div>
         </ProjectSection>
       ) : null}
@@ -1794,17 +1934,6 @@ function ProjectContextPanel({
         </ProjectSection>
       ) : null}
 
-      {controls ? (
-        <ProjectSection title="Generation settings">
-          <div className="space-y-2">
-            <MetricLine label="Target words" value={controls.lengthTargetWords} />
-            <ControlFlag label="FAQ enabled" enabled={controls.includeFaq} />
-            <ControlFlag label="TL;DR enabled" enabled={controls.includeTldr} />
-            <ControlFlag label="AI Editor enabled" enabled={controls.runEditor} />
-          </div>
-        </ProjectSection>
-      ) : null}
-
       {jobs.length || analytics ? (
         <ProjectSection title="Operational health">
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
@@ -1816,6 +1945,25 @@ function ProjectContextPanel({
           </div>
         </ProjectSection>
       ) : null}
+    </div>
+  );
+}
+
+function ProjectStatCard({ label, value, tone = "neutral" }: { label: string; value: string | number; tone?: "neutral" | "success" | "warn" | "danger" }) {
+  return (
+    <div className={cn(
+      "rounded-md border border-line bg-background p-2.5",
+      tone === "success" && "border-success/30",
+      tone === "warn" && "border-warn/40",
+      tone === "danger" && "border-danger/30"
+    )}>
+      <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
+      <div className={cn(
+        "mono mt-1 text-[22px] font-semibold leading-none text-ink",
+        tone === "success" && "text-success",
+        tone === "warn" && "text-warn",
+        tone === "danger" && "text-danger"
+      )}>{value}</div>
     </div>
   );
 }
@@ -2651,6 +2799,12 @@ interface ProjectSummary {
   successRate: number;
 }
 
+interface AccountOutcomeStats {
+  words: number;
+  articles: number;
+  savedMinutes: number;
+}
+
 interface RunSummary {
   id: string;
   startedAt: string;
@@ -2667,6 +2821,16 @@ interface SourceDomainSummary {
   accepted: number;
   articleCount: number;
   sourceAuthority: number;
+}
+
+function calculateAccountOutcomeStats(articles: ArticleDocument[]): AccountOutcomeStats {
+  const words = articles.reduce((sum, article) => sum + article.wordCount, 0);
+  const articlesWritten = articles.length;
+  return {
+    words,
+    articles: articlesWritten,
+    savedMinutes: Math.round(words / 40)
+  };
 }
 
 function calculateProjectSummary(state: AppState, metrics: QueueMetrics): ProjectSummary {
@@ -2862,6 +3026,14 @@ function formatDuration(ms: number | null) {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatSavedTime(minutes: number) {
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (!remainder) return `${hours}h`;
+  return `${hours}h ${remainder}m`;
 }
 
 function formatSaveState(saveState: "saved" | "saving" | "error", savedAt: string | null) {

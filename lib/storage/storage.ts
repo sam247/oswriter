@@ -38,6 +38,10 @@ export class WorkspaceStore {
     return { project, settings, jobs, articles };
   }
 
+  async saveProject(project: ProjectDocument) {
+    await this.storage.putJson(workspacePath(project.id), project);
+  }
+
   async clearProjectData(projectId = DEFAULT_PROJECT_ID) {
     const prefixes = [
       jobsPrefix(projectId),
