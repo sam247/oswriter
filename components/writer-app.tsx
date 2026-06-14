@@ -11,6 +11,7 @@ type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
 type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" | "debug";
 type FormatCommand = "bold" | "italic" | "link" | "h2" | "h3" | "bullet" | "numbered";
+type ArticleViewMode = "rich" | "md" | "split";
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -31,6 +32,7 @@ type TransitionTraceEntry = {
 };
 
 const TRANSITION_TRACE_KEY = "oswriter.transitionTrace";
+const ARTICLE_VIEW_MODE_KEY = "oswriter.articleViewMode";
 
 export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
   const [authed, setAuthed] = useState(initialAuthed);
@@ -98,6 +100,8 @@ function Workbench() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [showLeftPane, setShowLeftPane] = useState(true);
   const [showRightPane, setShowRightPane] = useState(true);
+  const [articleViewMode, setArticleViewMode] = useState<ArticleViewMode>("rich");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedStage, setSelectedStage] = useState<string>("research");
   const [highlightWarnings, setHighlightWarnings] = useState(false);
   const [tick, setTick] = useState(Date.now());
@@ -131,7 +135,13 @@ function Workbench() {
     const article = articles.find((item) => item.jobId === job.id);
     return article ? { ...job, status: article.status } : job;
   }), [articles, jobs]);
-  const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter);
+  const visibleJobs = displayJobs.filter((job) => {
+    const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId);
+    const matchesFilter = filter === "all" || job.status === filter;
+    const query = searchQuery.trim().toLowerCase();
+    const matchesSearch = !query || job.title.toLowerCase().includes(query) || article?.title.toLowerCase().includes(query);
+    return matchesFilter && matchesSearch;
+  });
   const stats = useMemo(() => ({
     queued: displayJobs.filter((job) => job.status === "queued").length,
     processing: displayJobs.filter((job) => job.status === "processing").length,
@@ -171,6 +181,15 @@ function Workbench() {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(ARTICLE_VIEW_MODE_KEY);
+    if (stored === "rich" || stored === "md" || stored === "split") setArticleViewMode(stored);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(ARTICLE_VIEW_MODE_KEY, articleViewMode);
+  }, [articleViewMode]);
 
   useEffect(() => {
     if (!selectedArticleId && tab !== "project") setTab("project");
@@ -522,6 +541,15 @@ function Workbench() {
           ) : null}
         </div>
         <div className="flex items-center gap-1">
+          <div className="hidden h-7 w-56 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-ink-muted md:flex">
+            <Search className="size-3.5" />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search articles..."
+              className="h-full min-w-0 flex-1 bg-transparent text-[12px] text-ink outline-none placeholder:text-ink-subtle"
+            />
+          </div>
           <button onClick={() => setShowLeftPane((visible) => !visible)} className={cn("grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showLeftPane && "bg-surface-3 text-ink")} title={showLeftPane ? "Hide articles" : "Show articles"}>
             <PanelLeft className="size-3.5" />
           </button>
@@ -554,11 +582,7 @@ function Workbench() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
-                    <span className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-ink-subtle">
-                      <span>{projectSummary?.articleCount ?? jobs.length} articles</span>
-                      <span>{projectSummary?.totalWords ? formatNumber(projectSummary.totalWords) : 0} words</span>
-                      <span>{queueMetrics.successRate}% success</span>
-                    </span>
+                    <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{projectSummary?.articleCount ?? jobs.length} articles</span>
                   </span>
                   <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
                 </button>
@@ -578,21 +602,10 @@ function Workbench() {
               <ProjectExportMenu summary={projectSummary} />
             </div>
             <div className="mono mt-3 grid grid-cols-4 gap-2 text-[10.5px]">
-              <MetricPill label="Review" value={stats.needs_review} warn={stats.needs_review > 0} />
-              <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} />
-              <MetricPill label="Queue" value={stats.queued} />
-              <MetricPill label="Writing" value={stats.processing} />
-            </div>
-          </div>
-
-          <div className="hairline-b px-2 py-2">
-            <div className="flex flex-wrap gap-px">
-              {(["all", "queued", "processing", "generated", "needs_review", "failed"] as Filter[]).map((item) => (
-                <button key={item} onClick={() => setFilter(item)} className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors", filter === item ? "bg-ink/[0.08] text-ink" : "text-ink-muted hover:bg-surface-3 hover:text-ink")}>
-                  <span>{filterLabel(item)}</span>
-                  <span className="mono text-[10px] text-ink-subtle">{item === "all" ? jobs.length : stats[item]}</span>
-                </button>
-              ))}
+              <MetricPill label="Articles" value={jobs.length} active={filter === "all"} onClick={() => setFilter("all")} />
+              <MetricPill label="Queue" value={stats.queued} active={filter === "queued"} onClick={() => setFilter("queued")} />
+              <MetricPill label="Review" value={stats.needs_review} warn={stats.needs_review > 0} active={filter === "needs_review"} onClick={() => setFilter("needs_review")} />
+              <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} active={filter === "failed"} onClick={() => setFilter("failed")} />
             </div>
           </div>
 
@@ -672,20 +685,21 @@ function Workbench() {
               />
               <ArticleToolbar
                 article={selectedArticle}
-                saveState={saveState}
-                lastSavedAt={lastSavedAt}
+                viewMode={articleViewMode}
+                onViewModeChange={setArticleViewMode}
                 onFormat={applyFormat}
               />
-              <div className="min-h-0 flex-1 overflow-auto">
+              <div className="min-h-0 flex-1">
                 {selectedArticle ? (
                   <ArticleWorkspace
                     markdown={selectedMarkdown}
+                    viewMode={articleViewMode}
                     editorRef={editorRef}
                     onChange={(markdown) => updateArticleDraft(selectedArticle.id, { markdown })}
                   />
                 ) : selectedJob ? <JobPlaceholder job={selectedJob} /> : null}
               </div>
-              {selectedArticle && <ArticleMetricsRail article={selectedArticle} />}
+              {selectedArticle && <ArticleMetricsRail saveState={saveState} lastSavedAt={lastSavedAt} />}
             </>
           ) : (
             <ProjectDashboard
@@ -1292,12 +1306,26 @@ function ProjectExportMenu({ summary }: { summary: ProjectSummary | null }) {
   );
 }
 
-function MetricPill({ label, value, warn = false, danger = false }: { label: string; value: number; warn?: boolean; danger?: boolean }) {
+function MetricPill({
+  label,
+  value,
+  warn = false,
+  danger = false,
+  active = false,
+  onClick
+}: {
+  label: string;
+  value: number;
+  warn?: boolean;
+  danger?: boolean;
+  active?: boolean;
+  onClick?: () => void;
+}) {
   return (
-    <div className="rounded bg-surface-1 px-2 py-1">
+    <button onClick={onClick} className={cn("rounded px-2 py-1 text-left transition-colors hover:bg-surface-3", active ? "bg-ink/[0.08] ring-1 ring-line-strong" : "bg-surface-1")}>
       <div className="text-ink-subtle">{label}</div>
       <div className={cn("mt-0.5 text-[13px] font-semibold text-ink", warn && "text-warn", danger && "text-danger")}>{value}</div>
-    </div>
+    </button>
   );
 }
 
@@ -1319,11 +1347,8 @@ function ArticleListItem({
   const summary = attentionSummary(article, job);
   const runtime = article ? calculatePipelineRuntime(article.pipeline).totalMs : job.status === "processing" ? currentJobRuntime(job, Date.now()) : null;
   const facts = article
-    ? [`${formatNumber(article.wordCount)} words`, formatDuration(runtime)]
+    ? [`${formatNumber(article.wordCount)} words`, formatDuration(runtime), ...(scores ? [`Q${scores.quality.score}`, `R${scores.research.score}`, `E${scores.evidence.score}`] : [])]
     : [`Attempt ${job.attempts}`, relativeDate(job.updatedAt)];
-  const scoreFacts = article && scores
-    ? [`Q${scores.quality.score}`, `R${scores.research.score}`, `E${scores.evidence.score}`]
-    : [];
   return (
     <div className="group relative">
       {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
@@ -1348,11 +1373,6 @@ function ArticleListItem({
               </span>
             ))}
           </span>
-          {scoreFacts.length > 0 && (
-            <span className="mono mt-1 flex flex-wrap items-center gap-x-2 text-[10.5px] text-ink-subtle">
-              {scoreFacts.map((fact) => <span key={fact}>{fact}</span>)}
-            </span>
-          )}
           {summary && <span className={cn("mt-1 block truncate text-[11px]", job.status === "failed" ? "text-danger" : "text-warn")}>{summary}</span>}
         </span>
       </button>
@@ -1367,13 +1387,13 @@ function ArticleListItem({
 
 function ArticleToolbar({
   article,
-  saveState,
-  lastSavedAt,
+  viewMode,
+  onViewModeChange,
   onFormat
 }: {
   article: ArticleDocument | null;
-  saveState: "saved" | "saving" | "error";
-  lastSavedAt: string | null;
+  viewMode: ArticleViewMode;
+  onViewModeChange: (mode: ArticleViewMode) => void;
   onFormat: (command: FormatCommand) => void;
 }) {
   const formatting = [
@@ -1396,9 +1416,17 @@ function ArticleToolbar({
           </button>
         ))}
       </div>
-      <span className={cn("mono text-[10.5px]", saveState === "error" ? "text-danger" : "text-ink-subtle")}>
-        {formatSaveState(saveState, lastSavedAt)}
-      </span>
+      <div className="ml-auto flex shrink-0 items-center rounded-md bg-surface-3 p-0.5">
+        {(["rich", "md", "split"] as const).map((mode) => (
+          <button
+            key={mode}
+            onClick={() => onViewModeChange(mode)}
+            className={cn("h-7 rounded px-2 text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", viewMode === mode && "bg-surface-1 text-ink shadow-sm")}
+          >
+            {mode === "md" ? "MD" : mode}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1466,22 +1494,11 @@ function ArticleHeader({
   );
 }
 
-function ArticleMetricsRail({ article }: { article: ArticleDocument }) {
-  const headings = countMarkdownHeadings(article.markdown);
-  const readingTime = Math.max(1, Math.round(article.wordCount / 230));
-  const scores = calculateArticleScores(article);
+function ArticleMetricsRail({ saveState, lastSavedAt }: { saveState: "saved" | "saving" | "error"; lastSavedAt: string | null }) {
   return (
-    <div className="hairline-t mono flex h-8 shrink-0 items-center gap-5 bg-surface-2/40 px-6 text-[10.5px] text-ink-muted">
-      <MetricRailItem label="Words" value={formatNumber(article.wordCount)} />
-      <MetricRailItem label="Read" value={`${readingTime}m`} />
-      <MetricRailItem label="Quality" value={`Q${scores.quality.score}`} />
-      <MetricRailItem label="Research" value={scores.research.score} />
-      <MetricRailItem label="Evidence" value={scores.evidence.score} />
-      <MetricRailItem label="Sources" value={article.sources.length} />
-      <MetricRailItem label="Headings" value={headings} />
-      <MetricRailItem label="Warnings" value={article.validation.warnings.length} warn={article.validation.warnings.length > 0} />
+    <div className="hairline-t mono flex h-7 shrink-0 items-center bg-surface-2/40 px-6 text-[10.5px] lg:px-8">
       <div className="flex-1" />
-      <span className="truncate text-ink-subtle">Updated {formatTime(article.updatedAt)}</span>
+      <span className={cn("truncate text-ink-subtle", saveState === "error" && "text-danger")}>{formatSaveState(saveState, lastSavedAt)}</span>
     </div>
   );
 }
@@ -1537,15 +1554,6 @@ function ScoreDetailPanel({ score }: { score: ArticleScore }) {
         </div>
       </div>
     </div>
-  );
-}
-
-function MetricRailItem({ label, value, warn = false }: { label: string; value: string | number; warn?: boolean }) {
-  return (
-    <span className="inline-flex items-baseline gap-1">
-      <span className="text-ink-subtle">{label}</span>
-      <span className={cn("text-ink-muted", warn && "text-warn")}>{value}</span>
-    </span>
   );
 }
 
@@ -1788,16 +1796,45 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
 
 function ArticleWorkspace({
   markdown,
+  viewMode,
   editorRef,
   onChange
 }: {
   markdown: string;
+  viewMode: ArticleViewMode;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (markdown: string) => void;
 }) {
+  if (viewMode === "split") {
+    return (
+      <div className="grid h-full min-h-0 grid-cols-2">
+        <div className="hairline-r min-h-0 overflow-hidden">
+          <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} compact />
+        </div>
+        <div className="min-h-0 overflow-auto">
+          <MarkdownPreview markdown={markdown} compact />
+        </div>
+      </div>
+    );
+  }
+
+  if (viewMode === "md") {
+    return <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />;
+  }
+
   return (
-    <div className="h-full px-6 py-6 lg:px-8">
-      <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />
+    <div className="h-full min-h-0 overflow-auto">
+      <MarkdownPreview markdown={markdown} />
+    </div>
+  );
+}
+
+function MarkdownPreview({ markdown, compact = false }: { markdown: string; compact?: boolean }) {
+  return (
+    <div className={cn("mx-auto max-w-[820px] px-8 pb-16 pt-14 text-ink", compact && "max-w-none px-8 pt-10")}>
+      <div className="space-y-6">
+        {renderMarkdownBlocks(markdown)}
+      </div>
     </div>
   );
 }
@@ -1805,21 +1842,25 @@ function ArticleWorkspace({
 function MarkdownEditor({
   markdown,
   editorRef,
-  onChange
+  onChange,
+  compact = false
 }: {
   markdown: string;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (markdown: string) => void;
+  compact?: boolean;
 }) {
   return (
-    <textarea
-      ref={editorRef}
-      value={markdown}
-      onChange={(event) => onChange(event.target.value)}
-      spellCheck
-      className="h-full min-h-[620px] w-full resize-none border-0 bg-transparent px-2 py-4 text-[18px] leading-8 text-ink outline-none placeholder:text-ink-subtle lg:px-8"
-      placeholder="Start writing..."
-    />
+    <div className={cn("h-full min-h-0 overflow-hidden px-6 pb-8 pt-6 lg:px-8", compact && "px-5 pt-5 lg:px-5")}>
+      <textarea
+        ref={editorRef}
+        value={markdown}
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck
+        className="h-full w-full resize-none border-0 bg-transparent px-2 py-2 text-[17px] leading-8 text-ink outline-none placeholder:text-ink-subtle"
+        placeholder="Start writing..."
+      />
+    </div>
   );
 }
 
@@ -2596,6 +2637,94 @@ function Empty({ text }: { text: string }) {
   return <div className="p-5 text-center text-xs text-ink-subtle">{text}</div>;
 }
 
+function renderMarkdownBlocks(markdown: string) {
+  const lines = markdown.split("\n");
+  const blocks: React.ReactNode[] = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const text = paragraph.join(" ").trim();
+    if (text) {
+      blocks.push(
+        <p key={`p-${blocks.length}`} className="text-[19px] leading-[1.75] text-ink">
+          {renderInlineMarkdown(text)}
+        </p>
+      );
+    }
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!list.length) return;
+    blocks.push(
+      <ul key={`ul-${blocks.length}`} className="list-disc space-y-2 pl-6 text-[18px] leading-8 text-ink">
+        {list.map((item, index) => <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>)}
+      </ul>
+    );
+    list = [];
+  };
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length;
+      const text = heading[2];
+      if (level === 1) blocks.push(<h1 key={`h-${blocks.length}`} className="text-[34px] font-semibold leading-tight tracking-tight text-ink">{renderInlineMarkdown(text)}</h1>);
+      else if (level === 2) blocks.push(<h2 key={`h-${blocks.length}`} className="pt-5 text-[25px] font-semibold leading-tight tracking-tight text-ink">{renderInlineMarkdown(text)}</h2>);
+      else blocks.push(<h3 key={`h-${blocks.length}`} className="pt-3 text-[20px] font-semibold leading-snug text-ink">{renderInlineMarkdown(text)}</h3>);
+      return;
+    }
+
+    const listItem = /^[-*]\s+(.+)$/.exec(trimmed) ?? /^\d+\.\s+(.+)$/.exec(trimmed);
+    if (listItem) {
+      flushParagraph();
+      list.push(listItem[1]);
+      return;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  });
+
+  flushParagraph();
+  flushList();
+
+  return blocks.length ? blocks : <p className="text-[18px] leading-8 text-ink-subtle">Start writing...</p>;
+}
+
+function renderInlineMarkdown(text: string) {
+  const nodes: React.ReactNode[] = [];
+  const pattern = /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text))) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    if (match[2] && match[3]) {
+      nodes.push(<a key={`a-${match.index}`} href={match[3]} className="underline decoration-line-strong underline-offset-4" target="_blank" rel="noreferrer">{match[2]}</a>);
+    } else if (match[4]) {
+      nodes.push(<strong key={`b-${match.index}`}>{match[4]}</strong>);
+    } else if (match[5]) {
+      nodes.push(<em key={`i-${match.index}`}>{match[5]}</em>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
 function statusColor(status: JobStatus) {
   return {
     queued: "bg-ink-subtle",
@@ -3041,7 +3170,7 @@ function formatSaveState(saveState: "saved" | "saving" | "error", savedAt: strin
   if (saveState === "error") return "Save failed";
   if (!savedAt) return "Saved";
   const diffSeconds = Math.floor((Date.now() - new Date(savedAt).getTime()) / 1000);
-  if (diffSeconds < 60) return "Saved just now";
+  if (diffSeconds < 60) return `Saved just now · ${formatTime(savedAt).slice(0, 5)}`;
   return `Saved ${formatTime(savedAt).slice(0, 5)}`;
 }
 
