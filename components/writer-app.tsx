@@ -87,7 +87,7 @@ function Workbench() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
-  const [tab, setTab] = useState<InspectorTab>("research");
+  const [tab, setTab] = useState<InspectorTab>("pipeline");
   const [selectedStage, setSelectedStage] = useState<string>("research");
   const [highlightWarnings, setHighlightWarnings] = useState(false);
   const [tick, setTick] = useState(Date.now());
@@ -149,6 +149,10 @@ function Workbench() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (selectedArticleId) setTab("pipeline");
+  }, [selectedArticleId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -410,26 +414,6 @@ function Workbench() {
               <PanelTitle title="Articles" />
               <span className="mono text-[10.5px] text-ink-subtle">{visibleJobs.length} shown</span>
             </div>
-            <button
-              onClick={() => setSelectedArticleId(null)}
-              className={cn(
-                "group relative flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors",
-                !selectedArticleId ? "bg-ink/[0.06]" : "hover:bg-surface-3"
-              )}
-            >
-              {!selectedArticleId && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
-              <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-ink" />
-              <span className="min-w-0 flex-1">
-                <span className={cn("block truncate text-[13px] leading-snug text-ink", !selectedArticleId ? "font-semibold" : "font-medium")}>Project overview</span>
-                <span className="mono mt-1 flex flex-wrap gap-x-1.5 gap-y-0.5 text-[10.5px] text-ink-subtle">
-                  <span>{formatNumber(projectSummary?.articleCount ?? jobs.length)} articles</span>
-                  <span className="text-line-strong">·</span>
-                  <span>{metricsLabel(queueMetrics)}</span>
-                  <span className="text-line-strong">·</span>
-                  <span>Q{projectSummary?.averageConfidence ?? 0}</span>
-                </span>
-              </span>
-            </button>
             {visibleJobs.length ? visibleJobs.map((job) => {
               const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
               return (
@@ -527,7 +511,7 @@ function Workbench() {
           {selectedArticle || selectedJob ? (
             <>
               <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
-                {(["research", "pipeline", "validation", "seo", "debug"] as const).map((item) => (
+                {(["pipeline", "research", "validation", "seo", "debug"] as const).map((item) => (
                   <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
                 ))}
               </div>
@@ -1566,10 +1550,6 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
           <MetricLine label="Updated" value={relativeDate(job.updatedAt)} />
           <MetricLine label="Runtime" value={formatDuration(runtime.totalMs)} />
         </div>
-        <div className="mt-8 max-w-xl">
-          <PanelTitle title="Pipeline state" />
-          <CompactPipelineList pipeline={job.pipeline} />
-        </div>
       </div>
     );
   }
@@ -1588,10 +1568,6 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
         <MetricLine label="Failed stage" value={job.pipeline.find((step) => step.status === "failed")?.stage ?? "-"} />
       </div>
       <pre className="mono mt-6 max-w-2xl whitespace-pre-wrap rounded-md bg-surface-2 p-3 text-xs leading-relaxed text-danger">{job.fatalError ?? "No fatal error recorded."}</pre>
-      <div className="mt-8 max-w-xl">
-        <PanelTitle title="Pipeline state" />
-        <CompactPipelineList pipeline={job.pipeline} />
-      </div>
     </div>
   );
 }
@@ -1853,28 +1829,6 @@ function PipelineTimingDiagnostics({ pipeline, article, job }: { pipeline: Artic
         {timing.waitingMs > 0 && <div>Difference includes queue wait, cron cadence gaps, storage/list freshness, and UI polling delay.</div>}
       </div>
     </div>
-  );
-}
-
-function CompactPipelineList({ pipeline }: { pipeline: ArticleDocument["pipeline"] }) {
-  if (!pipeline.length) return <Empty text="No pipeline steps recorded." />;
-  return (
-    <ol className="relative mt-3 space-y-2.5 pl-5">
-      <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
-      {pipeline.map((step) => (
-        <li key={step.stage} className="relative">
-          <span className="absolute -left-[18px] top-1 grid size-3 place-items-center bg-background">
-            {pipelineIcon(step.status)}
-          </span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12.5px] font-medium capitalize text-ink">{step.stage}</span>
-            <span className="mono ml-auto text-[10.5px] text-ink-subtle">{step.durationMs ? `${(step.durationMs / 1000).toFixed(1)}s` : step.status}</span>
-          </div>
-          {step.error && <div className="mt-1 text-[11px] leading-snug text-danger">{step.error}</div>}
-          {step.message && <div className="mt-1 text-[11px] leading-snug text-ink-muted">{step.message}</div>}
-        </li>
-      ))}
-    </ol>
   );
 }
 
@@ -2262,14 +2216,6 @@ function filterLabel(filter: Filter) {
     needs_review: "Review",
     failed: "Failed"
   }[filter];
-}
-
-function metricsLabel(metrics: QueueMetrics) {
-  if (metrics.processingCount) return `${metrics.processingCount} writing`;
-  if (metrics.failed) return `${metrics.failed} failed`;
-  if (metrics.needsReview) return `${metrics.needsReview} review`;
-  if (metrics.remaining) return `${metrics.remaining} queued`;
-  return "Ready";
 }
 
 interface QueueMetrics {
