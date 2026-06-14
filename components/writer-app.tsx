@@ -75,6 +75,7 @@ function Workbench() {
   const activeRequest = useRef<AbortController | null>(null);
   const warningsRef = useRef<HTMLDivElement | null>(null);
   const visibleRecordedRef = useRef<Set<string>>(new Set());
+  const visibilityBaselineRef = useRef<Set<string> | null>(null);
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -148,13 +149,19 @@ function Workbench() {
   }, [selectedArticle?.id]);
 
   useEffect(() => {
+    if (visibilityBaselineRef.current === null) {
+      const baseline = new Set(articles.filter((article) => article.timings?.generated_at).map((article) => article.id));
+      visibilityBaselineRef.current = baseline;
+      visibleRecordedRef.current = new Set([...visibleRecordedRef.current, ...baseline]);
+      return;
+    }
     for (const article of articles) {
       if (!article.timings?.generated_at || article.timings.visible_at || visibleRecordedRef.current.has(article.id)) continue;
       visibleRecordedRef.current.add(article.id);
       void fetch("/api/analytics/article-visible", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ articleId: article.id })
+        body: JSON.stringify({ articleId: article.id, context: "state_observed_after_initial_load" })
       });
     }
   }, [articles]);

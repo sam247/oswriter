@@ -54,6 +54,7 @@ export interface ArticleTiming {
   save_completed_at?: string;
   generated_at?: string;
   visible_at?: string;
+  visible_context?: "state_observed_after_initial_load" | "article_selected" | "unknown";
   state_reconciled_at?: string;
   completed_at?: string;
 }

@@ -14,6 +14,7 @@ export interface ArticlePerformanceMetrics {
   started_at: string | null;
   generated_at: string | null;
   visible_at: string | null;
+  visible_context: string | null;
   completed_at: string | null;
   started_by: string | null;
   worker_first_seen_at: string | null;
@@ -162,13 +163,14 @@ function buildArticlePerformanceMetrics(article: ArticleDocument, job: QueueJob 
   const generatedAt = timings.generated_at ?? article.updatedAt ?? job?.updatedAt ?? null;
   const completedAt = timings.completed_at ?? generatedAt;
   const visibleAt = timings.visible_at ?? null;
+  const visibleContext = timings.visible_context ?? null;
   const researchMs = durationFromTiming(timings.research_started_at, timings.research_completed_at) ?? stageDuration(article, "research");
   const generationMs = durationFromTiming(timings.generation_started_at, timings.generation_completed_at) ?? stageDuration(article, "generation");
   const validationMs = durationFromTiming(timings.validation_started_at, timings.validation_completed_at) ?? stageDuration(article, "validation");
   const saveMs = durationFromTiming(timings.save_started_at, timings.save_completed_at) ?? stageDuration(article, "save");
   const activeTotalMs = [researchMs, generationMs, validationMs, saveMs].reduce<number>((sum, value) => sum + (value ?? 0), 0);
   const endToEndMs = durationFromTiming(queuedAt, completedAt);
-  const visibilityDelayMs = durationFromTiming(generatedAt, visibleAt);
+  const visibilityDelayMs = visibleContext ? durationFromTiming(generatedAt, visibleAt) : null;
   const confidence = research?.confidence ?? numberFromMeta(article, "research", "confidence");
 
   return {
@@ -185,6 +187,7 @@ function buildArticlePerformanceMetrics(article: ArticleDocument, job: QueueJob 
     started_at: startedAt,
     generated_at: generatedAt,
     visible_at: visibleAt,
+    visible_context: visibleContext,
     completed_at: completedAt,
     started_by: timings.started_by ?? null,
     worker_first_seen_at: timings.worker_first_seen_at ?? null,
@@ -226,24 +229,48 @@ function calculateQueueWaitBreakdown(metric: ArticlePerformanceMetrics, previous
   const queued = timestampMs(metric.queued_at);
   const started = timestampMs(metric.started_at);
   const workerSeen = metric.worker_first_seen_at ? timestampMs(metric.worker_first_seen_at) : null;
+  const leaseRequested = metric.worker_lease_requested_at ? timestampMs(metric.worker_lease_requested_at) : null;
+  const leaseAcquired = metric.worker_lease_acquired_at ? timestampMs(metric.worker_lease_acquired_at) : null;
   const previousCompleted = previous?.completed_at ? timestampMs(previous.completed_at) : null;
-  const cronDelay = metric.started_by === "worker" && workerSeen !== null ? clampDuration(workerSeen - queued, metric.queue_wait_ms) : 0;
-  const workerLease = durationFromTiming(metric.worker_lease_requested_at, metric.worker_lease_acquired_at) ?? 0;
-  const queueBase = Math.max(queued, workerSeen ?? queued);
-  const queuePosition = previousCompleted !== null && previousCompleted > queueBase
-    ? clampDuration(previousCompleted - queueBase, metric.queue_wait_ms)
-    : 0;
-  const availabilityBase = Math.max(queued, workerSeen ?? queued, previousCompleted ?? queued);
-  const workerAvailability = clampDuration(started - availabilityBase - workerLease, metric.queue_wait_ms);
-  const stateSync = durationFromTiming(metric.generated_at, metric.state_reconciled_at) ?? 0;
-  const known = cronDelay + queuePosition + workerLease + workerAvailability + stateSync;
+  const queueEnd = previousCompleted !== null && previousCompleted > queued && previousCompleted < started ? previousCompleted : null;
+  const cronEnd = metric.started_by === "worker" && workerSeen !== null && workerSeen > queued && workerSeen < started ? workerSeen : null;
+  const workerLeaseStart = leaseRequested !== null && leaseRequested > queued && leaseRequested < started ? leaseRequested : null;
+  const workerLeaseEnd = leaseAcquired !== null && workerLeaseStart !== null && leaseAcquired > workerLeaseStart && leaseAcquired < started ? leaseAcquired : null;
+
+  const events = [
+    { at: queued, type: "start" as const },
+    ...(cronEnd ? [{ at: cronEnd, type: "cron" as const }] : []),
+    ...(queueEnd ? [{ at: queueEnd, type: "queue" as const }] : []),
+    ...(workerLeaseStart ? [{ at: workerLeaseStart, type: "lease-start" as const }] : []),
+    ...(workerLeaseEnd ? [{ at: workerLeaseEnd, type: "lease-end" as const }] : []),
+    { at: started, type: "started" as const }
+  ].sort((a, b) => a.at - b.at);
+
+  const breakdown = {
+    cron_delay_ms: 0,
+    queue_position_ms: 0,
+    worker_lease_ms: 0,
+    worker_availability_ms: 0,
+    state_sync_ms: 0,
+    other_ms: 0
+  } satisfies QueueWaitBreakdown;
+
+  for (let index = 0; index < events.length - 1; index += 1) {
+    const from = events[index];
+    const to = events[index + 1];
+    const duration = clampDuration(to.at - from.at, metric.queue_wait_ms);
+    if (duration <= 0) continue;
+    if (queueEnd !== null && from.at < queueEnd) breakdown.queue_position_ms += duration;
+    else if (cronEnd !== null && from.at < cronEnd) breakdown.cron_delay_ms += duration;
+    else if (from.type === "lease-start") breakdown.worker_lease_ms += duration;
+    else if (workerSeen !== null && from.at >= workerSeen) breakdown.worker_availability_ms += duration;
+    else breakdown.other_ms += duration;
+  }
+
+  const allocated = (breakdown.cron_delay_ms ?? 0) + (breakdown.queue_position_ms ?? 0) + (breakdown.worker_lease_ms ?? 0) + (breakdown.worker_availability_ms ?? 0) + (breakdown.other_ms ?? 0);
   return {
-    cron_delay_ms: cronDelay,
-    queue_position_ms: queuePosition,
-    worker_lease_ms: workerLease,
-    worker_availability_ms: workerAvailability,
-    state_sync_ms: stateSync,
-    other_ms: Math.max(0, metric.queue_wait_ms - known)
+    ...breakdown,
+    other_ms: (breakdown.other_ms ?? 0) + Math.max(0, metric.queue_wait_ms - allocated)
   };
 }
 

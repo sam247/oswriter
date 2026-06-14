@@ -7,7 +7,7 @@ export async function POST(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as { articleId?: string };
+  const body = await req.json().catch(() => ({})) as { articleId?: string; context?: "state_observed_after_initial_load" | "article_selected" };
   if (!body.articleId) return NextResponse.json({ error: "Missing articleId." }, { status: 400 });
 
   const store = createWorkspaceStore();
@@ -19,14 +19,14 @@ export async function POST(req: Request) {
   const visibleAt = nowIso();
   await store.saveArticle({
     ...article,
-    timings: { ...article.timings, visible_at: visibleAt }
+    timings: { ...article.timings, visible_at: visibleAt, visible_context: body.context ?? "unknown" }
   });
 
   const job = await store.getJob(article.jobId, article.projectId);
   if (job && !job.timings?.visible_at) {
     await store.saveJob({
       ...job,
-      timings: { ...job.timings, visible_at: visibleAt }
+      timings: { ...job.timings, visible_at: visibleAt, visible_context: body.context ?? "unknown" }
     });
   }
 
