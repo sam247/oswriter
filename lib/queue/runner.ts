@@ -136,6 +136,7 @@ export class QueueRunner {
         ...initial.timings,
         queued_at: initial.timings?.queued_at ?? initial.createdAt,
         started_at: initial.timings?.started_at ?? startedAt,
+        processing_at: initial.timings?.processing_at ?? startedAt,
         started_by: initial.timings?.started_by ?? context.source ?? "unknown"
       }
     };
@@ -169,8 +170,8 @@ export class QueueRunner {
       }
 
       if (!stageDone(job, "outline")) {
-        job = { ...job, pipeline: startStage(job.pipeline, "outline", "Using generation prompt structure."), updatedAt: nowIso() };
-        job = { ...job, pipeline: completeStage(job.pipeline, "outline", { strategy: "model-guided" }), updatedAt: nowIso() };
+        job = { ...job, timings: markTiming(job.timings, "outline_started_at"), pipeline: startStage(job.pipeline, "outline", "Using generation prompt structure."), updatedAt: nowIso() };
+        job = { ...job, timings: markTiming(job.timings, "outline_completed_at"), pipeline: completeStage(job.pipeline, "outline", { strategy: "model-guided" }), updatedAt: nowIso() };
         await this.store.saveJob(job);
         log({ stage: "outline", level: "info", message: "Outline stage prepared." });
         await this.store.saveDebug(debug, job.projectId);

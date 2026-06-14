@@ -9,6 +9,26 @@ import { cn } from "@/lib/utils";
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
 type InspectorTab = "research" | "pipeline" | "validation" | "seo" | "debug";
+type TransitionTraceEntry = {
+  at: string;
+  event: string;
+  jobId: string;
+  articleId: string;
+  title: string;
+  serverStatus: JobStatus;
+  displayedStatus: string;
+  activeStage: string | null;
+  queued_at: string | null;
+  processing_at: string | null;
+  research_started_at: string | null;
+  research_completed_at: string | null;
+  outline_started_at: string | null;
+  outline_completed_at: string | null;
+  generation_started_at: string | null;
+  generation_completed_at: string | null;
+};
+
+const TRANSITION_TRACE_KEY = "oswriter.transitionTrace";
 
 export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
   const [authed, setAuthed] = useState(initialAuthed);
@@ -76,6 +96,7 @@ function Workbench() {
   const warningsRef = useRef<HTMLDivElement | null>(null);
   const visibleRecordedRef = useRef<Set<string>>(new Set());
   const visibilityBaselineRef = useRef<Set<string> | null>(null);
+  const traceJobIdRef = useRef<string | null>(null);
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -112,6 +133,7 @@ function Workbench() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
     if (res?.ok) {
       const next = await res.json() as AppState;
+      recordStateTrace(next, traceJobIdRef.current, "api-state");
       setState(next);
       const selectedExists = selectedArticleId && (
         next.jobs.some((job) => job.articleId === selectedArticleId) ||
@@ -185,7 +207,14 @@ function Workbench() {
     setBusy(true);
     setMessage("Processing next queued title...");
     const optimisticJob = markNextJobGenerating();
-    if (optimisticJob) setSelectedArticleId(optimisticJob.articleId);
+    if (optimisticJob) {
+      if (!traceJobIdRef.current) {
+        traceJobIdRef.current = optimisticJob.id;
+        resetTransitionTrace();
+      }
+      recordTransitionTrace("ui-optimistic", optimisticJob);
+      setSelectedArticleId(optimisticJob.articleId);
+    }
     const controller = new AbortController();
     activeRequest.current = controller;
     const res = await fetch("/api/queue/process-next", { method: "POST", signal: controller.signal }).catch((error) => {
@@ -207,6 +236,7 @@ function Workbench() {
       return res.status === 504;
     }
     if (data.job) {
+      if (traceJobIdRef.current === data.job.id) recordTransitionTrace("process-next-response", data.job);
       upsertJob(data.job);
       if (data.job.status !== "failed") setSelectedArticleId(data.job.articleId);
     }
@@ -2155,6 +2185,54 @@ function statusLabel(status: JobStatus) {
     needs_review: "Needs review",
     failed: "Failed"
   }[status];
+}
+
+function resetTransitionTrace() {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TRANSITION_TRACE_KEY, "[]");
+}
+
+function recordStateTrace(state: AppState, jobId: string | null, event: string) {
+  if (!jobId) return;
+  const job = state.jobs.find((item) => item.id === jobId);
+  if (!job) return;
+  const article = state.articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
+  recordTransitionTrace(event, job, article);
+}
+
+function recordTransitionTrace(event: string, job: QueueJob, article: ArticleDocument | null = null) {
+  if (typeof window === "undefined") return;
+  const displayedJob = article ? { ...job, status: article.status } : job;
+  const entry: TransitionTraceEntry = {
+    at: new Date().toISOString(),
+    event,
+    jobId: job.id,
+    articleId: job.articleId,
+    title: job.title,
+    serverStatus: job.status,
+    displayedStatus: displayStatusLabel(displayedJob, article),
+    activeStage: currentPipelineStage(job.pipeline),
+    queued_at: job.timings?.queued_at ?? null,
+    processing_at: job.timings?.processing_at ?? job.timings?.started_at ?? null,
+    research_started_at: job.timings?.research_started_at ?? null,
+    research_completed_at: job.timings?.research_completed_at ?? null,
+    outline_started_at: job.timings?.outline_started_at ?? null,
+    outline_completed_at: job.timings?.outline_completed_at ?? null,
+    generation_started_at: job.timings?.generation_started_at ?? null,
+    generation_completed_at: job.timings?.generation_completed_at ?? null
+  };
+  const previous = readTransitionTrace();
+  const next = [...previous, entry].slice(-200);
+  window.localStorage.setItem(TRANSITION_TRACE_KEY, JSON.stringify(next));
+  console.info("oswriter.transition", entry);
+}
+
+function readTransitionTrace() {
+  try {
+    return JSON.parse(window.localStorage.getItem(TRANSITION_TRACE_KEY) ?? "[]") as TransitionTraceEntry[];
+  } catch {
+    return [];
+  }
 }
 
 function displayStatusLabel(job: QueueJob, article?: ArticleDocument | null) {
