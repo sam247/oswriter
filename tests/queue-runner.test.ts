@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { QueueRunner } from "@/lib/queue/runner";
+import { getQueueMutationBlocker } from "@/lib/queue/safety";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, SearchAdapter, ValidationInput, ValidationResult } from "@/lib/types";
+import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 
 class FakeSearch implements SearchAdapter {
   constructor(private readonly mode: "strong" | "weak" | "down" = "strong") {}
@@ -161,6 +163,187 @@ describe("QueueRunner", () => {
     assert.equal(manualResult.processed, true);
     assert.equal(manualResult.job?.id, job.id);
     assert.ok(search.calls > 0);
+  });
+
+  it("stops gracefully after the current article completes", async () => {
+    const { store, runner } = setup();
+    const [first, second] = await runner.addTitles(["Finish me first", "Do not start yet"]);
+
+    const started = await runner.processNext(undefined, { source: "manual" });
+    assert.equal(started.job?.id, first.id);
+    assert.equal(started.job?.status, "processing");
+
+    const control = await runner.stopAfterCurrent();
+    assert.equal(control.mode, "stop_after_current");
+
+    await drainQueue(runner);
+    const state = await store.getState();
+    assert.equal(state.queueControl.mode, "stopped");
+    assert.ok(["generated", "needs_review"].includes(state.jobs.find((job) => job.id === first.id)?.status ?? ""));
+    assert.equal(state.jobs.find((job) => job.id === second.id)?.status, "queued");
+    assert.equal(state.articles.length, 1);
+  });
+
+  it("protects queue ownership while a job is processing", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Owned processing job"]);
+    await runner.processNext(undefined, { source: "manual" });
+
+    const blocker = await getQueueMutationBlocker(store);
+    assert.match(blocker ?? "", /processing/i);
+  });
+
+  it("reorders queued jobs safely", async () => {
+    const { store, runner } = setup();
+    const [first, second, third] = await runner.addTitles(["First", "Second", "Third"]);
+
+    await runner.moveJob(third.id, "top");
+    assert.deepEqual((await store.listJobs()).map((job) => job.title), ["Third", "First", "Second"]);
+
+    await runner.moveJob(first.id, "bottom");
+    assert.deepEqual((await store.listJobs()).map((job) => job.title), ["Third", "Second", "First"]);
+
+    await runner.moveJob(second.id, "up");
+    assert.deepEqual((await store.listJobs()).map((job) => job.title), ["Second", "Third", "First"]);
+  });
+
+  it("skips a queued job while retaining history", async () => {
+    const { store, runner } = setup();
+    const [job] = await runner.addTitles(["Skip this item"]);
+
+    const skipped = await runner.skipJob(job.id);
+    assert.equal(skipped.status, "skipped");
+    assert.equal(skipped.statusReason, "Skipped by user.");
+    assert.equal((await store.listJobs()).length, 1);
+  });
+
+  it("regenerates later by moving an item to the queue end with settings preserved", async () => {
+    const { store, runner } = setup();
+    const [first, second] = await runner.addTitles(["Regenerate later", "Stay ahead"]);
+    await runner.skipJob(first.id);
+
+    const regenerated = await runner.regenerateLater(first.id);
+    const jobs = await store.listJobs();
+    assert.equal(regenerated.status, "queued");
+    assert.equal(regenerated.title, first.title);
+    assert.equal(regenerated.pipeline.length, first.pipeline.length);
+    assert.deepEqual(jobs.map((job) => job.id), [second.id, first.id]);
+  });
+
+  it("searches and groups projects, articles, research sources, runs, and findings", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Shopify Collection SEO Guide"]);
+    await drainQueue(runner);
+
+    const articleResults = await store.globalSearch("Collection SEO");
+    assert.equal(articleResults.groups.article[0]?.title, "Shopify Collection SEO Guide");
+    assert.ok(articleResults.groups.research_run.some((result) => result.title === "Shopify Collection SEO Guide"));
+
+    const sourceResults = await store.globalSearch("gov.uk");
+    assert.ok(sourceResults.groups.research_source.some((result) => /gov\.uk/i.test(result.title + result.subtitle)));
+
+    const findingResults = await store.globalSearch("low relevance");
+    assert.ok(findingResults.groups.research_finding.some((result) => /low relevance/i.test(result.title)));
+
+    const projectResults = await store.globalSearch("Default Project");
+    assert.equal(projectResults.groups.project[0]?.title, "Default Project");
+  });
+
+  it("detects global search keyboard shortcuts", () => {
+    assert.equal(isGlobalSearchShortcut({ key: "k", metaKey: true, ctrlKey: false }), true);
+    assert.equal(isGlobalSearchShortcut({ key: "K", metaKey: false, ctrlKey: true }), true);
+    assert.equal(isGlobalSearchShortcut({ key: "k", metaKey: false, ctrlKey: false }), false);
+  });
+
+  it("isolates jobs and articles by active project", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Default project article"]);
+    await drainQueue(runner);
+    const defaultState = await store.getState("default");
+    assert.equal(defaultState.jobs.length, 1);
+    assert.equal(defaultState.articles.length, 1);
+
+    await store.saveProject({
+      id: "project_second",
+      name: "Second Project",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    await store.setActiveProjectId("project_second");
+    await runner.addTitles(["Second project article"]);
+    await drainQueue(runner);
+
+    const activeState = await store.getState();
+    assert.equal(activeState.project.id, "project_second");
+    assert.deepEqual(activeState.jobs.map((job) => job.title), ["Second project article"]);
+    assert.equal(activeState.articles.length, 1);
+
+    const preservedDefaultState = await store.getState("default");
+    assert.deepEqual(preservedDefaultState.jobs.map((job) => job.title), ["Default project article"]);
+    assert.equal(preservedDefaultState.articles.length, 1);
+  });
+
+  it("lists and switches projects without mixing article libraries", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Default library article"]);
+    await drainQueue(runner);
+
+    const now = new Date().toISOString();
+    await store.saveProject({ id: "project_library", name: "Library Project", createdAt: now, updatedAt: now });
+    await store.setActiveProjectId("project_library");
+    await runner.addTitles(["Isolated library article"]);
+    await drainQueue(runner);
+
+    const projects = await store.listProjects();
+    assert.ok(projects.some((project) => project.id === "default"));
+    assert.ok(projects.some((project) => project.id === "project_library"));
+
+    const active = await store.getState();
+    assert.equal(active.project.id, "project_library");
+    assert.deepEqual(active.articles.map((article) => article.title), ["Isolated library article"]);
+
+    await store.setActiveProjectId("default");
+    const restored = await store.getState();
+    assert.deepEqual(restored.articles.map((article) => article.title), ["Default library article"]);
+  });
+
+  it("clears queue work without deleting completed article assets", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Completed article", "Failed queue item"]);
+    const [first, second] = await store.listJobs();
+    await drainQueue(runner);
+    await store.saveJob({
+      ...second,
+      status: "failed",
+      fatalError: "Provider error",
+      updatedAt: new Date().toISOString()
+    });
+
+    const before = await store.getState();
+    assert.equal(before.articles.length, 2);
+    assert.ok(before.jobs.some((job) => job.id === second.id && job.status === "failed"));
+
+    const cleared = await store.clearQueueData();
+    const after = await store.getState();
+    assert.equal(cleared, 1);
+    assert.equal(after.articles.length, 2);
+    assert.ok(after.jobs.every((job) => job.status === "generated" || job.status === "needs_review"));
+    assert.ok(after.articles.some((article) => article.jobId === first.id));
+  });
+
+  it("deletes an article asset without deleting its queue job", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Delete only article"]);
+    await drainQueue(runner);
+
+    const before = await store.getState();
+    assert.equal(before.jobs.length, 1);
+    assert.equal(before.articles.length, 1);
+
+    await store.deleteArticle(before.articles[0].id);
+    const after = await store.getState();
+    assert.equal(after.jobs.length, 1);
+    assert.equal(after.articles.length, 0);
   });
 
   it("processes 20 titles into 20 saved articles", async () => {

@@ -1,4 +1,3 @@
-import { DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import type { QueueRunner } from "@/lib/queue/runner";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import type { WorkerLeaseDocument } from "@/lib/types";
@@ -28,7 +27,7 @@ export function isWorkerRequestAuthorized(req: Request) {
 export async function drainQueueWithLease({
   store,
   runner,
-  projectId = DEFAULT_PROJECT_ID,
+  projectId,
   now = () => Date.now(),
   budgetMs = WORKER_DRAIN_BUDGET_MS,
   heavyStageStartCutoffMs = WORKER_HEAVY_STAGE_START_CUTOFF_MS,
@@ -42,16 +41,17 @@ export async function drainQueueWithLease({
   heavyStageStartCutoffMs?: number;
   leaseTtlMs?: number;
 }): Promise<WorkerDrainResult> {
+  const resolvedProjectId = projectId ?? await store.getActiveProjectId();
   const startedAt = now();
   const leaseRequestedAt = new Date(startedAt).toISOString();
-  const lease = await acquireWorkerLease(store, projectId, now, leaseTtlMs);
+  const lease = await acquireWorkerLease(store, resolvedProjectId, now, leaseTtlMs);
   if (!lease) {
-    await recordWorkerObservation(store, projectId, {
+    await recordWorkerObservation(store, resolvedProjectId, {
       worker_first_seen_at: leaseRequestedAt,
       worker_lease_requested_at: leaseRequestedAt,
       worker_lease_blocked_at: new Date(now()).toISOString()
     });
-    const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
+    const snapshot = await getWorkerQueueSnapshot(store, resolvedProjectId, now);
     return {
       processed: 0,
       remaining: snapshot.remaining,
@@ -64,21 +64,21 @@ export async function drainQueueWithLease({
   }
 
   try {
-    await recordWorkerObservation(store, projectId, {
+    await recordWorkerObservation(store, resolvedProjectId, {
       worker_first_seen_at: leaseRequestedAt,
       worker_lease_requested_at: leaseRequestedAt,
       worker_lease_acquired_at: lease.acquiredAt
     });
-    await runner.reclaimStale(projectId);
+    await runner.reclaimStale(resolvedProjectId);
     let processed = 0;
     while (now() - startedAt < budgetMs) {
-      const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
+      const snapshot = await getWorkerQueueSnapshot(store, resolvedProjectId, now);
       if (now() - startedAt > heavyStageStartCutoffMs && snapshot.nextJob?.heavy) break;
-      const result = await runner.processNext(projectId, { source: "worker" });
+      const result = await runner.processNext(resolvedProjectId, { source: "worker" });
       if (!result.processed) break;
       processed += 1;
     }
-    const snapshot = await getWorkerQueueSnapshot(store, projectId, now);
+    const snapshot = await getWorkerQueueSnapshot(store, resolvedProjectId, now);
     return {
       processed,
       remaining: snapshot.remaining,
@@ -88,19 +88,20 @@ export async function drainQueueWithLease({
       lease: snapshot.lease
     };
   } finally {
-    await releaseWorkerLease(store, lease, projectId);
+    await releaseWorkerLease(store, lease, resolvedProjectId);
   }
 }
 
 export async function acquireWorkerLease(
   store: WorkspaceStore,
-  projectId = DEFAULT_PROJECT_ID,
+  projectId?: string,
   now = () => Date.now(),
   leaseTtlMs = WORKER_LEASE_TTL_MS
 ) {
-  const existing = await store.getWorkerLease(projectId);
+  const resolvedProjectId = projectId ?? await store.getActiveProjectId();
+  const existing = await store.getWorkerLease(resolvedProjectId);
   if (existing && new Date(existing.expiresAt).getTime() > now()) return null;
-  if (existing) await store.deleteWorkerLease(projectId);
+  if (existing) await store.deleteWorkerLease(resolvedProjectId);
 
   const acquiredAtMs = now();
   const lease: WorkerLeaseDocument = {
@@ -111,7 +112,7 @@ export async function acquireWorkerLease(
     expiresAt: new Date(acquiredAtMs + leaseTtlMs).toISOString()
   };
 
-  const created = await store.createWorkerLeaseIfAbsent(lease, projectId);
+  const created = await store.createWorkerLeaseIfAbsent(lease, resolvedProjectId);
   return created ? lease : null;
 }
 
@@ -135,18 +136,20 @@ async function recordWorkerObservation(store: WorkspaceStore, projectId: string,
   })));
 }
 
-export async function releaseWorkerLease(store: WorkspaceStore, lease: WorkerLeaseDocument, projectId = DEFAULT_PROJECT_ID) {
-  const current = await store.getWorkerLease(projectId);
-  if (current?.token === lease.token) await store.deleteWorkerLease(projectId);
+export async function releaseWorkerLease(store: WorkspaceStore, lease: WorkerLeaseDocument, projectId?: string) {
+  const resolvedProjectId = projectId ?? await store.getActiveProjectId();
+  const current = await store.getWorkerLease(resolvedProjectId);
+  if (current?.token === lease.token) await store.deleteWorkerLease(resolvedProjectId);
 }
 
 function countRemaining(jobs: Array<{ status: string }>) {
   return jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
 }
 
-export async function getWorkerQueueSnapshot(store: WorkspaceStore, projectId = DEFAULT_PROJECT_ID, now = () => Date.now()) {
-  const jobs = await store.listJobs(projectId);
-  const lease = await store.getWorkerLease(projectId);
+export async function getWorkerQueueSnapshot(store: WorkspaceStore, projectId?: string, now = () => Date.now()) {
+  const resolvedProjectId = projectId ?? await store.getActiveProjectId();
+  const jobs = await store.listJobs(resolvedProjectId);
+  const lease = await store.getWorkerLease(resolvedProjectId);
   const job = jobs.find((item) => item.status === "processing") ?? jobs.find((item) => item.status === "queued");
   const nextStage = job?.pipeline.find((step) => step.status !== "done" && step.status !== "skipped")?.stage ?? null;
   const leaseExpiresAtMs = lease ? new Date(lease.expiresAt).getTime() : null;

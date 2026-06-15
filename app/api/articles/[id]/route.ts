@@ -32,3 +32,17 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
   return NextResponse.json({ article: updated });
 }
+
+export async function DELETE(_req: Request, context: { params: Promise<{ id: string }> }) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
+  const { id } = await context.params;
+  const { store } = createRuntime();
+  const articles = await store.listArticles();
+  const article = articles.find((item) => item.id === id);
+  if (!article) return NextResponse.json({ error: "Article not found." }, { status: 404 });
+
+  await store.deleteArticle(article.id, article.projectId);
+  return NextResponse.json({ ok: true });
+}

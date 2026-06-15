@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
-import { createDefaultProject, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
+import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
-import { articleMarkdownPath, articlePath, articlesPrefix, debugPath, jobPath, jobsPrefix, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
-import type { ArticleDocument, DebugDocument, DocumentVersion, OrganisationDocument, ProjectDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, WorkerLeaseDocument } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, DocumentVersion, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, WorkerLeaseDocument } from "@/lib/types";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -36,8 +36,10 @@ export class NeonStorageProvider implements StorageProvider {
 
   async getJson<T>(path: string): Promise<T | null> {
     return this.withFailureLogging("getJson", path, async () => {
+      if (isActiveProjectPath(path)) return this.getActiveProject() as Promise<T | null>;
       if (isWorkspacePath(path)) return this.getProject(pathProjectId(path)) as Promise<T | null>;
       if (isSettingsPath(path)) return this.getSettings(pathProjectId(path)) as Promise<T | null>;
+      if (isQueueControlPath(path)) return this.getQueueControl(pathProjectId(path)) as Promise<T | null>;
       if (isJobPath(path)) return this.getDocument<T>("jobs", pathId(path));
       if (isArticlePath(path)) return this.getDocument<T>("articles", pathId(path));
       if (isResearchPath(path)) return this.getDocument<T>("research_packs", researchId(pathProjectId(path), pathId(path)));
@@ -49,8 +51,10 @@ export class NeonStorageProvider implements StorageProvider {
 
   async putJson<T>(path: string, value: T): Promise<void> {
     return this.withFailureLogging("putJson", path, async () => {
+      if (isActiveProjectPath(path)) return this.saveActiveProject(value as { projectId?: string; updatedAt?: string });
       if (isWorkspacePath(path)) return this.saveProject(value as ProjectDocument);
       if (isSettingsPath(path)) return this.saveSettings(value as SettingsDocument);
+      if (isQueueControlPath(path)) return this.saveQueueControl(value as QueueControlDocument);
       if (isJobPath(path)) return this.saveJob(value as QueueJob);
       if (isArticlePath(path)) return this.saveArticle(value as ArticleDocument);
       if (isResearchPath(path)) return this.saveResearch(value as ResearchPack, pathProjectId(path));
@@ -87,7 +91,6 @@ export class NeonStorageProvider implements StorageProvider {
     return this.withFailureLogging("deletePath", path, async () => {
       if (isJobPath(path)) {
         const jobId = pathId(path);
-        await this.sql`delete from articles where job_id = ${jobId}`;
         await this.sql`delete from document_versions where project_id = ${pathProjectId(path)} and document_type = 'job' and document_id = ${jobId}`;
         await this.sql`delete from jobs where id = ${jobId}`;
       } else if (isArticlePath(path) || isArticleMarkdownPath(path)) {
@@ -105,6 +108,9 @@ export class NeonStorageProvider implements StorageProvider {
       } else if (isWorkerLeasePath(path)) {
         const tenant = await this.ensureTenant();
         await this.sql`delete from worker_leases where organisation_id = ${tenant.organisationId} and project_id = ${pathProjectId(path)} and queue_name = 'default'`;
+      } else if (isQueueControlPath(path)) {
+        const tenant = await this.ensureTenant();
+        await this.sql`delete from queue_controls where organisation_id = ${tenant.organisationId} and project_id = ${pathProjectId(path)} and queue_name = 'default'`;
       }
     });
   }
@@ -296,6 +302,135 @@ export class NeonStorageProvider implements StorageProvider {
     });
   }
 
+  async globalSearch(query: string, projectId = DEFAULT_PROJECT_ID, limit = 8): Promise<GlobalSearchResponse> {
+    return this.withFailureLogging("globalSearch", undefined, async () => {
+      const tenant = await this.ensureTenant();
+      const clean = query.trim();
+      const pattern = `%${clean}%`;
+      const groups = emptySearchGroups();
+      if (clean.length < 2) return { query: clean, groups };
+
+      const projects = rows(await this.sql`
+        select id, name, updated_at
+        from projects
+        where organisation_id = ${tenant.organisationId}
+          and (name ilike ${pattern} or slug ilike ${pattern})
+        order by updated_at desc
+        limit ${limit}
+      `);
+      groups.project = projects.map((row) => ({
+        id: String(row.id),
+        type: "project",
+        title: String(row.name),
+        projectId: String(row.id),
+        updatedAt: toIso(row.updated_at)
+      }));
+
+      const articles = rows(await this.sql`
+        select id, project_id, job_id, title, left(markdown, 260) as excerpt, updated_at
+        from articles
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+          and (
+            title ilike ${pattern}
+            or markdown ilike ${pattern}
+            or to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(markdown, '')) @@ plainto_tsquery('simple', ${clean})
+          )
+        order by updated_at desc
+        limit ${limit}
+      `);
+      groups.article = articles.map((row) => ({
+        id: String(row.id),
+        type: "article",
+        title: String(row.title),
+        projectId: String(row.project_id),
+        articleId: String(row.id),
+        jobId: nullableString(row.job_id),
+        matchedText: nullableString(row.excerpt),
+        updatedAt: toIso(row.updated_at)
+      }));
+
+      const runs = rows(await this.sql`
+        select id, project_id, article_id, job_id, title, query, updated_at
+        from research_runs
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+          and (
+            title ilike ${pattern}
+            or query ilike ${pattern}
+            or queries::text ilike ${pattern}
+            or warnings::text ilike ${pattern}
+          )
+        order by updated_at desc
+        limit ${limit}
+      `);
+      groups.research_run = runs.map((row) => ({
+        id: String(row.id),
+        type: "research_run",
+        title: String(row.title),
+        subtitle: nullableString(row.query) ?? "Research run",
+        projectId: String(row.project_id),
+        articleId: nullableString(row.article_id),
+        jobId: nullableString(row.job_id),
+        updatedAt: toIso(row.updated_at)
+      }));
+
+      const sources = rows(await this.sql`
+        select id, project_id, article_id, title, url, domain, summary, last_seen_at
+        from research_sources
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+          and (
+            title ilike ${pattern}
+            or url ilike ${pattern}
+            or domain ilike ${pattern}
+            or summary ilike ${pattern}
+            or highlights::text ilike ${pattern}
+          )
+        order by last_seen_at desc
+        limit ${limit}
+      `);
+      groups.research_source = sources.map((row) => ({
+        id: String(row.id),
+        type: "research_source",
+        title: String(row.domain || row.title),
+        subtitle: String(row.title),
+        projectId: String(row.project_id),
+        articleId: nullableString(row.article_id),
+        url: nullableString(row.url),
+        matchedText: nullableString(row.summary),
+        updatedAt: toIso(row.last_seen_at)
+      }));
+
+      const findings = rows(await this.sql`
+        select f.id, f.project_id, f.research_run_id, f.source_id, f.finding_type, f.content, f.created_at, r.article_id, r.job_id, r.title as run_title
+        from research_findings f
+        left join research_runs r on r.id = f.research_run_id
+        where f.organisation_id = ${tenant.organisationId}
+          and f.project_id = ${projectId}
+          and (
+            f.content ilike ${pattern}
+            or to_tsvector('simple', f.content) @@ plainto_tsquery('simple', ${clean})
+          )
+        order by f.created_at desc
+        limit ${limit}
+      `);
+      groups.research_finding = findings.map((row) => ({
+        id: String(row.id),
+        type: "research_finding",
+        title: String(row.content),
+        subtitle: `${String(row.finding_type).replace("_", " ")} · ${String(row.run_title ?? "Research")}`,
+        projectId: String(row.project_id),
+        articleId: nullableString(row.article_id),
+        jobId: nullableString(row.job_id),
+        matchedText: String(row.content),
+        updatedAt: toIso(row.created_at)
+      }));
+
+      return { query: clean, groups };
+    });
+  }
+
   private async putJsonIfAbsentUnsafe<T>(path: string, value: T): Promise<boolean> {
     if (!isWorkerLeasePath(path)) {
       const existing = await this.getJson(path);
@@ -322,6 +457,10 @@ export class NeonStorageProvider implements StorageProvider {
   }
 
   private async listPathsUnsafe(prefix: string): Promise<string[]> {
+    if (prefix === "projects/" || prefix === "projects") {
+      const found = rows(await this.sql`select id from projects order by updated_at desc`);
+      return found.map((row) => workspacePath(String(row.id)));
+    }
     const projectId = pathProjectId(prefix);
     if (prefix.endsWith("/jobs/")) {
       const found = rows(await this.sql`select id from jobs where project_id = ${projectId} order by created_at asc`);
@@ -339,6 +478,11 @@ export class NeonStorageProvider implements StorageProvider {
       const found = rows(await this.sql`select distinct article_id from debug_events where project_id = ${projectId} order by article_id asc`);
       return found.map((row) => debugPath(String(row.article_id), projectId));
     }
+    if (prefix.endsWith("/queue/")) {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`select project_id from queue_controls where organisation_id = ${tenant.organisationId} and project_id = ${projectId}`);
+      return found.map(() => queueControlPath(projectId));
+    }
     if (prefix.endsWith("/exports/")) {
       const found = rows(await this.sql`select blob_path from exports where project_id = ${projectId} order by created_at asc`);
       return found.map((row) => String(row.blob_path));
@@ -351,9 +495,43 @@ export class NeonStorageProvider implements StorageProvider {
     return found[0]?.document as ProjectDocument | null ?? null;
   }
 
+  private async getActiveProject() {
+    const tenant = await this.ensureTenant();
+    const found = rows(await this.sql`
+      select settings->>'active_project_id' as project_id, updated_at
+      from organisation_settings
+      where organisation_id = ${tenant.organisationId}
+    `);
+    return {
+      projectId: String(found[0]?.project_id ?? DEFAULT_PROJECT_ID),
+      updatedAt: found[0]?.updated_at ? new Date(found[0].updated_at as string | number | Date).toISOString() : new Date().toISOString()
+    };
+  }
+
+  private async saveActiveProject(active: { projectId?: string; updatedAt?: string }) {
+    const tenant = await this.ensureTenant();
+    const projectId = active.projectId || DEFAULT_PROJECT_ID;
+    await this.sql`
+      insert into organisation_settings (organisation_id, settings, updated_at)
+      values (${tenant.organisationId}, ${JSON.stringify({ active_project_id: projectId })}::jsonb, ${active.updatedAt ?? new Date().toISOString()}::timestamptz)
+      on conflict (organisation_id) do update set
+        settings = jsonb_set(organisation_settings.settings, '{active_project_id}', to_jsonb(${projectId}::text), true),
+        updated_at = excluded.updated_at
+    `;
+  }
+
   private async getSettings(projectId: string) {
     const found = rows(await this.sql`select document from project_settings where project_id = ${projectId}`);
     return found[0]?.document as SettingsDocument | null ?? null;
+  }
+
+  private async getQueueControl(projectId: string) {
+    const tenant = await this.ensureTenant();
+    const found = rows(await this.sql`
+      select document from queue_controls
+      where organisation_id = ${tenant.organisationId} and project_id = ${projectId} and queue_name = 'default'
+    `);
+    return found[0]?.document as QueueControlDocument | null ?? null;
   }
 
   private async getWorkerLease(projectId: string) {
@@ -430,18 +608,40 @@ export class NeonStorageProvider implements StorageProvider {
     `;
   }
 
+  private async saveQueueControl(control: QueueControlDocument) {
+    const tenant = await this.ensureTenant();
+    await this.ensureProjectRows(control.projectId);
+    const next = withQueueControlDefaults(control, tenant);
+    await this.sql`
+      insert into queue_controls (organisation_id, project_id, queue_name, mode, requested_by, requested_at, stopped_at, reason, document, updated_at)
+      values (
+        ${next.organisationId}, ${next.projectId}, 'default', ${next.mode}, ${next.requestedBy ?? null},
+        ${next.requestedAt ?? null}::timestamptz, ${next.stoppedAt ?? null}::timestamptz, ${next.reason ?? null},
+        ${JSON.stringify(next)}::jsonb, ${next.updatedAt}::timestamptz
+      )
+      on conflict (organisation_id, project_id, queue_name) do update set
+        mode = excluded.mode,
+        requested_by = excluded.requested_by,
+        requested_at = excluded.requested_at,
+        stopped_at = excluded.stopped_at,
+        reason = excluded.reason,
+        document = excluded.document,
+        updated_at = excluded.updated_at
+    `;
+  }
+
   private async saveJob(job: QueueJob) {
     const tenant = await this.ensureTenant();
     await this.ensureProjectRows(job.projectId);
     const next = withJobDefaults(job, tenant);
     await this.sql`
       insert into jobs (
-        id, organisation_id, project_id, article_id, title, status, status_reason, attempts, needs_review_reasons,
+        id, organisation_id, project_id, article_id, title, status, status_reason, attempts, queue_position, needs_review_reasons,
         fatal_error, pipeline, timings, created_by_user_id, document, created_at, updated_at
       )
       values (
         ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.title}, ${next.status},
-        ${next.statusReason ?? null}, ${next.attempts}, ${JSON.stringify(next.needsReviewReasons)}::jsonb,
+        ${next.statusReason ?? null}, ${next.attempts}, ${next.queuePosition ?? new Date(next.createdAt).getTime()}, ${JSON.stringify(next.needsReviewReasons)}::jsonb,
         ${next.fatalError ?? null}, ${JSON.stringify(next.pipeline)}::jsonb, ${JSON.stringify(next.timings ?? {})}::jsonb,
         ${next.createdByUserId}, ${JSON.stringify(next)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
       )
@@ -449,6 +649,7 @@ export class NeonStorageProvider implements StorageProvider {
         status = excluded.status,
         status_reason = excluded.status_reason,
         attempts = excluded.attempts,
+        queue_position = excluded.queue_position,
         needs_review_reasons = excluded.needs_review_reasons,
         fatal_error = excluded.fatal_error,
         pipeline = excluded.pipeline,
@@ -820,7 +1021,19 @@ function withJobDefaults(job: QueueJob, tenant: TenantSeed): QueueJob {
     ...job,
     organisationId: job.organisationId ?? tenant.organisationId,
     createdByUserId: job.createdByUserId ?? tenant.userId,
+    queuePosition: job.queuePosition ?? new Date(job.createdAt).getTime(),
     statusReason: job.statusReason ?? null
+  };
+}
+
+function withQueueControlDefaults(control: QueueControlDocument, tenant: TenantSeed): QueueControlDocument {
+  return {
+    ...control,
+    organisationId: control.organisationId ?? tenant.organisationId,
+    requestedBy: control.requestedBy ?? null,
+    requestedAt: control.requestedAt ?? null,
+    stoppedAt: control.stoppedAt ?? null,
+    reason: control.reason ?? null
   };
 }
 
@@ -927,8 +1140,16 @@ function isWorkspacePath(path: string) {
   return path.endsWith("/workspace.json");
 }
 
+function isActiveProjectPath(path: string) {
+  return path === activeProjectPath();
+}
+
 function isSettingsPath(path: string) {
   return path.endsWith("/settings.json");
+}
+
+function isQueueControlPath(path: string) {
+  return /\/queue\/control\.json$/.test(path);
 }
 
 function isJobPath(path: string) {
@@ -1080,6 +1301,20 @@ function dateIso(value: unknown) {
 
 function nullableDate(value: unknown) {
   return value == null ? null : dateIso(value);
+}
+
+function toIso(value: unknown) {
+  return value == null ? null : dateIso(value);
+}
+
+function emptySearchGroups(): Record<GlobalSearchResultType, GlobalSearchResult[]> {
+  return {
+    project: [],
+    article: [],
+    research_run: [],
+    research_finding: [],
+    research_source: []
+  };
 }
 
 function stringArray(value: unknown) {

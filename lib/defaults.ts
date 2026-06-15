@@ -1,4 +1,4 @@
-import type { ContentControls, PipelineStep, ProjectDocument, SettingsDocument } from "@/lib/types";
+import type { ContentControls, PipelineStep, ProjectDocument, QueueControlDocument, SettingsDocument } from "@/lib/types";
 
 export const DEFAULT_PROJECT_ID = "default";
 
@@ -30,6 +30,18 @@ export function createDefaultSettings(): SettingsDocument {
     projectId: DEFAULT_PROJECT_ID,
     controls: DEFAULT_CONTROLS,
     staleProcessingMinutes: 15
+  };
+}
+
+export function createDefaultQueueControl(projectId = DEFAULT_PROJECT_ID): QueueControlDocument {
+  return {
+    projectId,
+    mode: "running",
+    requestedBy: null,
+    requestedAt: null,
+    stoppedAt: null,
+    reason: null,
+    updatedAt: nowIso()
   };
 }
 

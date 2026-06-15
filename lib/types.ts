@@ -1,4 +1,5 @@
-export type JobStatus = "queued" | "processing" | "generated" | "needs_review" | "failed";
+export type JobStatus = "queued" | "processing" | "generated" | "needs_review" | "failed" | "skipped";
+export type QueueControlMode = "running" | "paused" | "stop_after_current" | "stopped";
 export type PipelineStageName = "research" | "outline" | "generation" | "save" | "editor" | "validation" | "export";
 export type PipelineStatus = "idle" | "running" | "done" | "failed" | "skipped";
 export type StyleProfile = "standard" | "technical" | "developer" | "homeowner" | "commercial" | "authority" | "local-seo";
@@ -99,10 +100,22 @@ export interface QueueJob {
   updatedAt: string;
   createdByUserId?: string;
   attempts: number;
+  queuePosition?: number;
   needsReviewReasons: string[];
   fatalError?: string;
   pipeline: PipelineStep[];
   timings?: ArticleTiming;
+}
+
+export interface QueueControlDocument {
+  organisationId?: string;
+  projectId: string;
+  mode: QueueControlMode;
+  requestedBy?: string | null;
+  requestedAt?: string | null;
+  stoppedAt?: string | null;
+  reason?: string | null;
+  updatedAt: string;
 }
 
 export interface ResearchSource {
@@ -261,9 +274,31 @@ export interface WorkerLeaseDocument {
 
 export interface AppState {
   project: ProjectDocument;
+  projects?: ProjectDocument[];
   settings: SettingsDocument;
+  queueControl: QueueControlDocument;
   jobs: QueueJob[];
   articles: ArticleDocument[];
+}
+
+export type GlobalSearchResultType = "project" | "article" | "research_run" | "research_finding" | "research_source";
+
+export interface GlobalSearchResult {
+  id: string;
+  type: GlobalSearchResultType;
+  title: string;
+  subtitle?: string;
+  projectId: string;
+  articleId?: string | null;
+  jobId?: string | null;
+  url?: string | null;
+  matchedText?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface GlobalSearchResponse {
+  query: string;
+  groups: Record<GlobalSearchResultType, GlobalSearchResult[]>;
 }
 
 export interface SearchResult {

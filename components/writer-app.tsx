@@ -1,15 +1,17 @@
 "use client";
 
-import { AlertCircle, Bold, CheckCircle2, ChevronDown, ChevronRight, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, SkipForward, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, DebugDocument, JobStatus, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
+import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, QueueControlMode, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
 type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" | "debug";
+type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
 type TransitionTraceEntry = {
@@ -87,6 +89,7 @@ function Workbench() {
   const [titles, setTitles] = useState("");
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("queue");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Ready");
@@ -102,6 +105,10 @@ function Workbench() {
   const [showRightPane, setShowRightPane] = useState(true);
   const [articleViewMode, setArticleViewMode] = useState<ArticleViewMode>("rich");
   const [searchQuery, setSearchQuery] = useState("");
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResponse | null>(null);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [selectedStage, setSelectedStage] = useState<string>("research");
   const [highlightWarnings, setHighlightWarnings] = useState(false);
   const [tick, setTick] = useState(Date.now());
@@ -117,6 +124,7 @@ function Workbench() {
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
+  const projects = state?.projects ?? (state?.project ? [state.project] : []);
   const controls = state?.settings.controls;
   const selectedArticle = useMemo(
     () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : null,
@@ -142,18 +150,28 @@ function Workbench() {
     const matchesSearch = !query || job.title.toLowerCase().includes(query) || article?.title.toLowerCase().includes(query);
     return matchesFilter && matchesSearch;
   });
+  const queueJobs = visibleJobs.filter(isQueueJobVisible);
+  const visibleArticles = articles.filter((article) => {
+    const query = searchQuery.trim().toLowerCase();
+    return !query || article.title.toLowerCase().includes(query) || article.markdown.toLowerCase().includes(query);
+  });
+  const libraryArticles = visibleArticles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
   const stats = useMemo(() => ({
     queued: displayJobs.filter((job) => job.status === "queued").length,
     processing: displayJobs.filter((job) => job.status === "processing").length,
     generated: displayJobs.filter((job) => job.status === "generated").length,
     needs_review: displayJobs.filter((job) => job.status === "needs_review").length,
-    failed: displayJobs.filter((job) => job.status === "failed").length
+    failed: displayJobs.filter((job) => job.status === "failed").length,
+    skipped: displayJobs.filter((job) => job.status === "skipped").length
   }), [displayJobs]);
   const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, articles, tick), [articles, displayJobs, tick]);
   const runHistory = useMemo(() => buildRunHistory(displayJobs, articles), [articles, displayJobs]);
   const projectSummary = useMemo(() => state ? calculateProjectSummary(state, queueMetrics) : null, [queueMetrics, state]);
   const accountStats = useMemo(() => calculateAccountOutcomeStats(articles), [articles]);
   const shouldPollState = running || busy || displayJobs.some((job) => job.status === "queued" || job.status === "processing");
+  const queueState = state ? describeQueueState(state.queueControl.mode, displayJobs) : null;
+  const queueMutationBlockedReason = queueMutationBlockReason(state, displayJobs);
+  const settingsBlockedReason = settingsMutationBlockReason(displayJobs);
 
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
@@ -214,6 +232,45 @@ function Workbench() {
     }, 5_000);
     return () => window.clearInterval(timer);
   }, [selectedArticleId, shouldPollState]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (isGlobalSearchShortcut(event)) {
+        event.preventDefault();
+        setGlobalSearchOpen(true);
+      }
+      if (event.key === "Escape") setGlobalSearchOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!globalSearchOpen) return;
+    const query = globalSearchQuery.trim();
+    if (query.length < 2) {
+      setGlobalSearchResults(null);
+      setGlobalSearchLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setGlobalSearchLoading(true);
+      void fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal: controller.signal, cache: "no-store" })
+        .then((res) => res.ok ? res.json() : null)
+        .then((data: GlobalSearchResponse | null) => setGlobalSearchResults(data))
+        .catch((error) => {
+          if (!controller.signal.aborted) console.warn("Global search failed", error);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setGlobalSearchLoading(false);
+        });
+    }, 120);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [globalSearchOpen, globalSearchQuery]);
 
   useEffect(() => {
     if (!selectedArticle) return;
@@ -298,6 +355,7 @@ function Workbench() {
   }
 
   async function runSequential() {
+    await setQueueControl("resume", "Queue running.");
     stopRequested.current = false;
     setRunning(true);
     let processed = true;
@@ -309,12 +367,26 @@ function Workbench() {
   }
 
   async function stopRun() {
-    stopRequested.current = true;
-    activeRequest.current?.abort();
-    setRunning(false);
+    setMessage("Queue will stop after the current article.");
+    await setQueueControl("stop_after_current", "Stop after current article requested.");
+  }
+
+  async function setQueueControl(action: "stop_after_current" | "resume", success: string) {
+    setBusy(true);
+    const res = await fetch("/api/queue/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action })
+    });
+    const data = await res.json().catch(() => ({})) as { queueControl?: AppState["queueControl"]; error?: string };
     setBusy(false);
-    setMessage("Stopping run...");
-    await post("/api/queue/cancel-current", "Run stopped. Current job returned to queue if still processing.");
+    if (res.ok) {
+      setMessage(success);
+      if (data.queueControl) setState((current) => current ? { ...current, queueControl: data.queueControl! } : current);
+    } else {
+      setMessage(data.error ?? "Queue control failed.");
+    }
+    await refresh();
   }
 
   async function post(path: string, success: string) {
@@ -326,7 +398,11 @@ function Workbench() {
   }
 
   async function clearQueue() {
-    if (!confirm("Clear all queued jobs, failed jobs, generated articles, research packs, and debug logs for this project?")) return;
+    if (queueMutationBlockedReason) {
+      setMessage(queueMutationBlockedReason);
+      return;
+    }
+    if (!confirm("Clear active queue work for this project? Saved articles and research records are kept.")) return;
     stopRequested.current = true;
     activeRequest.current?.abort();
     setRunning(false);
@@ -334,16 +410,19 @@ function Workbench() {
     const res = await fetch("/api/queue/clear", { method: "POST" });
     setBusy(false);
     if (res.ok) {
-      setSelectedArticleId(null);
-      setDetails({ research: null, debug: null });
-      setMessage("Queue and generated records cleared.");
+      setMessage("Queue work cleared.");
       await refresh();
     } else {
-      setMessage("Clear queue failed.");
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      setMessage(data.error ?? "Clear queue failed.");
     }
   }
 
   async function updateLengthTarget(lengthTargetWords: number) {
+    if (settingsBlockedReason) {
+      setMessage(settingsBlockedReason);
+      return;
+    }
     setState((current) => current ? {
       ...current,
       settings: {
@@ -376,7 +455,7 @@ function Workbench() {
   async function createProject() {
     const name = window.prompt("New project name", "Untitled Project")?.trim();
     if (!name) return;
-    if (!window.confirm("Create a new project in the current workspace? This clears the current articles and queue.")) return;
+    if (!window.confirm("Create a new project in the current workspace? Existing projects and their articles will be kept.")) return;
     const res = await fetch("/api/project", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -393,7 +472,29 @@ function Workbench() {
     await refresh();
   }
 
+  async function switchProject(projectId: string) {
+    const res = await fetch("/api/project", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ activeProjectId: projectId })
+    });
+    setProjectMenuOpen(false);
+    if (res.ok) {
+      setSelectedArticleId(null);
+      setDetails({ research: null, debug: null });
+      setSidebarTab("queue");
+      setMessage("Project switched.");
+    } else {
+      setMessage("Project switch failed.");
+    }
+    await refresh();
+  }
+
   async function deleteProject() {
+    if (queueMutationBlockedReason) {
+      setMessage(queueMutationBlockedReason);
+      return;
+    }
     if (!window.confirm("Delete this project data and reset to Default Project? This removes the current queue, articles, research packs, and debug logs.")) return;
     const res = await fetch("/api/project", { method: "DELETE" });
     setProjectMenuOpen(false);
@@ -402,7 +503,8 @@ function Workbench() {
       setDetails({ research: null, debug: null });
       setMessage("Project deleted.");
     } else {
-      setMessage("Project delete failed.");
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      setMessage(data.error ?? "Project delete failed.");
     }
     await refresh();
   }
@@ -415,6 +517,23 @@ function Workbench() {
     } catch {
       setMessage(text);
     }
+  }
+
+  async function deleteArticle(articleId: string) {
+    const article = articles.find((item) => item.id === articleId);
+    if (!article) return;
+    if (!window.confirm(`Delete article "${article.title}" from this project? Queue and research records are kept.`)) return;
+    const res = await fetch(`/api/articles/${articleId}`, { method: "DELETE" });
+    if (res.ok) {
+      if (selectedArticleId === articleId) {
+        setSelectedArticleId(null);
+        setDetails({ research: null, debug: null });
+      }
+      setMessage("Article deleted.");
+    } else {
+      setMessage("Article delete failed.");
+    }
+    await refresh();
   }
 
   function updateArticleDraft(articleId: string, patch: { title?: string; markdown?: string }) {
@@ -504,6 +623,33 @@ function Workbench() {
     void refresh();
   }
 
+  async function actOnJob(jobId: string, action: "skip" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") {
+    const res = await fetch(`/api/jobs/${jobId}/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action })
+    });
+    const data = await res.json().catch(() => ({})) as { job?: QueueJob; error?: string };
+    setMessage(res.ok ? jobActionMessage(action) : data.error ?? "Queue item action failed.");
+    if (data.job) upsertJob(data.job);
+    await refresh();
+  }
+
+  function openSearchResult(result: GlobalSearchResult) {
+    if (result.type === "project" && result.projectId !== state?.project.id) {
+      void switchProject(result.projectId);
+    }
+    if (result.articleId) {
+      setSelectedArticleId(result.articleId);
+      setSidebarTab(result.type === "article" ? "articles" : "queue");
+    } else {
+      setSelectedArticleId(null);
+    }
+    if (result.type === "research_run" || result.type === "research_finding" || result.type === "research_source") setTab("research");
+    setGlobalSearchOpen(false);
+    setGlobalSearchQuery("");
+  }
+
   function upsertJob(job: QueueJob) {
     setState((current) => current ? {
       ...current,
@@ -550,21 +696,26 @@ function Workbench() {
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search articles..."
+              placeholder={sidebarTab === "queue" ? "Search queue..." : "Search articles..."}
               className="h-full min-w-0 flex-1 bg-transparent text-[12px] text-ink outline-none placeholder:text-ink-subtle"
             />
           </div>
+          <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
+            <Search className="size-3.5" />
+            <span>Search</span>
+            <span className="mono rounded bg-surface-3 px-1 py-0.5 text-[10px] text-ink-subtle">⌘K</span>
+          </button>
           <button onClick={() => setShowLeftPane((visible) => !visible)} className={cn("grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showLeftPane && "bg-surface-3 text-ink")} title={showLeftPane ? "Hide articles" : "Show articles"}>
             <PanelLeft className="size-3.5" />
           </button>
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <button onClick={processNext} disabled={busy || running} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
+          <button onClick={processNext} disabled={busy || running || state?.queueControl.mode === "stop_after_current" || state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused"} title={queueState?.detail} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
             <Play className="size-3 fill-current" /> Generate
           </button>
           <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
-            {running ? "Stop run" : "Run queue"}
+            {running ? "Stop After Current Article" : state?.queueControl.mode === "stopped" ? "Resume queue" : "Run queue"}
           </button>
         </div>
       </header>
@@ -586,13 +737,16 @@ function Workbench() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
-                    <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{projectSummary?.articleCount ?? jobs.length} articles</span>
+                    <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{projectSummary?.articleCount ?? articles.length} articles · {stats.queued + stats.processing} active</span>
                   </span>
                   <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
                 </button>
                 {projectMenuOpen && (
                   <ProjectMenu
                     projectName={state?.project.name ?? "Project"}
+                    currentProjectId={state?.project.id ?? ""}
+                    projects={projects}
+                    onSwitch={switchProject}
                     onOverview={() => {
                       setSelectedArticleId(null);
                       setProjectMenuOpen(false);
@@ -600,43 +754,76 @@ function Workbench() {
                     onNew={createProject}
                     onRename={renameProject}
                     onDelete={deleteProject}
+                    queueBlockedReason={queueMutationBlockedReason}
                   />
                 )}
               </div>
               <ProjectExportMenu summary={projectSummary} />
             </div>
             <div className="mono mt-3 grid grid-cols-4 gap-2 text-[10.5px]">
-              <MetricPill label="Articles" value={jobs.length} active={filter === "all"} onClick={() => setFilter("all")} />
-              <MetricPill label="Queue" value={stats.queued} active={filter === "queued"} onClick={() => setFilter("queued")} />
-              <MetricPill label="Review" value={stats.needs_review} warn={stats.needs_review > 0} active={filter === "needs_review"} onClick={() => setFilter("needs_review")} />
-              <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} active={filter === "failed"} onClick={() => setFilter("failed")} />
+              <MetricPill label="Articles" value={articles.length} active={sidebarTab === "articles"} onClick={() => setSidebarTab("articles")} />
+              <MetricPill label="Queue" value={stats.queued + stats.processing} active={sidebarTab === "queue" && filter === "all"} onClick={() => { setSidebarTab("queue"); setFilter("all"); }} />
+              <MetricPill label="Review" value={articles.filter((article) => article.status === "needs_review").length} warn={stats.needs_review > 0} active={sidebarTab === "articles" && filter === "needs_review"} onClick={() => { setSidebarTab("articles"); setFilter("needs_review"); }} />
+              <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} active={sidebarTab === "queue" && filter === "failed"} onClick={() => { setSidebarTab("queue"); setFilter("failed"); }} />
             </div>
+            <QueueStateBanner
+              state={queueState}
+              metrics={queueMetrics}
+              owner={state?.queueControl.requestedBy ?? state?.queueControl.reason ?? null}
+              onResume={() => setQueueControl("resume", "Queue resumed.")}
+            />
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
-            <div className="flex items-center justify-between px-3 pb-1 pt-2">
-              <PanelTitle title="Articles" />
-              <span className="mono text-[10.5px] text-ink-subtle">{visibleJobs.length} shown</span>
+            <div className="px-3 pb-1 pt-2">
+              <div className="grid grid-cols-2 rounded-md bg-surface-3 p-0.5">
+                {(["queue", "articles"] as const).map((item) => (
+                  <button
+                    key={item}
+                    onClick={() => setSidebarTab(item)}
+                    className={cn("h-7 rounded text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", sidebarTab === item && "bg-surface-1 text-ink shadow-sm")}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <PanelTitle title={sidebarTab === "queue" ? "Queue" : "Articles"} />
+                <span className="mono text-[10.5px] text-ink-subtle">{sidebarTab === "queue" ? queueJobs.length : libraryArticles.length} shown</span>
+              </div>
             </div>
-            {visibleJobs.length ? visibleJobs.map((job) => {
-              const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
-              return (
-                <ArticleListItem
-                  key={job.id}
-                  job={job}
-                  article={article}
-                  active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
-                  onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
-                  onRetry={() => retryOne(job.id)}
-                />
-              );
-            }) : <Empty text="No articles in this view." />}
+            {sidebarTab === "queue" ? (
+              queueJobs.length ? queueJobs.map((job) => {
+                const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
+                return (
+                  <QueueListItem
+                    key={job.id}
+                    job={job}
+                    article={article}
+                    active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
+                    onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
+                    onRetry={() => retryOne(job.id)}
+                    onAction={(action) => actOnJob(job.id, action)}
+                  />
+                );
+              }) : <Empty text="No active queue work." />
+            ) : (
+              libraryArticles.length ? libraryArticles.map((article) => (
+                  <ArticleLibraryItem
+                    key={article.id}
+                    article={article}
+                    active={selectedArticleId === article.id}
+                    onOpen={() => setSelectedArticleId(article.id)}
+                    onDelete={() => deleteArticle(article.id)}
+                  />
+                )) : <Empty text="Completed articles will appear here." />
+            )}
           </div>
 
           <div className="hairline-t px-3 pb-3 pt-2">
             <div className="mb-1 flex items-center justify-between px-1">
               <PanelTitle title="Add titles" />
-              <button onClick={clearQueue} className="flex items-center gap-1 text-[10.5px] text-ink-subtle hover:text-danger">
+              <button onClick={clearQueue} disabled={Boolean(queueMutationBlockedReason)} title={queueMutationBlockedReason ?? "Clear queued, failed and skipped work"} className="flex items-center gap-1 text-[10.5px] text-ink-subtle hover:text-danger disabled:cursor-not-allowed disabled:opacity-50">
                 <Trash2 className="size-3" /> Clear
               </button>
             </div>
@@ -665,6 +852,8 @@ function Workbench() {
                 step={100}
                 value={controls?.lengthTargetWords ?? 1400}
                 onChange={(event) => updateLengthTarget(Number(event.target.value))}
+                disabled={Boolean(settingsBlockedReason)}
+                title={settingsBlockedReason ?? "Target article length"}
                 className="mono h-7 w-24 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink"
               />
             </label>
@@ -751,12 +940,112 @@ function Workbench() {
         <span>{stats.generated} generated</span>
         <span>{stats.needs_review} review</span>
         <span className={stats.failed ? "text-danger" : ""}>{stats.failed} failed</span>
+        <span>{stats.skipped} skipped</span>
         <span>{queueMetrics.remaining} remaining</span>
         <button onClick={shareAccountStats} className="ml-auto rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
           Words {formatNumber(accountStats.words)} · Sources {formatNumber(accountStats.sources)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
         </button>
       </footer>
+      {globalSearchOpen && (
+        <GlobalSearchModal
+          query={globalSearchQuery}
+          onQueryChange={setGlobalSearchQuery}
+          results={globalSearchResults}
+          loading={globalSearchLoading}
+          onClose={() => setGlobalSearchOpen(false)}
+          onOpenResult={openSearchResult}
+        />
+      )}
     </main>
+  );
+}
+
+function QueueStateBanner({ state, metrics, owner, onResume }: { state: QueueStateDescription | null; metrics: QueueMetrics; owner: string | null; onResume: () => void }) {
+  if (!state) return null;
+  return (
+    <div className={cn("mt-3 rounded-md border px-2.5 py-2 text-[11.5px]", queueStateTone(state.mode))}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-ink">{state.label}</div>
+          <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">{state.detail}</div>
+        </div>
+        {(state.mode === "stopped" || state.mode === "paused") && (
+          <button onClick={onResume} className="shrink-0 rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Resume</button>
+        )}
+      </div>
+      <div className="mono mt-2 grid grid-cols-3 gap-2 text-[10px] text-ink-subtle">
+        <span>{metrics.completed} of {metrics.total || 0}</span>
+        <span>{metrics.remaining} remaining</span>
+        <span className="truncate">{owner ? `Owner ${owner}` : "Owner local"}</span>
+      </div>
+    </div>
+  );
+}
+
+function GlobalSearchModal({
+  query,
+  onQueryChange,
+  results,
+  loading,
+  onClose,
+  onOpenResult
+}: {
+  query: string;
+  onQueryChange: (query: string) => void;
+  results: GlobalSearchResponse | null;
+  loading: boolean;
+  onClose: () => void;
+  onOpenResult: (result: GlobalSearchResult) => void;
+}) {
+  const groups: Array<{ type: GlobalSearchResultType; label: string }> = [
+    { type: "project", label: "Projects" },
+    { type: "article", label: "Articles" },
+    { type: "research_run", label: "Research Runs" },
+    { type: "research_source", label: "Research Sources" },
+    { type: "research_finding", label: "Research Findings" }
+  ];
+  const total = groups.reduce((sum, group) => sum + (results?.groups[group.type]?.length ?? 0), 0);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/20 px-4 pt-[12vh] backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="hairline-b flex h-12 items-center gap-2 px-3">
+          <Search className="size-4 text-ink-subtle" />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            autoFocus
+            placeholder="Search projects, articles, research, sources..."
+            className="h-full min-w-0 flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-ink-subtle"
+          />
+          {loading && <Loader2 className="size-4 animate-spin text-ink-subtle" />}
+        </div>
+        <div className="max-h-[62vh] overflow-y-auto p-2">
+          {query.trim().length < 2 ? (
+            <Empty text="Type at least two characters." />
+          ) : total === 0 && !loading ? (
+            <Empty text="No matching records found." />
+          ) : (
+            groups.map((group) => {
+              const items = results?.groups[group.type] ?? [];
+              if (!items.length) return null;
+              return (
+                <div key={group.type} className="mb-2 last:mb-0">
+                  <div className="mono px-2 pb-1 pt-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">{group.label}</div>
+                  <div className="divide-y divide-line/70 overflow-hidden rounded-md border border-line">
+                    {items.map((item) => (
+                      <button key={`${item.type}:${item.id}`} onClick={() => onOpenResult(item)} className="block w-full bg-surface-1 px-3 py-2 text-left hover:bg-surface-2">
+                        <span className="block truncate text-[13px] font-medium text-ink">{item.title}</span>
+                        <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">{item.subtitle ?? item.matchedText ?? item.url ?? item.projectId}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1099,7 +1388,8 @@ function StatusDistribution({ jobs }: { jobs: QueueJob[] }) {
     { label: "Review", value: jobs.filter((job) => job.status === "needs_review").length, className: "bg-warn" },
     { label: "Failed", value: jobs.filter((job) => job.status === "failed").length, className: "bg-danger" },
     { label: "Writing", value: jobs.filter((job) => job.status === "processing").length, className: "bg-info" },
-    { label: "Queued", value: jobs.filter((job) => job.status === "queued").length, className: "bg-ink-subtle" }
+    { label: "Queued", value: jobs.filter((job) => job.status === "queued").length, className: "bg-ink-subtle" },
+    { label: "Skipped", value: jobs.filter((job) => job.status === "skipped").length, className: "bg-line-strong" }
   ];
   return (
     <div className="space-y-2">
@@ -1227,16 +1517,24 @@ function ProjectSection({ title, children }: { title: string; children: React.Re
 
 function ProjectMenu({
   projectName,
+  currentProjectId,
+  projects,
+  onSwitch,
   onOverview,
   onNew,
   onRename,
-  onDelete
+  onDelete,
+  queueBlockedReason
 }: {
   projectName: string;
+  currentProjectId: string;
+  projects: ProjectDocument[];
+  onSwitch: (projectId: string) => void;
   onOverview: () => void;
   onNew: () => void;
   onRename: () => void;
   onDelete: () => void;
+  queueBlockedReason: string | null;
 }) {
   return (
     <div className="absolute left-0 top-12 z-30 w-[320px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
@@ -1248,17 +1546,32 @@ function ProjectMenu({
         <span>Project overview</span>
         <span className="mono text-[10.5px] text-ink-subtle">Open</span>
       </button>
+      {projects.length > 0 && (
+        <div className="my-1 max-h-48 overflow-auto rounded border border-line bg-background p-1">
+          {projects.map((project) => (
+            <button
+              key={project.id}
+              onClick={() => onSwitch(project.id)}
+              disabled={project.id === currentProjectId}
+              className="flex h-8 w-full items-center justify-between gap-2 rounded px-2 text-left text-[12px] text-ink hover:bg-surface-3 disabled:cursor-default disabled:bg-surface-2"
+            >
+              <span className="truncate">{project.name}</span>
+              <span className="mono shrink-0 text-[10px] text-ink-subtle">{project.id === currentProjectId ? "Current" : relativeDate(project.updatedAt)}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="my-1 h-px bg-line" />
-      <ProjectMenuAction label="New project" detail="Reset workspace" onClick={onNew} />
+      <ProjectMenuAction label="New project" detail="Create workspace" onClick={onNew} />
       <ProjectMenuAction label="Rename project" detail="Edit name" onClick={onRename} />
-      <ProjectMenuAction label="Delete project" detail="Reset default" onClick={onDelete} danger />
+      <ProjectMenuAction label="Delete project" detail={queueBlockedReason ? "Locked" : "Reset default"} onClick={onDelete} danger disabled={Boolean(queueBlockedReason)} title={queueBlockedReason ?? "Delete project"} />
     </div>
   );
 }
 
-function ProjectMenuAction({ label, detail, onClick, danger = false }: { label: string; detail: string; onClick: () => void; danger?: boolean }) {
+function ProjectMenuAction({ label, detail, onClick, danger = false, disabled = false, title }: { label: string; detail: string; onClick: () => void; danger?: boolean; disabled?: boolean; title?: string }) {
   return (
-    <button onClick={onClick} className={cn("flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3", danger ? "text-danger" : "text-ink")}>
+    <button onClick={onClick} disabled={disabled} title={title} className={cn("flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50", danger ? "text-danger" : "text-ink")}>
       <span>{label}</span>
       <span className="mono text-[10.5px] text-ink-subtle">{detail}</span>
     </button>
@@ -1333,18 +1646,20 @@ function MetricPill({
   );
 }
 
-function ArticleListItem({
+function QueueListItem({
   job,
   article,
   active,
   onSelect,
-  onRetry
+  onRetry,
+  onAction
 }: {
   job: QueueJob;
   article: ArticleDocument | null;
   active: boolean;
   onSelect: () => void;
   onRetry: () => void;
+  onAction: (action: "skip" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void;
 }) {
   const scores = article ? calculateArticleScores(article) : null;
   const displayStatus = displayStatusLabel(job, article);
@@ -1385,6 +1700,104 @@ function ArticleListItem({
           Retry
         </button>
       )}
+      {(job.status === "queued" || job.status === "processing" || job.status === "skipped") && (
+        <QueueItemActions job={job} onAction={onAction} />
+      )}
+    </div>
+  );
+}
+
+function QueueItemActions({ job, onAction }: { job: QueueJob; onAction: (action: "skip" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void }) {
+  const locked = job.status === "processing";
+  const title = locked ? "This article is processing and cannot be reordered, skipped or regenerated yet." : "Queue item controls";
+  return (
+    <div className="invisible absolute bottom-2 right-2 flex items-center gap-0.5 rounded bg-surface-1 p-0.5 shadow-sm ring-1 ring-line group-hover:visible" title={title}>
+      {locked ? (
+        <span className="px-1.5 py-0.5 text-[10.5px] text-ink-subtle">Locked while processing</span>
+      ) : (
+        <>
+          <IconAction title="Move to top" onClick={() => onAction("move_top")}><ChevronsUp className="size-3" /></IconAction>
+          <IconAction title="Move up" onClick={() => onAction("move_up")}><ArrowUp className="size-3" /></IconAction>
+          <IconAction title="Move down" onClick={() => onAction("move_down")}><ArrowDown className="size-3" /></IconAction>
+          <IconAction title="Move to bottom" onClick={() => onAction("move_bottom")}><ChevronsDown className="size-3" /></IconAction>
+          <IconAction title="Regenerate later" onClick={() => onAction("regenerate_later")}><RotateCw className="size-3" /></IconAction>
+          <IconAction title="Skip" danger onClick={() => onAction("skip")}><SkipForward className="size-3" /></IconAction>
+        </>
+      )}
+    </div>
+  );
+}
+
+function IconAction({ title, onClick, children, danger = false }: { title: string; onClick: () => void; children: React.ReactNode; danger?: boolean }) {
+  return (
+    <button
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      title={title}
+      className={cn("grid size-6 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", danger && "hover:text-danger")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ArticleLibraryItem({
+  article,
+  active,
+  onOpen,
+  onDelete
+}: {
+  article: ArticleDocument;
+  active: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const scores = calculateArticleScores(article);
+  const readingTime = Math.max(1, Math.round(article.wordCount / 230));
+  const metadata = [
+    `${formatNumber(article.wordCount)} words`,
+    `${article.sources.length} sources`,
+    `${readingTime}m read`,
+    `Q${scores.quality.score}`
+  ];
+
+  return (
+    <div className="group relative">
+      {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
+      <button
+        onClick={onOpen}
+        className={cn(
+          "flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors",
+          active ? "bg-ink/[0.06]" : "hover:bg-surface-3"
+        )}
+      >
+        <span className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", article.status === "needs_review" ? "bg-warn" : "bg-success")} />
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-start gap-2">
+            <span className={cn("min-w-0 flex-1 truncate text-[13px] leading-snug text-ink", active ? "font-semibold" : "font-medium")}>{article.title}</span>
+            <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[10px]", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
+          </span>
+          <span className="mono mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] text-ink-subtle">
+            {metadata.map((item, index) => (
+              <span key={`${item}-${index}`} className="contents">
+                {index > 0 && <span className="text-line-strong">·</span>}
+                <span>{item}</span>
+              </span>
+            ))}
+          </span>
+          <span className="mono mt-1 block truncate text-[10.5px] text-ink-subtle">Updated {relativeDate(article.updatedAt)}</span>
+        </span>
+      </button>
+      <div className="invisible absolute right-2 top-2 flex gap-1 group-hover:visible">
+        <button onClick={onOpen} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink">
+          Open
+        </button>
+        <button onClick={onDelete} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-danger shadow-sm ring-1 ring-line hover:bg-danger/10">
+          Delete
+        </button>
+      </div>
     </div>
   );
 }
@@ -2841,7 +3254,8 @@ function statusColor(status: JobStatus) {
     processing: "bg-info",
     generated: "bg-success",
     needs_review: "bg-warn",
-    failed: "bg-danger"
+    failed: "bg-danger",
+    skipped: "bg-ink-subtle"
   }[status];
 }
 
@@ -2851,7 +3265,8 @@ function statusBadgeTone(status: JobStatus) {
     processing: "bg-info/10 text-info",
     generated: "bg-success/10 text-success",
     needs_review: "bg-warn/10 text-warn",
-    failed: "bg-danger/10 text-danger"
+    failed: "bg-danger/10 text-danger",
+    skipped: "bg-surface-3 text-ink-subtle"
   }[status];
 }
 
@@ -2861,7 +3276,8 @@ function statusTextTone(status: JobStatus) {
     processing: "text-info",
     generated: "text-success",
     needs_review: "text-warn",
-    failed: "text-danger"
+    failed: "text-danger",
+    skipped: "text-ink-subtle"
   }[status];
 }
 
@@ -2871,7 +3287,8 @@ function statusLabel(status: JobStatus) {
     processing: "Generating",
     generated: "Generated",
     needs_review: "Needs review",
-    failed: "Failed"
+    failed: "Failed",
+    skipped: "Skipped"
   }[status];
 }
 
@@ -2998,6 +3415,10 @@ function displayStatusLabel(job: QueueJob, article?: ArticleDocument | null) {
   return "Writing";
 }
 
+function isQueueJobVisible(job: QueueJob) {
+  return job.status === "queued" || job.status === "processing" || job.status === "failed" || job.status === "skipped";
+}
+
 function currentPipelineStage(pipeline: QueueJob["pipeline"]) {
   return pipeline.find((step) => step.status === "running")?.stage
     ?? [...pipeline].reverse().find((step) => step.status === "done")?.stage
@@ -3012,8 +3433,65 @@ function filterLabel(filter: Filter) {
     processing: "Writing",
     generated: "Generated",
     needs_review: "Review",
-    failed: "Failed"
+    failed: "Failed",
+    skipped: "Skipped"
   }[filter];
+}
+
+interface QueueStateDescription {
+  mode: QueueControlMode | "completed" | "failed";
+  label: string;
+  detail: string;
+}
+
+function describeQueueState(mode: QueueControlMode, jobs: QueueJob[]): QueueStateDescription {
+  const processing = jobs.find((job) => job.status === "processing");
+  const queued = jobs.filter((job) => job.status === "queued").length;
+  const failed = jobs.filter((job) => job.status === "failed").length;
+  if (mode === "stop_after_current") {
+    return {
+      mode,
+      label: "Stop After Current",
+      detail: processing ? `Finishing ${processing.title}` : "Will stop before another article starts."
+    };
+  }
+  if (mode === "paused") return { mode, label: "Paused", detail: "Queue processing is paused." };
+  if (mode === "stopped") return { mode, label: "Stopped", detail: "No new article will start until resumed." };
+  if (processing) return { mode: "running", label: "Running", detail: `Current article: ${processing.title}` };
+  if (queued > 0) return { mode: "running", label: "Running", detail: `${queued} queued articles waiting.` };
+  if (failed > 0) return { mode: "failed", label: "Failed", detail: `${failed} article${failed === 1 ? "" : "s"} need attention.` };
+  return { mode: "completed", label: "Completed", detail: "No remaining queue work." };
+}
+
+function queueStateTone(mode: QueueStateDescription["mode"]) {
+  if (mode === "stop_after_current" || mode === "paused" || mode === "stopped") return "border-warn/30 bg-warn/5";
+  if (mode === "failed") return "border-danger/30 bg-danger/5";
+  if (mode === "completed") return "border-success/30 bg-success/5";
+  return "border-info/30 bg-info/5";
+}
+
+function queueMutationBlockReason(state: AppState | null, jobs: QueueJob[]) {
+  const processing = jobs.find((job) => job.status === "processing");
+  if (processing) return `Queue is processing "${processing.title}". Stop after current or wait before changing queue-critical state.`;
+  if (state?.queueControl.mode === "stop_after_current") return "Queue is stopping after the current article.";
+  return null;
+}
+
+function settingsMutationBlockReason(jobs: QueueJob[]) {
+  return jobs.some((job) => job.status === "queued" || job.status === "processing")
+    ? "Generation settings are locked while queued or processing articles exist."
+    : null;
+}
+
+function jobActionMessage(action: string) {
+  return {
+    skip: "Queue item skipped.",
+    regenerate_later: "Queue item moved to the end.",
+    move_up: "Queue item moved up.",
+    move_down: "Queue item moved down.",
+    move_top: "Queue item moved to top.",
+    move_bottom: "Queue item moved to bottom."
+  }[action] ?? "Queue item updated.";
 }
 
 interface QueueMetrics {
@@ -3023,6 +3501,7 @@ interface QueueMetrics {
   generated: number;
   needsReview: number;
   failed: number;
+  skipped: number;
   processingCount: number;
   successRate: number;
   currentTitle: string | null;
@@ -3226,9 +3705,10 @@ function calculateQueueMetrics(jobs: QueueJob[], articles: ArticleDocument[], no
   const generated = jobs.filter((job) => job.status === "generated").length;
   const needsReview = jobs.filter((job) => job.status === "needs_review").length;
   const failed = jobs.filter((job) => job.status === "failed").length;
+  const skipped = jobs.filter((job) => job.status === "skipped").length;
   const processingJobs = jobs.filter((job) => job.status === "processing");
   const processingCount = processingJobs.length;
-  const completed = generated + needsReview + failed;
+  const completed = generated + needsReview + failed + skipped;
   const successful = generated + needsReview;
   const remaining = jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
   const successRate = completed ? Number(((successful / completed) * 100).toFixed(1)) : 100;
@@ -3253,6 +3733,7 @@ function calculateQueueMetrics(jobs: QueueJob[], articles: ArticleDocument[], no
     generated,
     needsReview,
     failed,
+    skipped,
     processingCount,
     successRate,
     currentTitle: processing?.title ?? null,

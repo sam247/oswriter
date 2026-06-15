@@ -1,5 +1,5 @@
 import type { ArticleDocument, DebugDocument, DebugEvent, ModelAdapter, QueueJob, SearchAdapter } from "@/lib/types";
-import { createPipeline, DEFAULT_PROJECT_ID, nowIso } from "@/lib/defaults";
+import { createPipeline, nowIso } from "@/lib/defaults";
 import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
 import { runResearch } from "@/lib/research/research-engine";
@@ -14,7 +14,8 @@ export class QueueRunner {
     private readonly model: ModelAdapter
   ) {}
 
-  async addTitles(titles: string[], projectId = DEFAULT_PROJECT_ID) {
+  async addTitles(titles: string[], projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const clean = titles.map((title) => title.trim()).filter(Boolean);
     const queuedAt = Date.now();
     const jobs: QueueJob[] = clean.map((title, index) => {
@@ -22,13 +23,14 @@ export class QueueRunner {
       const articleId = slugId("article");
       return {
         id: slugId("job"),
-        projectId,
+        projectId: resolvedProjectId,
         articleId,
         title,
         status: "queued",
         createdAt,
         updatedAt: createdAt,
         attempts: 0,
+        queuePosition: queuedAt + index,
         needsReviewReasons: [],
         pipeline: createPipeline(),
         timings: { queued_at: createdAt }
@@ -40,14 +42,17 @@ export class QueueRunner {
     return jobs;
   }
 
-  async retryJob(jobId: string, projectId = DEFAULT_PROJECT_ID) {
-    const job = await this.store.getJob(jobId, projectId);
+  async retryJob(jobId: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const job = await this.store.getJob(jobId, resolvedProjectId);
     if (!job) throw new Error(`Job not found: ${jobId}`);
     const next: QueueJob = {
       ...job,
       status: "queued",
       updatedAt: nowIso(),
+      queuePosition: await this.nextQueuePosition(resolvedProjectId),
       fatalError: undefined,
+      statusReason: null,
       needsReviewReasons: [],
       pipeline: createPipeline(),
       timings: { queued_at: nowIso() }
@@ -56,15 +61,106 @@ export class QueueRunner {
     return next;
   }
 
-  async retryFailed(projectId = DEFAULT_PROJECT_ID) {
-    const jobs = await this.store.listJobs(projectId);
+  async retryFailed(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const jobs = await this.store.listJobs(resolvedProjectId);
     const failed = jobs.filter((job) => job.status === "failed");
-    await Promise.all(failed.map((job) => this.retryJob(job.id, projectId)));
+    await Promise.all(failed.map((job) => this.retryJob(job.id, resolvedProjectId)));
     return failed.length;
   }
 
-  async cancelCurrent(projectId = DEFAULT_PROJECT_ID) {
-    const jobs = await this.store.listJobs(projectId);
+  async stopAfterCurrent(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const jobs = await this.store.listJobs(resolvedProjectId);
+    const processing = jobs.find((job) => job.status === "processing");
+    const now = nowIso();
+    const control = {
+      ...await this.store.getQueueControl(resolvedProjectId),
+      mode: processing ? "stop_after_current" as const : "stopped" as const,
+      requestedBy: "user",
+      requestedAt: now,
+      stoppedAt: processing ? null : now,
+      reason: processing ? "Current article will finish before the queue stops." : "Queue stopped before another article started.",
+      updatedAt: now
+    };
+    await this.store.saveQueueControl(control);
+    return control;
+  }
+
+  async resumeQueue(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const now = nowIso();
+    const control = {
+      ...await this.store.getQueueControl(resolvedProjectId),
+      mode: "running" as const,
+      requestedBy: "user",
+      requestedAt: null,
+      stoppedAt: null,
+      reason: null,
+      updatedAt: now
+    };
+    await this.store.saveQueueControl(control);
+    return control;
+  }
+
+  async skipJob(jobId: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const job = await this.store.getJob(jobId, resolvedProjectId);
+    if (!job) throw new Error(`Job not found: ${jobId}`);
+    if (job.status === "processing") throw new Error("Cannot skip the article that is currently processing.");
+    if (job.status !== "queued" && job.status !== "failed") throw new Error("Only queued or failed jobs can be skipped.");
+    const skipped: QueueJob = {
+      ...job,
+      status: "skipped",
+      statusReason: "Skipped by user.",
+      updatedAt: nowIso()
+    };
+    await this.store.saveJob(skipped);
+    return skipped;
+  }
+
+  async regenerateLater(jobId: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const job = await this.store.getJob(jobId, resolvedProjectId);
+    if (!job) throw new Error(`Job not found: ${jobId}`);
+    if (job.status === "processing") throw new Error("Cannot move the article that is currently processing.");
+    if (job.status !== "queued" && job.status !== "failed" && job.status !== "skipped") throw new Error("Only queued, failed or skipped jobs can be regenerated later.");
+    const now = nowIso();
+    const next: QueueJob = {
+      ...job,
+      status: "queued",
+      statusReason: "Moved to end of queue for later regeneration.",
+      queuePosition: await this.nextQueuePosition(resolvedProjectId),
+      updatedAt: now,
+      fatalError: undefined,
+      timings: { ...job.timings, queued_at: now }
+    };
+    await this.store.saveJob(next);
+    return next;
+  }
+
+  async moveJob(jobId: string, direction: "up" | "down" | "top" | "bottom", projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const jobs = (await this.store.listJobs(resolvedProjectId)).filter((job) => job.status === "queued");
+    const index = jobs.findIndex((job) => job.id === jobId);
+    if (index < 0) throw new Error("Only queued jobs can be reordered.");
+    const targetIndex = direction === "top" ? 0 : direction === "bottom" ? jobs.length - 1 : direction === "up" ? Math.max(0, index - 1) : Math.min(jobs.length - 1, index + 1);
+    const reordered = [...jobs];
+    const [job] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, job);
+    const base = Date.now();
+    const updated = reordered.map((item, order) => ({
+      ...item,
+      queuePosition: base + order,
+      updatedAt: nowIso()
+    }));
+    await this.store.saveJobs(updated);
+    return updated.find((item) => item.id === jobId) ?? job;
+  }
+
+  async cancelCurrent(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const jobs = await this.store.listJobs(resolvedProjectId);
     const current = jobs.find((job) => job.status === "processing");
     if (!current) return null;
     const cancelled: QueueJob = {
@@ -77,11 +173,12 @@ export class QueueRunner {
     return cancelled;
   }
 
-  async reclaimStale(projectId = DEFAULT_PROJECT_ID) {
-    const settings = await this.store.getSettings(projectId);
+  async reclaimStale(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const settings = await this.store.getSettings(resolvedProjectId);
     const cutoff = Date.now() - settings.staleProcessingMinutes * 60_000;
-    await this.reconcileSavedArticles(projectId);
-    const jobs = await this.store.listJobs(projectId);
+    await this.reconcileSavedArticles(resolvedProjectId);
+    const jobs = await this.store.listJobs(resolvedProjectId);
     const stale = jobs.filter((job) => job.status === "processing" && new Date(job.updatedAt).getTime() < cutoff);
     await Promise.all(stale.map((job) => this.store.saveJob({
       ...job,
@@ -92,10 +189,11 @@ export class QueueRunner {
     return stale.length;
   }
 
-  async reconcileSavedArticles(projectId = DEFAULT_PROJECT_ID) {
+  async reconcileSavedArticles(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const [jobs, articles] = await Promise.all([
-      this.store.listJobs(projectId),
-      this.store.listArticles(projectId)
+      this.store.listJobs(resolvedProjectId),
+      this.store.listArticles(resolvedProjectId)
     ]);
     const articlesByJob = new Map(articles.map((article) => [article.jobId, article]));
     const mismatched = jobs.filter((job) => {
@@ -119,12 +217,17 @@ export class QueueRunner {
     return mismatched.length;
   }
 
-  async processNext(projectId = DEFAULT_PROJECT_ID, context: { source?: "manual" | "worker" } = {}) {
-    await this.reclaimStale(projectId);
-    const jobs = await this.store.listJobs(projectId);
+  async processNext(projectId?: string, context: { source?: "manual" | "worker" } = {}) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    await this.reclaimStale(resolvedProjectId);
+    const jobs = await this.store.listJobs(resolvedProjectId);
     const processing = jobs.find((item) => item.status === "processing");
     if (processing && !canContinueProcessing(processing, context.source)) {
       return { processed: false, job: processing };
+    }
+    const control = await this.store.getQueueControl(resolvedProjectId);
+    if (!processing && control.mode !== "running") {
+      return { processed: false, job: null };
     }
     const job = processing ?? jobs.find((item) => item.status === "queued");
     if (!job) return { processed: false, job: null };
@@ -228,6 +331,7 @@ export class QueueRunner {
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
       await this.store.saveJob(job);
       await this.store.saveDebug(debug, job.projectId);
+      await this.markStoppedIfRequested(job.projectId);
       return job;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -241,8 +345,28 @@ export class QueueRunner {
       log({ stage: "queue", level: "error", message: "Technical failure stopped the job.", data: message });
       await this.store.saveJob(failed);
       await this.store.saveDebug(debug, job.projectId);
+      await this.markStoppedIfRequested(job.projectId);
       return failed;
     }
+  }
+
+  private async nextQueuePosition(projectId: string) {
+    const jobs = await this.store.listJobs(projectId);
+    const last = jobs.reduce((max, job) => Math.max(max, job.queuePosition ?? new Date(job.createdAt).getTime()), 0);
+    return Math.max(Date.now(), last + 1);
+  }
+
+  private async markStoppedIfRequested(projectId: string) {
+    const control = await this.store.getQueueControl(projectId);
+    if (control.mode !== "stop_after_current") return;
+    const now = nowIso();
+    await this.store.saveQueueControl({
+      ...control,
+      mode: "stopped",
+      stoppedAt: now,
+      reason: "Current article completed. Queue stopped before the next item.",
+      updatedAt: now
+    });
   }
 }
 
