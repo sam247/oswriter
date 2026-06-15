@@ -1815,14 +1815,7 @@ function ArticleLibraryItem({
   onOpen: () => void;
   onDelete: () => void;
 }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [dragX, setDragX] = useState(0);
-  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
-  const dragXRef = useRef(0);
-  const draggedRef = useRef(false);
   const scores = calculateArticleScores(article);
-  const drawerWidth = 74;
-  const offset = drawerOpen ? -drawerWidth : Math.min(0, Math.max(-drawerWidth, dragX));
   const metadata = [
     `${formatNumber(article.wordCount)} words`,
     `Q${scores.quality.score}`,
@@ -1830,81 +1823,24 @@ function ArticleLibraryItem({
     `E${scores.evidence.score}`
   ];
 
-  function startDrag(event: React.PointerEvent<HTMLButtonElement>) {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    dragStartRef.current = { x: event.clientX, y: event.clientY };
-    draggedRef.current = false;
-    const startOffset = drawerOpen ? -drawerWidth : 0;
-    dragXRef.current = startOffset;
-    setDragX(startOffset);
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function moveDrag(event: React.PointerEvent<HTMLButtonElement>) {
-    if (!dragStartRef.current) return;
-    const deltaX = event.clientX - dragStartRef.current.x;
-    const deltaY = event.clientY - dragStartRef.current.y;
-    if (Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 14) return;
-    if (Math.abs(deltaX) > 6) draggedRef.current = true;
-    const base = drawerOpen ? -drawerWidth : 0;
-    const next = Math.min(0, Math.max(-drawerWidth, base + deltaX));
-    dragXRef.current = next;
-    setDragX(next);
-  }
-
-  function endDrag() {
-    if (!dragStartRef.current) return;
-    const shouldOpen = dragXRef.current < -drawerWidth / 2;
-    const shouldClose = drawerOpen && dragXRef.current > -drawerWidth + 24;
-    setDrawerOpen(shouldClose ? false : shouldOpen);
-    dragXRef.current = 0;
-    setDragX(0);
-    dragStartRef.current = null;
-    window.setTimeout(() => {
-      draggedRef.current = false;
-    }, 0);
+  function confirmDelete() {
+    if (!window.confirm(`Delete "${article.title}"? This cannot be undone.`)) return;
+    onDelete();
   }
 
   return (
-    <div className="group relative overflow-hidden">
+    <div className="group relative">
       {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
-      <div className="absolute inset-y-1 right-2 flex w-[66px] items-center justify-end">
-        <button
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete();
-          }}
-          className="flex h-8 items-center gap-1 rounded-md bg-danger px-2 text-[10.5px] font-medium text-white shadow-sm"
-          title={`Delete ${article.title}`}
-        >
-          <Trash2 className="size-3" />
-          Delete
-        </button>
-      </div>
       <button
-        onClick={() => {
-          if (draggedRef.current) return;
-          if (drawerOpen) {
-            setDrawerOpen(false);
-            return;
-          }
-          onOpen();
-        }}
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        onClick={onOpen}
         onKeyDown={(event) => {
           if (event.key === "Backspace" || event.key === "Delete") {
             event.preventDefault();
-            setDrawerOpen(true);
+            confirmDelete();
           }
-          if (event.key === "Escape") setDrawerOpen(false);
         }}
-        style={{ transform: `translateX(${offset}px)` }}
         className={cn(
-          "relative z-10 flex w-full touch-pan-y items-start gap-2.5 bg-surface-2 px-3 py-2.5 text-left transition-colors",
-          dragStartRef.current ? "transition-none" : "transition-transform duration-150",
+          "relative flex w-full items-start gap-2.5 bg-surface-2 px-3 py-2.5 pr-9 text-left transition-colors",
           active ? "bg-ink/[0.06]" : "hover:bg-surface-3"
         )}
       >
@@ -1923,6 +1859,17 @@ function ArticleLibraryItem({
             ))}
           </span>
         </span>
+      </button>
+      <button
+        onClick={(event) => {
+          event.stopPropagation();
+          confirmDelete();
+        }}
+        className="absolute right-2 top-8 z-20 grid size-6 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-surface-3 hover:text-ink focus:opacity-100 group-hover:opacity-100"
+        title={`Delete ${article.title}`}
+        aria-label={`Delete ${article.title}`}
+      >
+        <Trash2 className="size-3" />
       </button>
     </div>
   );
