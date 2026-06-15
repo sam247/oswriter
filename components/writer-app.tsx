@@ -408,7 +408,7 @@ function Workbench() {
   }
 
   async function shareAccountStats() {
-    const text = `I have saved roughly ${formatSavedTime(accountStats.savedMinutes)} with OS Writer, written ${formatNumber(accountStats.words)} words, and delivered ${formatNumber(accountStats.articles)} articles. My keyboard is considering early retirement.`;
+    const text = buildShareStatMessage(accountStats);
     try {
       await navigator.clipboard.writeText(text);
       setMessage("Share text copied.");
@@ -479,6 +479,10 @@ function Workbench() {
 
   function applyFormat(command: FormatCommand) {
     if (!selectedArticle) return;
+    if (articleViewMode === "rich") {
+      applyRichFormat(command);
+      return;
+    }
     const textarea = editorRef.current;
     const markdown = selectedMarkdown;
     const start = textarea?.selectionStart ?? markdown.length;
@@ -749,7 +753,7 @@ function Workbench() {
         <span className={stats.failed ? "text-danger" : ""}>{stats.failed} failed</span>
         <span>{queueMetrics.remaining} remaining</span>
         <button onClick={shareAccountStats} className="ml-auto rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
-          Words {formatNumber(accountStats.words)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
+          Words {formatNumber(accountStats.words)} · Sources {formatNumber(accountStats.sources)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
         </button>
       </footer>
     </main>
@@ -1824,17 +1828,52 @@ function ArticleWorkspace({
 
   return (
     <div className="h-full min-h-0 overflow-auto">
-      <MarkdownPreview markdown={markdown} />
+      <RichMarkdownEditor markdown={markdown} onChange={onChange} />
     </div>
   );
 }
 
 function MarkdownPreview({ markdown, compact = false }: { markdown: string; compact?: boolean }) {
   return (
-    <div className={cn("mx-auto max-w-[820px] px-8 pb-16 pt-14 text-ink", compact && "max-w-none px-8 pt-10")}>
-      <div className="space-y-6">
+    <div className={cn("mx-auto max-w-[820px] px-8 pb-16 pt-10 text-ink", compact && "max-w-none px-8 pt-8")}>
+      <div className="space-y-5">
         {renderMarkdownBlocks(markdown)}
       </div>
+    </div>
+  );
+}
+
+function RichMarkdownEditor({ markdown, onChange }: { markdown: string; onChange: (markdown: string) => void }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const lastMarkdownRef = useRef(markdown);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    if (document.activeElement === element && markdown === lastMarkdownRef.current) return;
+    if (document.activeElement === element) return;
+    element.innerHTML = markdownToEditableHtml(markdown);
+    lastMarkdownRef.current = markdown;
+  }, [markdown]);
+
+  function handleInput() {
+    const next = editableHtmlToMarkdown(ref.current);
+    lastMarkdownRef.current = next;
+    onChange(next);
+  }
+
+  return (
+    <div className="mx-auto max-w-[820px] px-8 pb-16 pt-10">
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        spellCheck
+        onInput={handleInput}
+        onBlur={handleInput}
+        className="min-h-[520px] space-y-5 text-ink outline-none [&_a]:underline [&_a]:decoration-line-strong [&_a]:underline-offset-4 [&_h1]:text-[30px] [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:tracking-tight [&_h2]:pt-4 [&_h2]:text-[23px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:tracking-tight [&_h3]:pt-2 [&_h3]:text-[19px] [&_h3]:font-semibold [&_h3]:leading-snug [&_li]:text-[17px] [&_li]:leading-8 [&_p]:text-[17px] [&_p]:leading-8 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-6"
+        aria-label="Article body"
+      />
     </div>
   );
 }
@@ -2648,7 +2687,7 @@ function renderMarkdownBlocks(markdown: string) {
     const text = paragraph.join(" ").trim();
     if (text) {
       blocks.push(
-        <p key={`p-${blocks.length}`} className="text-[19px] leading-[1.75] text-ink">
+        <p key={`p-${blocks.length}`} className="text-[17px] leading-8 text-ink">
           {renderInlineMarkdown(text)}
         </p>
       );
@@ -2659,7 +2698,7 @@ function renderMarkdownBlocks(markdown: string) {
   const flushList = () => {
     if (!list.length) return;
     blocks.push(
-      <ul key={`ul-${blocks.length}`} className="list-disc space-y-2 pl-6 text-[18px] leading-8 text-ink">
+      <ul key={`ul-${blocks.length}`} className="list-disc space-y-2 pl-6 text-[17px] leading-8 text-ink">
         {list.map((item, index) => <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>)}
       </ul>
     );
@@ -2680,9 +2719,9 @@ function renderMarkdownBlocks(markdown: string) {
       flushList();
       const level = heading[1].length;
       const text = heading[2];
-      if (level === 1) blocks.push(<h1 key={`h-${blocks.length}`} className="text-[34px] font-semibold leading-tight tracking-tight text-ink">{renderInlineMarkdown(text)}</h1>);
-      else if (level === 2) blocks.push(<h2 key={`h-${blocks.length}`} className="pt-5 text-[25px] font-semibold leading-tight tracking-tight text-ink">{renderInlineMarkdown(text)}</h2>);
-      else blocks.push(<h3 key={`h-${blocks.length}`} className="pt-3 text-[20px] font-semibold leading-snug text-ink">{renderInlineMarkdown(text)}</h3>);
+      if (level === 1) blocks.push(<h1 key={`h-${blocks.length}`} className="text-[30px] font-semibold leading-tight tracking-tight text-ink">{renderInlineMarkdown(text)}</h1>);
+      else if (level === 2) blocks.push(<h2 key={`h-${blocks.length}`} className="pt-4 text-[23px] font-semibold leading-tight tracking-tight text-ink">{renderInlineMarkdown(text)}</h2>);
+      else blocks.push(<h3 key={`h-${blocks.length}`} className="pt-2 text-[19px] font-semibold leading-snug text-ink">{renderInlineMarkdown(text)}</h3>);
       return;
     }
 
@@ -2700,7 +2739,78 @@ function renderMarkdownBlocks(markdown: string) {
   flushParagraph();
   flushList();
 
-  return blocks.length ? blocks : <p className="text-[18px] leading-8 text-ink-subtle">Start writing...</p>;
+  return blocks.length ? blocks : <p className="text-[17px] leading-8 text-ink-subtle">Start writing...</p>;
+}
+
+function markdownToEditableHtml(markdown: string) {
+  return markdown.split(/\n{2,}/).map((block) => {
+    const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) return "";
+    const first = lines[0];
+    const heading = /^(#{1,3})\s+(.+)$/.exec(first);
+    if (heading) {
+      const level = heading[1].length;
+      return `<h${level}>${inlineMarkdownToHtml(heading[2])}</h${level}>`;
+    }
+    if (lines.every((line) => /^[-*]\s+/.test(line) || /^\d+\.\s+/.test(line))) {
+      return `<ul>${lines.map((line) => `<li>${inlineMarkdownToHtml(line.replace(/^[-*]\s+|^\d+\.\s+/, ""))}</li>`).join("")}</ul>`;
+    }
+    return `<p>${inlineMarkdownToHtml(lines.join(" "))}</p>`;
+  }).filter(Boolean).join("");
+}
+
+function inlineMarkdownToHtml(value: string) {
+  return escapeHtml(value)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+}
+
+function editableHtmlToMarkdown(element: HTMLElement | null) {
+  if (!element) return "";
+  const blocks = Array.from(element.childNodes)
+    .map((node) => editableNodeToMarkdown(node))
+    .map((block) => block.trim())
+    .filter(Boolean);
+  return blocks.join("\n\n");
+}
+
+function editableNodeToMarkdown(node: ChildNode): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent?.trim() ?? "";
+  if (!(node instanceof HTMLElement)) return "";
+  const tag = node.tagName.toLowerCase();
+  if (tag === "h1") return `# ${inlineHtmlToMarkdown(node)}`;
+  if (tag === "h2") return `## ${inlineHtmlToMarkdown(node)}`;
+  if (tag === "h3") return `### ${inlineHtmlToMarkdown(node)}`;
+  if (tag === "ul" || tag === "ol") {
+    return Array.from(node.children)
+      .filter((child) => child.tagName.toLowerCase() === "li")
+      .map((child) => `- ${inlineHtmlToMarkdown(child as HTMLElement)}`)
+      .join("\n");
+  }
+  if (tag === "div" && node.childElementCount === 1) return editableNodeToMarkdown(node.firstChild as ChildNode);
+  return inlineHtmlToMarkdown(node);
+}
+
+function inlineHtmlToMarkdown(element: HTMLElement): string {
+  return Array.from(element.childNodes).map((node) => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+    if (!(node instanceof HTMLElement)) return "";
+    const tag = node.tagName.toLowerCase();
+    const text: string = inlineHtmlToMarkdown(node);
+    if (tag === "strong" || tag === "b") return `**${text}**`;
+    if (tag === "em" || tag === "i") return `*${text}*`;
+    if (tag === "a") return `[${text}](${node.getAttribute("href") ?? ""})`;
+    return text;
+  }).join("").replace(/\s+/g, " ").trim();
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function renderInlineMarkdown(text: string) {
@@ -2809,6 +2919,20 @@ function replaceRange(markdown: string, start: number, end: number, insertion: s
 
 function prefixLines(value: string, prefix: string) {
   return value.split("\n").map((line) => `${prefix}${line.replace(/^[-*]\s+/, "")}`).join("\n");
+}
+
+function applyRichFormat(command: FormatCommand) {
+  const target = document.activeElement;
+  if (command === "bold") document.execCommand("bold");
+  else if (command === "italic") document.execCommand("italic");
+  else if (command === "link") {
+    const url = window.prompt("Link URL");
+    if (url) document.execCommand("createLink", false, url);
+  } else if (command === "h2") document.execCommand("formatBlock", false, "h2");
+  else if (command === "h3") document.execCommand("formatBlock", false, "h3");
+  else if (command === "bullet") document.execCommand("insertUnorderedList");
+  else if (command === "numbered") document.execCommand("insertOrderedList");
+  window.setTimeout(() => target?.dispatchEvent(new InputEvent("input", { bubbles: true })), 0);
 }
 
 function countWordsLocal(markdown: string) {
@@ -2930,6 +3054,7 @@ interface ProjectSummary {
 
 interface AccountOutcomeStats {
   words: number;
+  sources: number;
   articles: number;
   savedMinutes: number;
 }
@@ -2954,12 +3079,61 @@ interface SourceDomainSummary {
 
 function calculateAccountOutcomeStats(articles: ArticleDocument[]): AccountOutcomeStats {
   const words = articles.reduce((sum, article) => sum + article.wordCount, 0);
+  const sources = articles.reduce((sum, article) => sum + article.sources.length, 0);
   const articlesWritten = articles.length;
   return {
     words,
+    sources,
     articles: articlesWritten,
     savedMinutes: Math.round(words / 40)
   };
+}
+
+const SHARE_STAT_COMMENTS = [
+  "My keyboard is considering early retirement.",
+  "The blank page lost.",
+  "Research did the heavy lifting.",
+  "Coffee consumption remains untracked.",
+  "My cursor travelled surprisingly little.",
+  "The sources worked harder than I did.",
+  "Several search engines contributed to this achievement.",
+  "That's a lot of tabs I never opened.",
+  "My browser fan appreciates the help.",
+  "The deadline arrived before the panic did.",
+  "Research first. Guesswork never.",
+  "A questionable amount of reading happened on my behalf.",
+  "The article count keeps rising. The effort does not.",
+  "Somewhere, a search engine is exhausted.",
+  "That's approximately {time} not spent researching.",
+  "The internet was consulted extensively.",
+  "My productivity graph would look suspicious.",
+  "Sources were gathered. Articles emerged.",
+  "Fewer tabs. More content.",
+  "Human oversight was still technically involved."
+];
+
+function buildShareStatMessage(stats: AccountOutcomeStats) {
+  const milestone = pickMilestoneShareMessage(stats);
+  if (milestone && Math.random() < 0.35) return milestone;
+
+  const comment = SHARE_STAT_COMMENTS[Math.floor(Math.random() * SHARE_STAT_COMMENTS.length)].replace("{time}", formatSavedTime(stats.savedMinutes));
+  return `${baseShareStatMessage(stats)} ${comment}`;
+}
+
+function baseShareStatMessage(stats: AccountOutcomeStats) {
+  return `I have saved roughly ${formatSavedTime(stats.savedMinutes)}, written ${formatNumber(stats.words)} words, analysed ${formatNumber(stats.sources)} sources, and delivered ${formatNumber(stats.articles)} articles.`;
+}
+
+function pickMilestoneShareMessage(stats: AccountOutcomeStats) {
+  const hours = stats.savedMinutes / 60;
+  const milestones = [
+    stats.articles >= 1000 ? "I've delivered 1,000 articles. We may need a bigger sitemap." : null,
+    stats.articles >= 500 ? "I've delivered 500 articles. The content calendar is no longer a concern." : null,
+    stats.articles >= 100 ? "I've delivered 100 articles. At this point this is a publishing operation." : null,
+    stats.sources >= 10_000 ? "I've analysed 10,000 sources. Somebody should probably thank the internet." : null,
+    hours >= 100 ? "I've saved over 100 hours. That's two and a half working weeks reclaimed." : null
+  ].filter((message): message is string => Boolean(message));
+  return milestones.length ? milestones[Math.floor(Math.random() * milestones.length)] : null;
 }
 
 function calculateProjectSummary(state: AppState, metrics: QueueMetrics): ProjectSummary {
