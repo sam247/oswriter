@@ -16,8 +16,9 @@ export class QueueRunner {
 
   async addTitles(titles: string[], projectId = DEFAULT_PROJECT_ID) {
     const clean = titles.map((title) => title.trim()).filter(Boolean);
-    const now = nowIso();
-    const jobs: QueueJob[] = clean.map((title) => {
+    const queuedAt = Date.now();
+    const jobs: QueueJob[] = clean.map((title, index) => {
+      const createdAt = new Date(queuedAt + index).toISOString();
       const articleId = slugId("article");
       return {
         id: slugId("job"),
@@ -25,15 +26,17 @@ export class QueueRunner {
         articleId,
         title,
         status: "queued",
-        createdAt: now,
-        updatedAt: now,
+        createdAt,
+        updatedAt: createdAt,
         attempts: 0,
         needsReviewReasons: [],
         pipeline: createPipeline(),
-        timings: { queued_at: now }
+        timings: { queued_at: createdAt }
       };
     });
-    await Promise.all(jobs.map((job) => this.store.saveJob(job)));
+    for (const job of jobs) {
+      await this.store.saveJob(job);
+    }
     return jobs;
   }
 
@@ -119,7 +122,11 @@ export class QueueRunner {
   async processNext(projectId = DEFAULT_PROJECT_ID, context: { source?: "manual" | "worker" } = {}) {
     await this.reclaimStale(projectId);
     const jobs = await this.store.listJobs(projectId);
-    const job = jobs.find((item) => item.status === "processing") ?? jobs.find((item) => item.status === "queued");
+    const processing = jobs.find((item) => item.status === "processing");
+    if (processing && !canContinueProcessing(processing, context.source)) {
+      return { processed: false, job: processing };
+    }
+    const job = processing ?? jobs.find((item) => item.status === "queued");
     if (!job) return { processed: false, job: null };
     return { processed: true, job: await this.processJobStep(job, context) };
   }
@@ -241,6 +248,13 @@ export class QueueRunner {
 
 function stageDone(job: QueueJob, stage: QueueJob["pipeline"][number]["stage"]) {
   return job.pipeline.find((step) => step.stage === stage)?.status === "done";
+}
+
+function canContinueProcessing(job: QueueJob, source: "manual" | "worker" | undefined) {
+  if (job.status !== "processing") return true;
+  const owner = job.timings?.started_by;
+  if (!owner || owner === "unknown" || !source) return true;
+  return owner === source;
 }
 
 function createArticle(

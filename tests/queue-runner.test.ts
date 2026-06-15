@@ -23,6 +23,15 @@ class FakeSearch implements SearchAdapter {
   }
 }
 
+class CountingSearch extends FakeSearch {
+  calls = 0;
+
+  async search(query: string) {
+    this.calls += 1;
+    return super.search(query);
+  }
+}
+
 class FakeModel implements ModelAdapter {
   constructor(private readonly validationWarnings: string[] = []) {}
 
@@ -97,6 +106,63 @@ async function drainQueue(runner: QueueRunner, maxSteps = 1000) {
 }
 
 describe("QueueRunner", () => {
+  it("processes queued titles in the order they were submitted", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["First queued article", "Second queued article", "Third queued article"]);
+
+    const initial = await store.getState();
+    assert.deepEqual(initial.jobs.map((job) => job.title), ["First queued article", "Second queued article", "Third queued article"]);
+    assert.ok(initial.jobs[0].createdAt < initial.jobs[1].createdAt);
+    assert.ok(initial.jobs[1].createdAt < initial.jobs[2].createdAt);
+
+    const processedTitles: string[] = [];
+    for (let index = 0; index < 9; index += 1) {
+      const result = await runner.processNext();
+      assert.ok(result.job);
+      processedTitles.push(result.job.title);
+    }
+
+    assert.deepEqual(processedTitles, [
+      "First queued article",
+      "First queued article",
+      "First queued article",
+      "Second queued article",
+      "Second queued article",
+      "Second queued article",
+      "Third queued article",
+      "Third queued article",
+      "Third queued article"
+    ]);
+  });
+
+  it("does not let the worker duplicate research for an active manual job", async () => {
+    const search = new CountingSearch();
+    const { store, runner } = setup(search);
+    const [job] = await runner.addTitles(["Manual job in progress"]);
+    const startedAt = new Date().toISOString();
+    await store.saveJob({
+      ...job,
+      status: "processing",
+      updatedAt: startedAt,
+      timings: {
+        ...job.timings,
+        started_at: startedAt,
+        processing_at: startedAt,
+        started_by: "manual"
+      }
+    });
+
+    const workerResult = await runner.processNext(undefined, { source: "worker" });
+    assert.equal(workerResult.processed, false);
+    assert.equal(workerResult.job?.id, job.id);
+    assert.equal(search.calls, 0);
+
+    const manualResult = await runner.processNext(undefined, { source: "manual" });
+    assert.equal(manualResult.processed, true);
+    assert.equal(manualResult.job?.id, job.id);
+    assert.ok(search.calls > 0);
+  });
+
   it("processes 20 titles into 20 saved articles", async () => {
     const { store, runner } = setup();
     await runner.addTitles(Array.from({ length: 20 }, (_, index) => `Technical article ${index + 1}`));
