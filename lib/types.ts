@@ -153,6 +153,9 @@ export interface ResearchPack {
   warnings: string[];
   requestIds: string[];
   durationMs: number;
+  exaSearchCalls?: number;
+  exaContentCalls?: number;
+  estimatedResearchCostUsd?: number;
   createdAt: string;
 }
 
@@ -244,6 +247,34 @@ export interface ArticleDocument {
   timings?: ArticleTiming;
 }
 
+export interface ModelGenerationResult {
+  markdown: string;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedAiCostUsd?: number;
+}
+
+export interface GenerationTelemetryDocument {
+  id?: string;
+  organisationId?: string;
+  projectId: string;
+  articleId: string;
+  jobId?: string;
+  model?: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedAiCostUsd: number;
+  exaSearchCalls: number;
+  exaContentCalls: number;
+  estimatedResearchCostUsd: number;
+  totalCostUsd: number;
+  generationDurationMs?: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DebugEvent {
   at: string;
   stage: PipelineStageName | "queue";
@@ -315,7 +346,7 @@ export interface SearchAdapter {
 }
 
 export interface ModelAdapter {
-  generateArticle(input: ArticleGenerationInput): Promise<string>;
+  generateArticle(input: ArticleGenerationInput): Promise<string | ModelGenerationResult>;
   editArticle(input: EditorInput): Promise<string>;
   validateArticle(input: ValidationInput): Promise<ValidationResult>;
 }

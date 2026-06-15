@@ -4,7 +4,7 @@ import { QueueRunner } from "@/lib/queue/runner";
 import { getQueueMutationBlocker } from "@/lib/queue/safety";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
-import type { ArticleGenerationInput, EditorInput, ModelAdapter, SearchAdapter, ValidationInput, ValidationResult } from "@/lib/types";
+import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, SearchAdapter, ValidationInput, ValidationResult } from "@/lib/types";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 
 class FakeSearch implements SearchAdapter {
@@ -91,6 +91,27 @@ class SparseModel extends FakeModel {
     return `# ${input.title}
 
 Short answer with a draft that intentionally has thin structure.`;
+  }
+}
+
+class MeteredModel implements ModelAdapter {
+  async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
+    const markdown = await new FakeModel().generateArticle(input);
+    return {
+      markdown,
+      model: "metered-model",
+      inputTokens: 1200,
+      outputTokens: 800,
+      estimatedAiCostUsd: 0.004
+    };
+  }
+
+  async editArticle(input: EditorInput) {
+    return input.markdown;
+  }
+
+  async validateArticle(input: ValidationInput): Promise<ValidationResult> {
+    return new FakeModel().validateArticle(input);
   }
 }
 
@@ -215,6 +236,37 @@ describe("QueueRunner", () => {
     assert.equal(skipped.status, "skipped");
     assert.equal(skipped.statusReason, "Skipped by user.");
     assert.equal((await store.listJobs()).length, 1);
+  });
+
+  it("records generation telemetry after an article is saved", async () => {
+    const previousSearchCost = process.env.EXA_SEARCH_COST_USD;
+    const previousContentCost = process.env.EXA_CONTENT_COST_USD;
+    process.env.EXA_SEARCH_COST_USD = "0.001";
+    process.env.EXA_CONTENT_COST_USD = "0.002";
+    try {
+      const { store, runner } = setup(new FakeSearch(), new MeteredModel());
+      const [job] = await runner.addTitles(["Telemetry cost tracking"]);
+
+      await drainQueue(runner);
+
+      const telemetry = await store.getGenerationTelemetry(job.articleId);
+      assert.ok(telemetry);
+      assert.equal(telemetry.projectId, job.projectId);
+      assert.equal(telemetry.articleId, job.articleId);
+      assert.equal(telemetry.jobId, job.id);
+      assert.equal(telemetry.model, "metered-model");
+      assert.equal(telemetry.inputTokens, 1200);
+      assert.equal(telemetry.outputTokens, 800);
+      assert.equal(telemetry.estimatedAiCostUsd, 0.004);
+      assert.equal(telemetry.exaSearchCalls, 6);
+      assert.equal(telemetry.exaContentCalls, 6);
+      assert.equal(telemetry.estimatedResearchCostUsd, 0.018);
+      assert.equal(telemetry.totalCostUsd, 0.022);
+      assert.ok((telemetry.generationDurationMs ?? -1) >= 0);
+    } finally {
+      restoreEnv("EXA_SEARCH_COST_USD", previousSearchCost);
+      restoreEnv("EXA_CONTENT_COST_USD", previousContentCost);
+    }
   });
 
   it("regenerates later by moving an item to the queue end with settings preserved", async () => {
@@ -515,3 +567,8 @@ describe("QueueRunner", () => {
     assert.equal(state.articles.length, 1);
   });
 });
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}

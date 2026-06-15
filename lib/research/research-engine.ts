@@ -1,6 +1,7 @@
 import type { ResearchPack, SearchAdapter, SearchResult } from "@/lib/types";
 import { buildQueryVariants, average, toResearchSource } from "@/lib/research/scoring";
 import { nowIso } from "@/lib/defaults";
+import { estimateResearchCostUsd } from "@/lib/telemetry/costs";
 
 const EXCLUDE_DOMAINS = [
   "dictionary.com",
@@ -24,6 +25,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
     })));
 
   const failures = responses.filter((response) => response.status === "rejected");
+  const successfulResponses = responses.filter((response) => response.status === "fulfilled").length;
   for (const response of responses) {
     if (response.status === "rejected") continue;
     const { results, requestId } = response.value;
@@ -78,6 +80,9 @@ export async function runResearch(title: string, articleId: string, search: Sear
     warnings,
     requestIds: [...new Set(requestIds)],
     durationMs: Date.now() - started,
+    exaSearchCalls: queries.length,
+    exaContentCalls: successfulResponses,
+    estimatedResearchCostUsd: estimateResearchCostUsd(queries.length, successfulResponses),
     createdAt: nowIso()
   };
 }

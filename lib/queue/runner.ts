@@ -1,9 +1,10 @@
-import type { ArticleDocument, DebugDocument, DebugEvent, ModelAdapter, QueueJob, SearchAdapter } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, DebugEvent, GenerationTelemetryDocument, ModelAdapter, ModelGenerationResult, QueueJob, SearchAdapter } from "@/lib/types";
 import { createPipeline, nowIso } from "@/lib/defaults";
 import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
 import { runResearch } from "@/lib/research/research-engine";
 import { statusFromReviewReasons } from "@/lib/status";
+import { roundUsd } from "@/lib/telemetry/costs";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 
@@ -293,8 +294,9 @@ export class QueueRunner {
 
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const markdown = await this.model.generateArticle({ title: job.title, research, controls: settings.controls });
-      job = { ...job, timings: markTiming(job.timings, "generation_completed_at"), pipeline: completeStage(job.pipeline, "generation", { model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash" }), updatedAt: nowIso() };
+      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls }));
+      const markdown = generation.markdown;
+      job = { ...job, timings: markTiming(job.timings, "generation_completed_at"), pipeline: completeStage(job.pipeline, "generation", { model: generation.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash" }), updatedAt: nowIso() };
       await this.store.saveJob(job);
       log({ stage: "generation", level: "info", message: "Article generation completed.", data: { words: countWords(markdown) } });
 
@@ -328,6 +330,7 @@ export class QueueRunner {
 
       const article = createArticle(job, markdown, uniqueReasons, validation, research);
       await this.store.saveArticle(article);
+      await this.saveGenerationTelemetry(job, research, generation, log);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
       await this.store.saveJob(job);
       await this.store.saveDebug(debug, job.projectId);
@@ -356,6 +359,48 @@ export class QueueRunner {
     return Math.max(Date.now(), last + 1);
   }
 
+  private async saveGenerationTelemetry(
+    job: QueueJob,
+    research: Parameters<typeof heuristicValidation>[0]["research"],
+    generation: ModelGenerationResult,
+    log: (event: Omit<DebugEvent, "at">) => void
+  ) {
+    const now = nowIso();
+    const aiCost = generation.estimatedAiCostUsd ?? 0;
+    const researchCost = research.estimatedResearchCostUsd ?? 0;
+    const telemetry: GenerationTelemetryDocument = {
+      projectId: job.projectId,
+      articleId: job.articleId,
+      jobId: job.id,
+      model: generation.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      inputTokens: generation.inputTokens ?? 0,
+      outputTokens: generation.outputTokens ?? 0,
+      estimatedAiCostUsd: aiCost,
+      exaSearchCalls: research.exaSearchCalls ?? research.queries.length,
+      exaContentCalls: research.exaContentCalls ?? research.requestIds.length,
+      estimatedResearchCostUsd: researchCost,
+      totalCostUsd: roundUsd(aiCost + researchCost),
+      generationDurationMs: durationMs(job.timings?.generation_started_at, job.timings?.generation_completed_at),
+      metadata: {
+        status: job.status,
+        researchRunId: research.id ?? null,
+        researchRequestIds: research.requestIds,
+        sourceCount: research.sources.length
+      },
+      createdAt: now,
+      updatedAt: now
+    };
+
+    try {
+      await this.store.saveGenerationTelemetry(telemetry);
+      log({ stage: "generation", level: "info", message: "Generation telemetry recorded.", data: { totalCostUsd: telemetry.totalCostUsd } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log({ stage: "generation", level: "warn", message: "Generation telemetry failed without blocking article save.", data: message });
+      console.warn("generation telemetry failed", { projectId: job.projectId, articleId: job.articleId, error: message });
+    }
+  }
+
   private async markStoppedIfRequested(projectId: string) {
     const control = await this.store.getQueueControl(projectId);
     if (control.mode !== "stop_after_current") return;
@@ -368,6 +413,31 @@ export class QueueRunner {
       updatedAt: now
     });
   }
+}
+
+function normaliseGenerationResult(result: string | ModelGenerationResult): ModelGenerationResult {
+  if (typeof result === "string") {
+    return {
+      markdown: result,
+      model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedAiCostUsd: 0
+    };
+  }
+  return {
+    ...result,
+    model: result.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+    inputTokens: result.inputTokens ?? 0,
+    outputTokens: result.outputTokens ?? 0,
+    estimatedAiCostUsd: result.estimatedAiCostUsd ?? 0
+  };
+}
+
+function durationMs(start?: string, end?: string) {
+  if (!start || !end) return null;
+  const duration = new Date(end).getTime() - new Date(start).getTime();
+  return Number.isFinite(duration) ? Math.max(0, duration) : null;
 }
 
 function stageDone(job: QueueJob, stage: QueueJob["pipeline"][number]["stage"]) {

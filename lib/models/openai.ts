@@ -1,6 +1,7 @@
 import OpenAI from "openai";
-import type { ArticleGenerationInput, EditorInput, ModelAdapter, ValidationInput, ValidationResult } from "@/lib/types";
+import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, ValidationInput, ValidationResult } from "@/lib/types";
 import { cleanJsonText } from "@/lib/text";
+import { estimateAiCostUsd } from "@/lib/telemetry/costs";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 
 export class OpenAIModelAdapter implements ModelAdapter {
@@ -11,10 +12,11 @@ export class OpenAIModelAdapter implements ModelAdapter {
     maxRetries: 1
   });
 
-  async generateArticle(input: ArticleGenerationInput): Promise<string> {
+  async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
+    const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
     const response = await this.client.chat.completions.create({
-      model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      model,
       messages: promptToMessages(
         "You write useful, technically careful Markdown articles from research notes.",
         buildGenerationPrompt(input)
@@ -24,7 +26,16 @@ export class OpenAIModelAdapter implements ModelAdapter {
     });
     const text = response.choices[0]?.message.content?.trim();
     if (!text) throw new Error("OpenAI generation unavailable: empty response.");
-    return normaliseMarkdown(text, input.title);
+    const markdown = normaliseMarkdown(text, input.title);
+    const inputTokens = response.usage?.prompt_tokens ?? 0;
+    const outputTokens = response.usage?.completion_tokens ?? 0;
+    return {
+      markdown,
+      model: response.model ?? model,
+      inputTokens,
+      outputTokens,
+      estimatedAiCostUsd: estimateAiCostUsd(inputTokens, outputTokens, response.model ?? model)
+    };
   }
 
   async editArticle(input: EditorInput): Promise<string> {

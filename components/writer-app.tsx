@@ -172,6 +172,9 @@ function Workbench() {
   const queueState = state ? describeQueueState(state.queueControl.mode, displayJobs) : null;
   const queueMutationBlockedReason = queueMutationBlockReason(state, displayJobs);
   const settingsBlockedReason = settingsMutationBlockReason(displayJobs);
+  const hasRunnableQueueWork = stats.queued > 0 || stats.processing > 0;
+  const showRunAllControl = running || stats.queued > 1 || state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused";
+  const hasRecoverableQueueWork = displayJobs.some((job) => isRecoverableProcessingJob(job, state?.settings.staleProcessingMinutes ?? 15, tick));
 
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
@@ -395,6 +398,17 @@ function Workbench() {
     setBusy(false);
     setMessage(res.ok ? success : "Action failed.");
     await refresh();
+  }
+
+  async function retryFailedJobs() {
+    await post("/api/queue/retry-failed", "Failed jobs requeued.");
+    setSidebarTab("queue");
+    setFilter("all");
+  }
+
+  async function recoverQueue() {
+    await post("/api/queue/recover", "Stale processing jobs recovered.");
+    setSidebarTab("queue");
   }
 
   async function clearQueue() {
@@ -726,12 +740,14 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <button onClick={processNext} disabled={busy || running || state?.queueControl.mode === "stop_after_current" || state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused"} title={queueState?.detail} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
+          <button onClick={processNext} disabled={!hasRunnableQueueWork || busy || running || state?.queueControl.mode === "stop_after_current" || state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused"} title={hasRunnableQueueWork ? queueState?.detail : "Add titles to create queue work."} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
             <Play className="size-3 fill-current" /> Generate
           </button>
-          <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
-            {running ? "Stop After Current Article" : state?.queueControl.mode === "stopped" ? "Resume queue" : "Run queue"}
-          </button>
+          {showRunAllControl && (
+            <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+              {running ? "Stop after current" : state?.queueControl.mode === "stopped" ? "Resume" : "Run all queued"}
+            </button>
+          )}
         </div>
       </header>
 
@@ -786,6 +802,8 @@ function Workbench() {
               metrics={queueMetrics}
               owner={state?.queueControl.requestedBy ?? state?.queueControl.reason ?? null}
               onResume={() => setQueueControl("resume", "Queue resumed.")}
+              onRetryFailed={stats.failed > 0 ? retryFailedJobs : undefined}
+              onRecover={hasRecoverableQueueWork ? recoverQueue : undefined}
             />
           </div>
 
@@ -853,10 +871,6 @@ function Workbench() {
               <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
                 <Upload className="size-3.5" /> Add
               </button>
-              <button onClick={() => post("/api/queue/retry-failed", "Failed jobs requeued.")} className="flex h-7 items-center justify-center gap-1 rounded-md px-2 text-[11.5px] text-ink-muted hover:bg-surface-3 hover:text-ink">
-                <RotateCw className="size-3.5" /> Retry
-              </button>
-              <button onClick={() => post("/api/queue/recover", "Stale processing jobs recovered.")} className="h-7 rounded-md px-2 text-[11.5px] text-ink-muted hover:bg-surface-3 hover:text-ink">Recover</button>
             </div>
             <label className="mt-2 flex items-center justify-between px-1 text-[11.5px] text-ink-muted">
               <span>Target words</span>
@@ -951,12 +965,6 @@ function Workbench() {
 
       <footer className="hairline-t mono flex h-6 items-center gap-3 bg-surface-2/70 px-3 text-[10.5px] text-ink-subtle">
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />{message}</span>
-        <span className="h-3 w-px bg-line" />
-        <span>{stats.generated} generated</span>
-        <span>{stats.needs_review} review</span>
-        <span className={stats.failed ? "text-danger" : ""}>{stats.failed} failed</span>
-        <span>{stats.skipped} skipped</span>
-        <span>{queueMetrics.remaining} remaining</span>
         <button onClick={shareAccountStats} className="ml-auto rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
           Words {formatNumber(accountStats.words)} · Sources {formatNumber(accountStats.sources)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
         </button>
@@ -975,7 +983,21 @@ function Workbench() {
   );
 }
 
-function QueueStateBanner({ state, metrics, owner, onResume }: { state: QueueStateDescription | null; metrics: QueueMetrics; owner: string | null; onResume: () => void }) {
+function QueueStateBanner({
+  state,
+  metrics,
+  owner,
+  onResume,
+  onRetryFailed,
+  onRecover
+}: {
+  state: QueueStateDescription | null;
+  metrics: QueueMetrics;
+  owner: string | null;
+  onResume: () => void;
+  onRetryFailed?: () => void;
+  onRecover?: () => void;
+}) {
   if (!state) return null;
   return (
     <div className={cn("mt-3 rounded-md border px-2.5 py-2 text-[11.5px]", queueStateTone(state.mode))}>
@@ -984,9 +1006,17 @@ function QueueStateBanner({ state, metrics, owner, onResume }: { state: QueueSta
           <div className="font-semibold text-ink">{state.label}</div>
           <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">{state.detail}</div>
         </div>
-        {(state.mode === "stopped" || state.mode === "paused") && (
-          <button onClick={onResume} className="shrink-0 rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Resume</button>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {(state.mode === "stopped" || state.mode === "paused") && (
+            <button onClick={onResume} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Resume</button>
+          )}
+          {onRetryFailed && (
+            <button onClick={onRetryFailed} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Retry failed</button>
+          )}
+          {onRecover && (
+            <button onClick={onRecover} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink" title="Recover a job that was left processing after a timeout or refresh.">Recover stuck</button>
+          )}
+        </div>
       </div>
       <div className="mono mt-2 grid grid-cols-3 gap-2 text-[10px] text-ink-subtle">
         <span>{metrics.completed} of {metrics.total || 0}</span>
@@ -3577,6 +3607,11 @@ function settingsMutationBlockReason(jobs: QueueJob[]) {
   return jobs.some((job) => job.status === "queued" || job.status === "processing")
     ? "Generation settings are locked while queued or processing articles exist."
     : null;
+}
+
+function isRecoverableProcessingJob(job: QueueJob, staleMinutes: number, now: number) {
+  if (job.status !== "processing") return false;
+  return now - new Date(job.updatedAt).getTime() > staleMinutes * 60_000;
 }
 
 function jobActionMessage(action: string) {

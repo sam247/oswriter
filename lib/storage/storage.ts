@@ -1,6 +1,6 @@
-import type { ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, WorkerLeaseDocument } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, WorkerLeaseDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
@@ -88,6 +88,7 @@ export class WorkspaceStore {
       `${rootForClear(resolvedProjectId)}/queue/`,
       `${rootForClear(resolvedProjectId)}/research/`,
       `${rootForClear(resolvedProjectId)}/debug/`,
+      `${rootForClear(resolvedProjectId)}/telemetry/generations/`,
       `${rootForClear(resolvedProjectId)}/exports/`
     ];
     const paths = (await Promise.all(prefixes.map((prefix) => this.storage.listPaths(prefix)))).flat();
@@ -161,6 +162,7 @@ export class WorkspaceStore {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
     await this.storage.deletePath(articlePath(articleId, resolvedProjectId));
     await this.storage.deletePath(articleMarkdownPath(articleId, resolvedProjectId));
+    await this.storage.deletePath(generationTelemetryPath(articleId, resolvedProjectId));
   }
 
   async saveResearch(research: ResearchPack, projectId?: string) {
@@ -177,6 +179,15 @@ export class WorkspaceStore {
 
   async getDebug(articleId: string, projectId?: string) {
     return this.storage.getJson<DebugDocument>(debugPath(articleId, projectId ?? await this.getActiveProjectId()));
+  }
+
+  async saveGenerationTelemetry(telemetry: GenerationTelemetryDocument) {
+    await this.storage.putJson(generationTelemetryPath(telemetry.articleId, telemetry.projectId), telemetry);
+  }
+
+  async getGenerationTelemetry(articleId: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    return this.storage.getJson<GenerationTelemetryDocument>(generationTelemetryPath(articleId, resolvedProjectId));
   }
 
   async getWorkerLease(projectId?: string) {

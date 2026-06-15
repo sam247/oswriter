@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
-import type { ArticleDocument, DebugDocument, DocumentVersion, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, WorkerLeaseDocument } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, WorkerLeaseDocument } from "@/lib/types";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -44,6 +44,7 @@ export class NeonStorageProvider implements StorageProvider {
       if (isArticlePath(path)) return this.getDocument<T>("articles", pathId(path));
       if (isResearchPath(path)) return this.getDocument<T>("research_packs", researchId(pathProjectId(path), pathId(path)));
       if (isDebugPath(path)) return this.getDebug(pathProjectId(path), pathId(path)) as Promise<T | null>;
+      if (isGenerationTelemetryPath(path)) return this.getGenerationTelemetry(pathProjectId(path), pathId(path)) as Promise<T | null>;
       if (isWorkerLeasePath(path)) return this.getWorkerLease(pathProjectId(path)) as Promise<T | null>;
       return null;
     });
@@ -59,6 +60,7 @@ export class NeonStorageProvider implements StorageProvider {
       if (isArticlePath(path)) return this.saveArticle(value as ArticleDocument);
       if (isResearchPath(path)) return this.saveResearch(value as ResearchPack, pathProjectId(path));
       if (isDebugPath(path)) return this.saveDebug(value as DebugDocument, pathProjectId(path));
+      if (isGenerationTelemetryPath(path)) return this.saveGenerationTelemetry(value as GenerationTelemetryDocument, pathProjectId(path));
       if (isWorkerLeasePath(path)) return this.upsertWorkerLease(value as WorkerLeaseDocument, pathProjectId(path));
     });
   }
@@ -109,6 +111,8 @@ export class NeonStorageProvider implements StorageProvider {
         await this.sql`delete from research_packs where id = ${id}`;
       } else if (isDebugPath(path)) {
         await this.sql`delete from debug_events where project_id = ${pathProjectId(path)} and article_id = ${pathId(path)}`;
+      } else if (isGenerationTelemetryPath(path)) {
+        await this.sql`delete from generation_telemetry where project_id = ${pathProjectId(path)} and article_id = ${pathId(path)}`;
       } else if (isExportPath(path)) {
         await this.sql`delete from exports where project_id = ${pathProjectId(path)} and blob_path = ${path}`;
       } else if (isWorkerLeasePath(path)) {
@@ -487,6 +491,10 @@ export class NeonStorageProvider implements StorageProvider {
     if (prefix.endsWith("/debug/")) {
       const found = rows(await this.sql`select distinct article_id from debug_events where project_id = ${projectId} order by article_id asc`);
       return found.map((row) => debugPath(String(row.article_id), projectId));
+    }
+    if (prefix.endsWith("/telemetry/generations/")) {
+      const found = rows(await this.sql`select article_id from generation_telemetry where project_id = ${projectId} order by updated_at desc`);
+      return found.map((row) => generationTelemetryPath(String(row.article_id), projectId));
     }
     if (prefix.endsWith("/queue/")) {
       const tenant = await this.ensureTenant();
@@ -896,6 +904,52 @@ export class NeonStorageProvider implements StorageProvider {
     }
   }
 
+  private async getGenerationTelemetry(projectId: string, articleId: string) {
+    const tenant = await this.ensureTenant();
+    const found = rows(await this.sql`
+      select *
+      from generation_telemetry
+      where organisation_id = ${tenant.organisationId}
+        and project_id = ${projectId}
+        and article_id = ${articleId}
+      limit 1
+    `);
+    return found[0] ? generationTelemetryFromRow(found[0]) : null;
+  }
+
+  private async saveGenerationTelemetry(telemetry: GenerationTelemetryDocument, projectId: string) {
+    const tenant = await this.ensureTenant();
+    await this.ensureProjectRows(projectId);
+    const next = withGenerationTelemetryDefaults(telemetry, tenant, projectId);
+    await this.sql`
+      insert into generation_telemetry (
+        id, organisation_id, project_id, article_id, job_id, model, input_tokens, output_tokens,
+        estimated_ai_cost_usd, exa_search_calls, exa_content_calls, estimated_research_cost_usd,
+        total_cost_usd, generation_duration_ms, metadata, created_at, updated_at
+      )
+      values (
+        ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.jobId ?? null},
+        ${next.model ?? null}, ${next.inputTokens}, ${next.outputTokens}, ${next.estimatedAiCostUsd},
+        ${next.exaSearchCalls}, ${next.exaContentCalls}, ${next.estimatedResearchCostUsd}, ${next.totalCostUsd},
+        ${next.generationDurationMs ?? null}, ${JSON.stringify(next.metadata)}::jsonb,
+        ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+      )
+      on conflict (organisation_id, project_id, article_id) do update set
+        job_id = excluded.job_id,
+        model = excluded.model,
+        input_tokens = excluded.input_tokens,
+        output_tokens = excluded.output_tokens,
+        estimated_ai_cost_usd = excluded.estimated_ai_cost_usd,
+        exa_search_calls = excluded.exa_search_calls,
+        exa_content_calls = excluded.exa_content_calls,
+        estimated_research_cost_usd = excluded.estimated_research_cost_usd,
+        total_cost_usd = excluded.total_cost_usd,
+        generation_duration_ms = excluded.generation_duration_ms,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `;
+  }
+
   private async upsertWorkerLease(lease: WorkerLeaseDocument, projectId: string) {
     const tenant = await this.ensureTenant();
     const next = withLeaseDefaults(lease, tenant, projectId);
@@ -1069,6 +1123,21 @@ function withResearchDefaults(research: ResearchPack, tenant: TenantSeed, projec
   };
 }
 
+function withGenerationTelemetryDefaults(telemetry: GenerationTelemetryDocument, tenant: TenantSeed, projectId: string): GenerationTelemetryDocument {
+  const now = new Date().toISOString();
+  return {
+    ...telemetry,
+    id: telemetry.id ?? `${projectId}:${telemetry.articleId}:generation`,
+    organisationId: telemetry.organisationId ?? tenant.organisationId,
+    projectId: telemetry.projectId ?? projectId,
+    model: telemetry.model ?? null,
+    jobId: telemetry.jobId,
+    generationDurationMs: telemetry.generationDurationMs ?? null,
+    createdAt: telemetry.createdAt ?? now,
+    updatedAt: telemetry.updatedAt ?? now
+  };
+}
+
 function withLeaseDefaults(lease: WorkerLeaseDocument, tenant: TenantSeed, projectId: string): WorkerLeaseDocument {
   return {
     ...lease,
@@ -1180,6 +1249,10 @@ function isResearchPath(path: string) {
 
 function isDebugPath(path: string) {
   return /\/debug\/[^/]+\.json$/.test(path);
+}
+
+function isGenerationTelemetryPath(path: string) {
+  return /\/telemetry\/generations\/[^/]+\.json$/.test(path);
 }
 
 function isWorkerLeasePath(path: string) {
@@ -1294,6 +1367,28 @@ function sourceCitationFromRow(row: Record<string, unknown>): SourceCitation {
     url: String(row.url),
     metadata: isRecord(row.metadata) ? row.metadata : {},
     createdAt: dateIso(row.created_at)
+  };
+}
+
+function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTelemetryDocument {
+  return {
+    id: String(row.id),
+    organisationId: String(row.organisation_id),
+    projectId: String(row.project_id),
+    articleId: String(row.article_id),
+    jobId: nullableString(row.job_id) ?? undefined,
+    model: nullableString(row.model),
+    inputTokens: Number(row.input_tokens),
+    outputTokens: Number(row.output_tokens),
+    estimatedAiCostUsd: Number(row.estimated_ai_cost_usd),
+    exaSearchCalls: Number(row.exa_search_calls),
+    exaContentCalls: Number(row.exa_content_calls),
+    estimatedResearchCostUsd: Number(row.estimated_research_cost_usd),
+    totalCostUsd: Number(row.total_cost_usd),
+    generationDurationMs: nullableNumber(row.generation_duration_ms),
+    metadata: isRecord(row.metadata) ? row.metadata : {},
+    createdAt: dateIso(row.created_at),
+    updatedAt: dateIso(row.updated_at)
   };
 }
 
