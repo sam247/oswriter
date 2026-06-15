@@ -14,11 +14,11 @@ export async function PATCH(req: Request) {
 
   const activeProjectId = body.activeProjectId?.trim();
   if (activeProjectId) {
-    const projects = await store.listProjects();
-    const project = projects.find((item) => item.id === activeProjectId);
+    const project = await store.getProject(activeProjectId);
     if (!project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
     await store.setActiveProjectId(activeProjectId);
-    return NextResponse.json({ project });
+    const state = await store.getState(activeProjectId);
+    return NextResponse.json({ project, state });
   }
 
   const name = body.name?.trim();

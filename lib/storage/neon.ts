@@ -89,6 +89,19 @@ export class NeonStorageProvider implements StorageProvider {
     return this.withFailureLogging("listPaths", prefix, async () => this.listPathsUnsafe(prefix));
   }
 
+  async listProjects() {
+    return this.withFailureLogging("listProjects", "projects/", async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select document
+        from projects
+        where organisation_id = ${tenant.organisationId}
+        order by updated_at desc
+      `);
+      return found.map((row) => row.document as ProjectDocument);
+    });
+  }
+
   async deletePath(path: string): Promise<void> {
     return this.withFailureLogging("deletePath", path, async () => {
       if (isWorkspacePath(path)) {

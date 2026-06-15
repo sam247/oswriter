@@ -490,20 +490,29 @@ function Workbench() {
     if (projectId === state?.project.id) return;
     setProjectMenuOpen(false);
     setMessage("Switching project...");
+    const nextProject = projects.find((project) => project.id === projectId);
+    if (nextProject && state) {
+      setState({ ...state, project: nextProject, jobs: [], articles: [] });
+    }
     const res = await fetch("/api/project", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ activeProjectId: projectId })
     });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
     if (res.ok) {
       setSelectedArticleId(null);
       setDetails({ research: null, debug: null });
       setSidebarTab("queue");
+      if (data.state) {
+        recordStateTrace(data.state, traceJobIdRef.current, "project-switch");
+        setState(data.state);
+      }
       setMessage("Project switched.");
     } else {
-      setMessage("Project switch failed.");
+      setMessage(data.error ?? "Project switch failed.");
+      await refresh();
     }
-    await refresh();
   }
 
   async function deleteProject(projectId = state?.project.id ?? "default") {

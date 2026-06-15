@@ -10,6 +10,7 @@ export interface StorageProvider {
   listJson<T>(prefix: string): Promise<T[]>;
   listPaths(prefix: string): Promise<string[]>;
   deletePath(path: string): Promise<void>;
+  listProjects?(): Promise<ProjectDocument[]>;
   globalSearch?(query: string, projectId: string, limit?: number): Promise<GlobalSearchResponse>;
 }
 
@@ -70,7 +71,18 @@ export class WorkspaceStore {
     await this.storage.putJson(workspacePath(project.id), project);
   }
 
+  async getProject(projectId: string) {
+    return this.storage.getJson<ProjectDocument>(workspacePath(projectId));
+  }
+
   async listProjects() {
+    if (this.storage.listProjects) {
+      const projects = await this.storage.listProjects();
+      const { project } = await this.ensureProject(DEFAULT_PROJECT_ID);
+      if (!projects.some((item) => item.id === project.id)) projects.push(project);
+      return projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }
+
     const paths = await this.storage.listPaths("projects/");
     const workspacePaths = [...new Set(paths.filter((path) => path.endsWith("/workspace.json")))];
     const projects = (await Promise.all(workspacePaths.map((path) => this.storage.getJson<ProjectDocument>(path))))
