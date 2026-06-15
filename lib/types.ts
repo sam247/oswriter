@@ -14,12 +14,37 @@ export interface ContentControls {
 
 export interface ProjectDocument {
   id: string;
+  organisationId?: string;
   name: string;
+  slug?: string;
+  createdByUserId?: string;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface OrganisationDocument {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentVersion {
+  id: string;
+  organisationId: string;
+  projectId: string;
+  documentId: string;
+  documentType: string;
+  versionNumber: number;
+  content: string;
+  metadata: Record<string, unknown>;
+  createdByUserId: string;
+  createdAt: string;
+}
+
 export interface SettingsDocument {
+  organisationId?: string;
   projectId: string;
   controls: ContentControls;
   staleProcessingMinutes: number;
@@ -64,12 +89,15 @@ export interface ArticleTiming {
 
 export interface QueueJob {
   id: string;
+  organisationId?: string;
   projectId: string;
   articleId: string;
   title: string;
   status: JobStatus;
+  statusReason?: string | null;
   createdAt: string;
   updatedAt: string;
+  createdByUserId?: string;
   attempts: number;
   needsReviewReasons: string[];
   fatalError?: string;
@@ -92,7 +120,12 @@ export interface ResearchSource {
 }
 
 export interface ResearchPack {
+  id?: string;
+  organisationId?: string;
+  projectId?: string;
   articleId: string;
+  jobId?: string;
+  runNumber?: number;
   title: string;
   queries: string[];
   sources: ResearchSource[];
@@ -110,6 +143,59 @@ export interface ResearchPack {
   createdAt: string;
 }
 
+export interface ResearchRun {
+  id: string;
+  organisationId: string;
+  projectId: string;
+  researchPackId?: string | null;
+  articleId?: string | null;
+  jobId?: string | null;
+  runNumber: number;
+  title: string;
+  query?: string | null;
+  queries: string[];
+  status: "queued" | "running" | "completed" | "failed";
+  confidence?: number | null;
+  authorityScore?: number | null;
+  relevanceScore?: number | null;
+  warnings: string[];
+  requestIds: string[];
+  durationMs?: number | null;
+  metadata: Record<string, unknown>;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResearchFinding {
+  id: string;
+  organisationId: string;
+  projectId: string;
+  researchRunId: string;
+  sourceId?: string | null;
+  findingType: "useful_fact" | "rejected_fact" | "question" | "heading" | "summary";
+  content: string;
+  confidence?: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface SourceCitation {
+  id: string;
+  organisationId: string;
+  projectId: string;
+  researchRunId?: string | null;
+  sourceId: string;
+  findingId?: string | null;
+  articleId?: string | null;
+  citationType: string;
+  snippet?: string | null;
+  url: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface ValidationResult {
   pass: boolean;
   warnings: string[];
@@ -122,13 +208,19 @@ export interface ValidationResult {
 
 export interface ArticleDocument {
   id: string;
+  organisationId?: string;
   projectId: string;
   jobId: string;
   title: string;
   status: JobStatus;
+  statusReason?: string | null;
   markdown: string;
+  markdownBlobPath?: string | null;
   createdAt: string;
   updatedAt: string;
+  createdByUserId?: string;
+  currentVersionNumber?: number;
+  versionedAt?: string | null;
   wordCount: number;
   qualityScore: number;
   researchSummary: string;
@@ -148,6 +240,8 @@ export interface DebugEvent {
 }
 
 export interface DebugDocument {
+  organisationId?: string;
+  projectId?: string;
   articleId: string;
   jobId: string;
   events: DebugEvent[];
@@ -155,6 +249,9 @@ export interface DebugDocument {
 }
 
 export interface WorkerLeaseDocument {
+  organisationId?: string;
+  projectId?: string;
+  queueName?: string;
   id: string;
   owner: string;
   token: string;

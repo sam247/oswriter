@@ -2,7 +2,7 @@ import type { ArticleDocument, DebugDocument, ProjectDocument, QueueJob, Researc
 import { createDefaultProject, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { articleMarkdownPath, articlePath, articlesPrefix, debugPath, jobPath, jobsPrefix, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
 
-export interface StorageAdapter {
+export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
   putJson<T>(path: string, value: T): Promise<void>;
   putJsonIfAbsent<T>(path: string, value: T): Promise<boolean>;
@@ -12,8 +12,10 @@ export interface StorageAdapter {
   deletePath(path: string): Promise<void>;
 }
 
+export type StorageAdapter = StorageProvider;
+
 export class WorkspaceStore {
-  constructor(private readonly storage: StorageAdapter) {}
+  constructor(private readonly storage: StorageProvider) {}
 
   async ensureProject(projectId = DEFAULT_PROJECT_ID) {
     let project = await this.storage.getJson<ProjectDocument>(workspacePath(projectId));

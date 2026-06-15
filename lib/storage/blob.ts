@@ -1,7 +1,7 @@
 import { del, list, put } from "@vercel/blob";
-import type { StorageAdapter } from "@/lib/storage/storage";
+import type { StorageProvider } from "@/lib/storage/storage";
 
-export class BlobStorageAdapter implements StorageAdapter {
+export class BlobStorageProvider implements StorageProvider {
   async getJson<T>(path: string): Promise<T | null> {
     const found = await this.find(path);
     if (!found) return null;
@@ -69,3 +69,5 @@ export class BlobStorageAdapter implements StorageAdapter {
     } as never);
   }
 }
+
+export class BlobStorageAdapter extends BlobStorageProvider {}

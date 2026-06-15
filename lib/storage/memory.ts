@@ -1,6 +1,6 @@
-import type { StorageAdapter } from "@/lib/storage/storage";
+import type { StorageProvider } from "@/lib/storage/storage";
 
-export class MemoryStorageAdapter implements StorageAdapter {
+export class MemoryStorageAdapter implements StorageProvider {
   private docs = new Map<string, string>();
 
   async getJson<T>(path: string): Promise<T | null> {
