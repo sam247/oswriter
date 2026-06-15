@@ -1785,22 +1785,96 @@ function ArticleLibraryItem({
   onOpen: () => void;
   onDelete: () => void;
 }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [dragX, setDragX] = useState(0);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const dragXRef = useRef(0);
+  const draggedRef = useRef(false);
   const scores = calculateArticleScores(article);
-  const readingTime = Math.max(1, Math.round(article.wordCount / 230));
+  const drawerWidth = 74;
+  const offset = drawerOpen ? -drawerWidth : Math.min(0, Math.max(-drawerWidth, dragX));
   const metadata = [
     `${formatNumber(article.wordCount)} words`,
-    `${article.sources.length} sources`,
-    `${readingTime}m read`,
-    `Q${scores.quality.score}`
+    `Q${scores.quality.score}`,
+    `R${scores.research.score}`,
+    `E${scores.evidence.score}`
   ];
 
+  function startDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    dragStartRef.current = { x: event.clientX, y: event.clientY };
+    draggedRef.current = false;
+    const startOffset = drawerOpen ? -drawerWidth : 0;
+    dragXRef.current = startOffset;
+    setDragX(startOffset);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragStartRef.current) return;
+    const deltaX = event.clientX - dragStartRef.current.x;
+    const deltaY = event.clientY - dragStartRef.current.y;
+    if (Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 14) return;
+    if (Math.abs(deltaX) > 6) draggedRef.current = true;
+    const base = drawerOpen ? -drawerWidth : 0;
+    const next = Math.min(0, Math.max(-drawerWidth, base + deltaX));
+    dragXRef.current = next;
+    setDragX(next);
+  }
+
+  function endDrag() {
+    if (!dragStartRef.current) return;
+    const shouldOpen = dragXRef.current < -drawerWidth / 2;
+    const shouldClose = drawerOpen && dragXRef.current > -drawerWidth + 24;
+    setDrawerOpen(shouldClose ? false : shouldOpen);
+    dragXRef.current = 0;
+    setDragX(0);
+    dragStartRef.current = null;
+    window.setTimeout(() => {
+      draggedRef.current = false;
+    }, 0);
+  }
+
   return (
-    <div className="group relative">
+    <div className="group relative overflow-hidden">
       {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
+      <div className="absolute inset-y-1 right-2 flex w-[66px] items-center justify-end">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          className="flex h-8 items-center gap-1 rounded-md bg-danger px-2 text-[10.5px] font-medium text-white shadow-sm"
+          title={`Delete ${article.title}`}
+        >
+          <Trash2 className="size-3" />
+          Delete
+        </button>
+      </div>
       <button
-        onClick={onOpen}
+        onClick={() => {
+          if (draggedRef.current) return;
+          if (drawerOpen) {
+            setDrawerOpen(false);
+            return;
+          }
+          onOpen();
+        }}
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onKeyDown={(event) => {
+          if (event.key === "Backspace" || event.key === "Delete") {
+            event.preventDefault();
+            setDrawerOpen(true);
+          }
+          if (event.key === "Escape") setDrawerOpen(false);
+        }}
+        style={{ transform: `translateX(${offset}px)` }}
         className={cn(
-          "flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors",
+          "relative z-10 flex w-full touch-pan-y items-start gap-2.5 bg-surface-2 px-3 py-2.5 text-left transition-colors",
+          dragStartRef.current ? "transition-none" : "transition-transform duration-150",
           active ? "bg-ink/[0.06]" : "hover:bg-surface-3"
         )}
       >
@@ -1818,17 +1892,8 @@ function ArticleLibraryItem({
               </span>
             ))}
           </span>
-          <span className="mono mt-1 block truncate text-[10.5px] text-ink-subtle">Updated {relativeDate(article.updatedAt)}</span>
         </span>
       </button>
-      <div className="invisible absolute right-2 top-2 flex gap-1 group-hover:visible">
-        <button onClick={onOpen} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink">
-          Open
-        </button>
-        <button onClick={onDelete} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-danger shadow-sm ring-1 ring-line hover:bg-danger/10">
-          Delete
-        </button>
-      </div>
     </div>
   );
 }
