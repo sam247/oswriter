@@ -307,6 +307,43 @@ describe("QueueRunner", () => {
     assert.deepEqual(restored.articles.map((article) => article.title), ["Default library article"]);
   });
 
+  it("deletes a specific inactive project without clearing the active project", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Default survives"]);
+    await drainQueue(runner);
+
+    const now = new Date().toISOString();
+    await store.saveProject({ id: "project_delete_me", name: "Delete Me", createdAt: now, updatedAt: now });
+    await store.setActiveProjectId("project_delete_me");
+    await runner.addTitles(["Temporary article"]);
+    await drainQueue(runner);
+    await store.setActiveProjectId("default");
+
+    await store.deleteProject("project_delete_me");
+    const projects = await store.listProjects();
+    const state = await store.getState();
+
+    assert.equal(state.project.id, "default");
+    assert.deepEqual(state.articles.map((article) => article.title), ["Default survives"]);
+    assert.equal(projects.some((project) => project.id === "project_delete_me"), false);
+    assert.equal((await store.listArticles("project_delete_me")).length, 0);
+  });
+
+  it("deleting the active project returns the workspace to default", async () => {
+    const { store, runner } = setup();
+    const now = new Date().toISOString();
+    await store.saveProject({ id: "project_active_delete", name: "Active Delete", createdAt: now, updatedAt: now });
+    await store.setActiveProjectId("project_active_delete");
+    await runner.addTitles(["Active temporary article"]);
+    await drainQueue(runner);
+
+    await store.deleteProject("project_active_delete");
+    const state = await store.getState();
+
+    assert.equal(state.project.id, "default");
+    assert.equal(state.projects?.some((project) => project.id === "project_active_delete"), false);
+  });
+
   it("clears queue work without deleting completed article assets", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Completed article", "Failed queue item"]);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createDefaultProject, createDefaultSettings, DEFAULT_PROJECT_ID, nowIso } from "@/lib/defaults";
+import { createDefaultProject, createDefaultSettings, nowIso } from "@/lib/defaults";
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
 import { slugId } from "@/lib/text";
@@ -46,17 +46,15 @@ export async function POST(req: Request) {
   return NextResponse.json({ project });
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
   const { store } = createRuntime();
-  const blocker = await getQueueMutationBlocker(store);
+  const body = await req.json().catch(() => ({})) as { projectId?: string };
+  const projectId = body.projectId?.trim() || await store.getActiveProjectId();
+  const blocker = await getQueueMutationBlocker(store, projectId);
   if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
-  await store.clearProjectData();
-  const project = createDefaultProject();
-  await store.saveProject(project);
-  await store.saveSettings(createDefaultSettings());
-  await store.setActiveProjectId(DEFAULT_PROJECT_ID);
-  return NextResponse.json({ project });
+  const result = await store.deleteProject(projectId);
+  return NextResponse.json(result);
 }

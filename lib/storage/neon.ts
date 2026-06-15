@@ -89,7 +89,13 @@ export class NeonStorageProvider implements StorageProvider {
 
   async deletePath(path: string): Promise<void> {
     return this.withFailureLogging("deletePath", path, async () => {
-      if (isJobPath(path)) {
+      if (isWorkspacePath(path)) {
+        const projectId = pathProjectId(path);
+        await this.sql`delete from projects where id = ${projectId}`;
+        this.ensuredProjects.delete(projectId);
+      } else if (isSettingsPath(path)) {
+        await this.sql`delete from project_settings where project_id = ${pathProjectId(path)}`;
+      } else if (isJobPath(path)) {
         const jobId = pathId(path);
         await this.sql`delete from document_versions where project_id = ${pathProjectId(path)} and document_type = 'job' and document_id = ${jobId}`;
         await this.sql`delete from jobs where id = ${jobId}`;
@@ -462,6 +468,10 @@ export class NeonStorageProvider implements StorageProvider {
       return found.map((row) => workspacePath(String(row.id)));
     }
     const projectId = pathProjectId(prefix);
+    if (prefix === `projects/${projectId}/`) {
+      const found = rows(await this.sql`select id from projects where id = ${projectId}`);
+      return found.length ? [workspacePath(projectId)] : [];
+    }
     if (prefix.endsWith("/jobs/")) {
       const found = rows(await this.sql`select id from jobs where project_id = ${projectId} order by created_at asc`);
       return found.map((row) => jobPath(String(row.id), projectId));

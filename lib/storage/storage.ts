@@ -95,6 +95,30 @@ export class WorkspaceStore {
     return paths.length;
   }
 
+  async deleteProject(projectId: string) {
+    const activeProjectId = await this.getActiveProjectId();
+    if (projectId === DEFAULT_PROJECT_ID) {
+      const count = await this.clearProjectData(projectId);
+      const project = createDefaultProject();
+      await this.saveProject(project);
+      await this.saveSettings(createDefaultSettings());
+      await this.saveQueueControl(createDefaultQueueControl(projectId));
+      await this.setActiveProjectId(DEFAULT_PROJECT_ID);
+      return { project, deleted: count };
+    }
+
+    const rootPrefix = `${rootForClear(projectId)}/`;
+    const paths = new Set(await this.storage.listPaths(rootPrefix));
+    paths.add(workspacePath(projectId));
+    paths.add(settingsPath(projectId));
+    paths.add(queueControlPath(projectId));
+    await Promise.all([...paths].map((path) => this.storage.deletePath(path)));
+
+    if (activeProjectId === projectId) await this.setActiveProjectId(DEFAULT_PROJECT_ID);
+    const { project } = await this.ensureProject(DEFAULT_PROJECT_ID);
+    return { project, deleted: paths.size };
+  }
+
   async clearQueueData(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
     const jobs = await this.listJobs(resolvedProjectId);

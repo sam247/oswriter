@@ -473,12 +473,14 @@ function Workbench() {
   }
 
   async function switchProject(projectId: string) {
+    if (projectId === state?.project.id) return;
+    setProjectMenuOpen(false);
+    setMessage("Switching project...");
     const res = await fetch("/api/project", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ activeProjectId: projectId })
     });
-    setProjectMenuOpen(false);
     if (res.ok) {
       setSelectedArticleId(null);
       setDetails({ research: null, debug: null });
@@ -490,17 +492,30 @@ function Workbench() {
     await refresh();
   }
 
-  async function deleteProject() {
-    if (queueMutationBlockedReason) {
-      setMessage(queueMutationBlockedReason);
+  async function deleteProject(projectId = state?.project.id ?? "default") {
+    const project = projects.find((item) => item.id === projectId);
+    const isCurrent = projectId === state?.project.id;
+    const blocker = isCurrent ? queueMutationBlockedReason : null;
+    if (blocker) {
+      setMessage(blocker);
       return;
     }
-    if (!window.confirm("Delete this project data and reset to Default Project? This removes the current queue, articles, research packs, and debug logs.")) return;
-    const res = await fetch("/api/project", { method: "DELETE" });
+    const name = project?.name ?? "this project";
+    const message = projectId === "default"
+      ? "Reset Default Project? This removes its queue, articles, research packs, and debug logs."
+      : `Delete "${name}"? This removes that project's queue, articles, research packs, and debug logs.`;
+    if (!window.confirm(message)) return;
+    const res = await fetch("/api/project", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId })
+    });
     setProjectMenuOpen(false);
     if (res.ok) {
-      setSelectedArticleId(null);
-      setDetails({ research: null, debug: null });
+      if (isCurrent) {
+        setSelectedArticleId(null);
+        setDetails({ research: null, debug: null });
+      }
       setMessage("Project deleted.");
     } else {
       const data = await res.json().catch(() => ({})) as { error?: string };
@@ -1533,7 +1548,7 @@ function ProjectMenu({
   onOverview: () => void;
   onNew: () => void;
   onRename: () => void;
-  onDelete: () => void;
+  onDelete: (projectId?: string) => void;
   queueBlockedReason: string | null;
 }) {
   return (
@@ -1549,22 +1564,38 @@ function ProjectMenu({
       {projects.length > 0 && (
         <div className="my-1 max-h-48 overflow-auto rounded border border-line bg-background p-1">
           {projects.map((project) => (
-            <button
+            <div
               key={project.id}
-              onClick={() => onSwitch(project.id)}
-              disabled={project.id === currentProjectId}
-              className="flex h-8 w-full items-center justify-between gap-2 rounded px-2 text-left text-[12px] text-ink hover:bg-surface-3 disabled:cursor-default disabled:bg-surface-2"
+              className={cn("group flex h-8 items-center gap-1 rounded px-2", project.id === currentProjectId ? "bg-surface-2" : "hover:bg-surface-3")}
             >
-              <span className="truncate">{project.name}</span>
-              <span className="mono shrink-0 text-[10px] text-ink-subtle">{project.id === currentProjectId ? "Current" : relativeDate(project.updatedAt)}</span>
-            </button>
+              <button
+                onClick={() => onSwitch(project.id)}
+                disabled={project.id === currentProjectId}
+                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left text-[12px] text-ink disabled:cursor-default"
+              >
+                <span className="truncate">{project.name}</span>
+                <span className="mono shrink-0 text-[10px] text-ink-subtle">{project.id === currentProjectId ? "Current" : relativeDate(project.updatedAt)}</span>
+              </button>
+              {project.id !== "default" && (
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete(project.id);
+                  }}
+                  className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                  title={`Delete ${project.name}`}
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
       <div className="my-1 h-px bg-line" />
       <ProjectMenuAction label="New project" detail="Create workspace" onClick={onNew} />
       <ProjectMenuAction label="Rename project" detail="Edit name" onClick={onRename} />
-      <ProjectMenuAction label="Delete project" detail={queueBlockedReason ? "Locked" : "Reset default"} onClick={onDelete} danger disabled={Boolean(queueBlockedReason)} title={queueBlockedReason ?? "Delete project"} />
+      <ProjectMenuAction label="Reset current project" detail={queueBlockedReason ? "Locked" : "Clear current"} onClick={() => onDelete()} danger disabled={Boolean(queueBlockedReason)} title={queueBlockedReason ?? "Reset current project"} />
     </div>
   );
 }
