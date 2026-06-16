@@ -166,7 +166,7 @@ function Workbench() {
   }), [displayJobs]);
   const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, articles, tick), [articles, displayJobs, tick]);
   const runHistory = useMemo(() => buildRunHistory(displayJobs, articles), [articles, displayJobs]);
-  const projectSummary = useMemo(() => state ? calculateProjectSummary(state, queueMetrics) : null, [queueMetrics, state]);
+  const projectSummary = useMemo(() => state ? calculateProjectSummary(state) : null, [state]);
   const accountStats = useMemo(() => calculateAccountOutcomeStats(articles), [articles]);
   const shouldPollState = running || busy || displayJobs.some((job) => job.status === "queued" || job.status === "processing");
   const queueState = state ? describeQueueState(state.queueControl.mode, displayJobs) : null;
@@ -1116,8 +1116,13 @@ function ProjectDashboard({
   summary: ProjectSummary | null;
   onSelectArticle: (id: string) => void;
 }) {
-  const attentionJobs = jobs.filter((job) => job.status === "needs_review" || job.status === "failed" || job.status === "processing").slice(0, 8);
-  const contentInventory = [...jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
+  const articleJobs = jobs.filter((job) => articles.some((article) => article.jobId === job.id || article.id === job.articleId));
+  const attentionJobs = articleJobs.filter((job) => job.status === "needs_review" || job.status === "failed" || job.status === "processing").slice(0, 8);
+  const contentInventory = [...articleJobs].sort((a, b) => {
+    const articleA = articles.find((article) => article.jobId === a.id || article.id === a.articleId);
+    const articleB = articles.find((article) => article.jobId === b.id || article.id === b.articleId);
+    return (articleB?.updatedAt ?? b.updatedAt).localeCompare(articleA?.updatedAt ?? a.updatedAt);
+  }).slice(0, 10);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1126,7 +1131,7 @@ function ProjectDashboard({
         <div className="mt-1 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
-            <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? jobs.length)} articles in this workspace</div>
+            <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? articles.length)} articles in this workspace</div>
           </div>
           <ProjectExportMenu summary={summary} />
         </div>
@@ -1146,7 +1151,7 @@ function ProjectDashboard({
             {contentInventory.length ? (
               <InventoryTable jobs={contentInventory} articles={articles} onSelectArticle={onSelectArticle} />
             ) : (
-              <Empty text="Queued and generated articles will appear here." />
+              <Empty text="Saved articles will appear here." />
             )}
           </ProjectSection>
         </div>
@@ -2084,7 +2089,7 @@ function ExportMenuLink({ href, label, icon }: { href: string; label: string; ic
 }
 
 function ProjectSummaryPanel({ state, metrics }: { state: AppState | null; metrics: QueueMetrics }) {
-  const summary = state ? calculateProjectSummary(state, metrics) : null;
+  const summary = state ? calculateProjectSummary(state) : null;
   return (
     <SummarySection
       title="Project Summary"
@@ -2482,9 +2487,9 @@ function ProjectContextPanel({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <ProjectStatCard label="Articles" value={formatNumber(summary.articleCount)} />
-              <ProjectStatCard label="Generated" value={metrics.generated} tone="success" />
-              <ProjectStatCard label="Review" value={metrics.needsReview} tone={metrics.needsReview > 0 ? "warn" : "neutral"} />
-              <ProjectStatCard label="Failed" value={metrics.failed} tone={metrics.failed > 0 ? "danger" : "neutral"} />
+              <ProjectStatCard label="Generated" value={summary.generatedCount} tone="success" />
+              <ProjectStatCard label="Review" value={summary.reviewCount} tone={summary.reviewCount > 0 ? "warn" : "neutral"} />
+              <ProjectStatCard label="Failed" value={summary.failedCount} tone={summary.failedCount > 0 ? "danger" : "neutral"} />
             </div>
             {(queuedCount > 0 || metrics.processingCount > 0) && (
               <div className="mono flex gap-3 text-[10.5px] text-ink-subtle">
@@ -3702,12 +3707,15 @@ function pickMilestoneShareMessage(stats: AccountOutcomeStats) {
   return milestones.length ? milestones[Math.floor(Math.random() * milestones.length)] : null;
 }
 
-function calculateProjectSummary(state: AppState, metrics: QueueMetrics): ProjectSummary {
+function calculateProjectSummary(state: AppState): ProjectSummary {
   const articles = state.articles;
   const scoreAverages = averageArticleScores(articles.map((article) => calculateArticleScores(article)));
+  const generatedCount = articles.filter((article) => article.status === "generated").length;
+  const reviewCount = articles.filter((article) => article.status === "needs_review").length;
+  const failedCount = articles.filter((article) => article.status === "failed").length;
+  const completedAssets = generatedCount + reviewCount + failedCount;
   const timestamps = [
     state.project.updatedAt,
-    ...state.jobs.map((job) => job.updatedAt),
     ...articles.map((article) => article.updatedAt)
   ].filter(Boolean).sort();
 
@@ -3715,16 +3723,16 @@ function calculateProjectSummary(state: AppState, metrics: QueueMetrics): Projec
     projectName: state.project.name,
     createdDate: state.project.createdAt,
     lastActivity: timestamps[timestamps.length - 1] ?? state.project.createdAt,
-    articleCount: state.jobs.length || articles.length,
-    generatedCount: metrics.generated,
-    reviewCount: metrics.needsReview,
-    failedCount: metrics.failed,
+    articleCount: articles.length,
+    generatedCount,
+    reviewCount,
+    failedCount,
     totalWords: articles.reduce((sum, article) => sum + article.wordCount, 0),
     totalSources: articles.reduce((sum, article) => sum + article.sources.length, 0),
     averageQuality: scoreAverages.quality,
     averageResearch: scoreAverages.research,
     averageEvidence: scoreAverages.evidence,
-    successRate: metrics.successRate
+    successRate: completedAssets ? Number((((generatedCount + reviewCount) / completedAssets) * 100).toFixed(1)) : 100
   };
 }
 
