@@ -132,6 +132,13 @@ export interface ResearchSource {
   rejectionReason?: string;
 }
 
+export interface ResearchFactSource {
+  fact: string;
+  sourceId: string;
+  sourceUrl: string;
+  sourceTitle: string;
+}
+
 export interface ResearchPack {
   id?: string;
   organisationId?: string;
@@ -144,6 +151,7 @@ export interface ResearchPack {
   sources: ResearchSource[];
   rejectedSources: ResearchSource[];
   usefulFacts: string[];
+  usefulFactSources?: ResearchFactSource[];
   rejectedFacts: string[];
   questionsFound: string[];
   headingsFound: string[];

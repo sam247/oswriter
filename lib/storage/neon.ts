@@ -827,8 +827,8 @@ export class NeonStorageProvider implements StorageProvider {
           highlights = excluded.highlights,
           authority_score = greatest(research_sources.authority_score, excluded.authority_score),
           relevance_score = greatest(research_sources.relevance_score, excluded.relevance_score),
-          accepted = research_sources.accepted or excluded.accepted,
-          rejection_reason = case when excluded.accepted then null else coalesce(research_sources.rejection_reason, excluded.rejection_reason) end,
+          accepted = excluded.accepted,
+          rejection_reason = case when excluded.accepted then null else excluded.rejection_reason end,
           source_key = excluded.source_key,
           last_seen_at = now()
         returning id
@@ -1192,6 +1192,7 @@ function researchFindingsFromPack(
   const createdAt = research.createdAt;
   const findings: ResearchFinding[] = [];
   const acceptedSources = research.sources.map((source) => savedSources.get(source.id)).filter(Boolean) as string[];
+  const factSources = new Map((research.usefulFactSources ?? []).map((item) => [item.fact, savedSources.get(item.sourceId) ?? null]));
   const push = (findingType: ResearchFinding["findingType"], content: string, index: number, sourceId?: string | null, metadata: Record<string, unknown> = {}) => {
     findings.push({
       id: findingId(researchRunId, findingType, index),
@@ -1207,7 +1208,10 @@ function researchFindingsFromPack(
     });
   };
 
-  research.usefulFacts.forEach((fact, index) => push("useful_fact", fact, index, acceptedSources[index % Math.max(acceptedSources.length, 1)] ?? null));
+  research.usefulFacts.forEach((fact, index) => {
+    const sourceId = factSources.get(fact) ?? acceptedSources[index % Math.max(acceptedSources.length, 1)] ?? null;
+    push("useful_fact", fact, index, sourceId, { sourceLinkedBy: factSources.has(fact) ? "fact_attribution" : "fallback_source_order" });
+  });
   research.rejectedFacts.forEach((fact, index) => push("rejected_fact", fact, index, null));
   research.questionsFound.forEach((question, index) => push("question", question, index, null));
   research.headingsFound.forEach((heading, index) => push("heading", heading, index, null));

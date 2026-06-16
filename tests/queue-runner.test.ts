@@ -294,8 +294,8 @@ describe("QueueRunner", () => {
     const sourceResults = await store.globalSearch("gov.uk");
     assert.ok(sourceResults.groups.research_source.some((result) => /gov\.uk/i.test(result.title + result.subtitle)));
 
-    const findingResults = await store.globalSearch("low relevance");
-    assert.ok(findingResults.groups.research_finding.some((result) => /low relevance/i.test(result.title)));
+    const findingResults = await store.globalSearch("technical guidance");
+    assert.ok(findingResults.groups.research_finding.some((result) => /technical guidance/i.test(result.title)));
 
     const projectResults = await store.globalSearch("Default Project");
     assert.equal(projectResults.groups.project[0]?.title, "Default Project");
