@@ -51,6 +51,40 @@ export interface SettingsDocument {
   staleProcessingMinutes: number;
 }
 
+export type AiProviderPreference = "platform_managed" | "bring_your_own_key";
+export type PersonalApiKeyStatus = "not_configured" | "placeholder";
+
+export interface WorkspacePreferencesDocument {
+  organisationId?: string;
+  userId?: string;
+  account: {
+    name: string;
+    email: string;
+    workspaceName: string;
+  };
+  notifications: {
+    queueCompleted: boolean;
+    queueCompletedWithWarnings: boolean;
+    queueFailed: boolean;
+    dailySummaryEmail: boolean;
+    weeklySummaryEmail: boolean;
+  };
+  aiProvider: {
+    preference: AiProviderPreference;
+    personalKeyStatus: PersonalApiKeyStatus;
+  };
+  operational: {
+    autoStartQueueOnAdd: boolean;
+    confirmBeforeDeletingArticles: boolean;
+    confirmBeforeDeletingProjects: boolean;
+    defaultTargetWordCount: number;
+    reuseProjectResearch: boolean;
+    reuseTitleResearch: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PipelineStep {
   stage: PipelineStageName;
   status: PipelineStatus;
@@ -317,6 +351,7 @@ export interface AppState {
   project: ProjectDocument;
   projects?: ProjectDocument[];
   settings: SettingsDocument;
+  preferences: WorkspacePreferencesDocument;
   queueControl: QueueControlDocument;
   jobs: QueueJob[];
   articles: ArticleDocument[];

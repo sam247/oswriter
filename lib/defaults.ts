@@ -1,4 +1,4 @@
-import type { ContentControls, PipelineStep, ProjectDocument, QueueControlDocument, SettingsDocument } from "@/lib/types";
+import type { ContentControls, PipelineStep, ProjectDocument, QueueControlDocument, SettingsDocument, WorkspacePreferencesDocument } from "@/lib/types";
 
 export const DEFAULT_PROJECT_ID = "default";
 
@@ -42,6 +42,38 @@ export function createDefaultQueueControl(projectId = DEFAULT_PROJECT_ID): Queue
     stoppedAt: nowIso(),
     reason: "Waiting for generation start.",
     updatedAt: nowIso()
+  };
+}
+
+export function createDefaultWorkspacePreferences(input: Partial<WorkspacePreferencesDocument["account"]> = {}): WorkspacePreferencesDocument {
+  const now = nowIso();
+  return {
+    account: {
+      name: input.name ?? "",
+      email: input.email ?? "",
+      workspaceName: input.workspaceName ?? "Default Workspace"
+    },
+    notifications: {
+      queueCompleted: true,
+      queueCompletedWithWarnings: true,
+      queueFailed: true,
+      dailySummaryEmail: false,
+      weeklySummaryEmail: true
+    },
+    aiProvider: {
+      preference: "platform_managed",
+      personalKeyStatus: "not_configured"
+    },
+    operational: {
+      autoStartQueueOnAdd: false,
+      confirmBeforeDeletingArticles: true,
+      confirmBeforeDeletingProjects: true,
+      defaultTargetWordCount: DEFAULT_CONTROLS.lengthTargetWords,
+      reuseProjectResearch: false,
+      reuseTitleResearch: false
+    },
+    createdAt: now,
+    updatedAt: now
   };
 }
 

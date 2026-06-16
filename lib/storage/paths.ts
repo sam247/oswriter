@@ -2,6 +2,7 @@ import { DEFAULT_PROJECT_ID } from "@/lib/defaults";
 
 export const root = (projectId = DEFAULT_PROJECT_ID) => `projects/${projectId}`;
 export const activeProjectPath = () => "workspace/active-project.json";
+export const workspacePreferencesPath = () => "workspace/preferences.json";
 export const workspacePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/workspace.json`;
 export const settingsPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/settings.json`;
 export const queueControlPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/queue/control.json`;

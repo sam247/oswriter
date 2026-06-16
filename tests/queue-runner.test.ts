@@ -175,6 +175,18 @@ describe("QueueRunner", () => {
     assert.equal(manualAttempt.job?.status, "processing");
   });
 
+  it("stops an idle previously-running queue when titles are added", async () => {
+    const { store, runner } = setup();
+    await runner.resumeQueue();
+
+    await runner.addTitles(["Previously hot queue should not autostart"]);
+
+    assert.equal((await store.getQueueControl()).mode, "stopped");
+    const workerAttempt = await runner.processNext(undefined, { source: "worker" });
+    assert.equal(workerAttempt.processed, false);
+    assert.equal((await store.getState()).jobs[0].status, "queued");
+  });
+
   it("does not let the worker duplicate research for an active manual job", async () => {
     const search = new CountingSearch();
     const { store, runner } = setup(search);
@@ -325,6 +337,45 @@ describe("QueueRunner", () => {
     assert.equal(isGlobalSearchShortcut({ key: "k", metaKey: true, ctrlKey: false }), true);
     assert.equal(isGlobalSearchShortcut({ key: "K", metaKey: false, ctrlKey: true }), true);
     assert.equal(isGlobalSearchShortcut({ key: "k", metaKey: false, ctrlKey: false }), false);
+  });
+
+  it("persists workspace account, notification, provider, and operational preferences", async () => {
+    const { store } = setup();
+    const preferences = await store.getWorkspacePreferences();
+    await store.saveWorkspacePreferences({
+      ...preferences,
+      account: {
+        name: "Sam",
+        email: "sam@example.com",
+        workspaceName: "OS Writer"
+      },
+      notifications: {
+        ...preferences.notifications,
+        queueCompleted: false,
+        dailySummaryEmail: true
+      },
+      aiProvider: {
+        preference: "bring_your_own_key",
+        personalKeyStatus: "placeholder"
+      },
+      operational: {
+        ...preferences.operational,
+        autoStartQueueOnAdd: true,
+        confirmBeforeDeletingArticles: false,
+        confirmBeforeDeletingProjects: true,
+        defaultTargetWordCount: 1800,
+        reuseProjectResearch: false,
+        reuseTitleResearch: false
+      },
+      updatedAt: new Date().toISOString()
+    });
+
+    const state = await store.getState();
+    assert.equal(state.preferences.account.email, "sam@example.com");
+    assert.equal(state.preferences.notifications.dailySummaryEmail, true);
+    assert.equal(state.preferences.aiProvider.preference, "bring_your_own_key");
+    assert.equal(state.preferences.operational.autoStartQueueOnAdd, true);
+    assert.equal(state.preferences.operational.defaultTargetWordCount, 1800);
   });
 
   it("isolates jobs and articles by active project", async () => {

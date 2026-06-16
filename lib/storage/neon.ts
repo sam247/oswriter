@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
-import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
+import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
-import type { ArticleDocument, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, WorkerLeaseDocument } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -37,6 +37,7 @@ export class NeonStorageProvider implements StorageProvider {
   async getJson<T>(path: string): Promise<T | null> {
     return this.withFailureLogging("getJson", path, async () => {
       if (isActiveProjectPath(path)) return this.getActiveProject() as Promise<T | null>;
+      if (isWorkspacePreferencesPath(path)) return this.getWorkspacePreferences() as Promise<T | null>;
       if (isWorkspacePath(path)) return this.getProject(pathProjectId(path)) as Promise<T | null>;
       if (isSettingsPath(path)) return this.getSettings(pathProjectId(path)) as Promise<T | null>;
       if (isQueueControlPath(path)) return this.getQueueControl(pathProjectId(path)) as Promise<T | null>;
@@ -53,6 +54,7 @@ export class NeonStorageProvider implements StorageProvider {
   async putJson<T>(path: string, value: T): Promise<void> {
     return this.withFailureLogging("putJson", path, async () => {
       if (isActiveProjectPath(path)) return this.saveActiveProject(value as { projectId?: string; updatedAt?: string });
+      if (isWorkspacePreferencesPath(path)) return this.saveWorkspacePreferences(value as WorkspacePreferencesDocument);
       if (isWorkspacePath(path)) return this.saveProject(value as ProjectDocument);
       if (isSettingsPath(path)) return this.saveSettings(value as SettingsDocument);
       if (isQueueControlPath(path)) return this.saveQueueControl(value as QueueControlDocument);
@@ -547,6 +549,34 @@ export class NeonStorageProvider implements StorageProvider {
       values (${tenant.organisationId}, ${JSON.stringify({ active_project_id: projectId })}::jsonb, ${active.updatedAt ?? new Date().toISOString()}::timestamptz)
       on conflict (organisation_id) do update set
         settings = jsonb_set(organisation_settings.settings, '{active_project_id}', to_jsonb(${projectId}::text), true),
+        updated_at = excluded.updated_at
+    `;
+  }
+
+  private async getWorkspacePreferences() {
+    const tenant = await this.ensureTenant();
+    const found = rows(await this.sql`
+      select workspace_preferences as preferences
+      from organisation_settings
+      where organisation_id = ${tenant.organisationId}
+    `);
+    const saved = isRecord(found[0]?.preferences) ? found[0].preferences as unknown as WorkspacePreferencesDocument : null;
+    return withWorkspacePreferenceDefaults(saved, tenant);
+  }
+
+  private async saveWorkspacePreferences(preferences: WorkspacePreferencesDocument) {
+    const tenant = await this.ensureTenant();
+    const next = withWorkspacePreferenceDefaults(preferences, tenant);
+    await this.sql`
+      insert into organisation_settings (organisation_id, settings, workspace_preferences, updated_at)
+      values (
+        ${tenant.organisationId},
+        '{}'::jsonb,
+        ${JSON.stringify(next)}::jsonb,
+        ${next.updatedAt}::timestamptz
+      )
+      on conflict (organisation_id) do update set
+        workspace_preferences = ${JSON.stringify(next)}::jsonb,
         updated_at = excluded.updated_at
     `;
   }
@@ -1114,6 +1144,39 @@ function withQueueControlDefaults(control: QueueControlDocument, tenant: TenantS
   };
 }
 
+function withWorkspacePreferenceDefaults(preferences: WorkspacePreferencesDocument | null, tenant: TenantSeed): WorkspacePreferencesDocument {
+  const defaults = createDefaultWorkspacePreferences({
+    name: tenant.userName ?? "",
+    email: tenant.userEmail,
+    workspaceName: tenant.organisationName
+  });
+  const now = new Date().toISOString();
+  return {
+    ...defaults,
+    ...preferences,
+    organisationId: preferences?.organisationId ?? tenant.organisationId,
+    userId: preferences?.userId ?? tenant.userId,
+    account: {
+      ...defaults.account,
+      ...preferences?.account
+    },
+    notifications: {
+      ...defaults.notifications,
+      ...preferences?.notifications
+    },
+    aiProvider: {
+      ...defaults.aiProvider,
+      ...preferences?.aiProvider
+    },
+    operational: {
+      ...defaults.operational,
+      ...preferences?.operational
+    },
+    createdAt: preferences?.createdAt ?? defaults.createdAt,
+    updatedAt: preferences?.updatedAt ?? now
+  };
+}
+
 function withArticleDefaults(article: ArticleDocument, tenant: TenantSeed): ArticleDocument {
   return {
     ...article,
@@ -1238,6 +1301,10 @@ function isWorkspacePath(path: string) {
 
 function isActiveProjectPath(path: string) {
   return path === activeProjectPath();
+}
+
+function isWorkspacePreferencesPath(path: string) {
+  return path === workspacePreferencesPath();
 }
 
 function isSettingsPath(path: string) {

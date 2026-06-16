@@ -19,6 +19,8 @@ export class QueueRunner {
   async addTitles(titles: string[], projectId?: string) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const clean = titles.map((title) => title.trim()).filter(Boolean);
+    const existingJobs = await this.store.listJobs(resolvedProjectId);
+    const processing = existingJobs.some((job) => job.status === "processing");
     const queuedAt = Date.now();
     const jobs: QueueJob[] = clean.map((title, index) => {
       const createdAt = new Date(queuedAt + index).toISOString();
@@ -40,6 +42,18 @@ export class QueueRunner {
     });
     for (const job of jobs) {
       await this.store.saveJob(job);
+    }
+    if (jobs.length && !processing) {
+      const now = nowIso();
+      await this.store.saveQueueControl({
+        ...await this.store.getQueueControl(resolvedProjectId),
+        mode: "stopped",
+        requestedBy: null,
+        requestedAt: null,
+        stoppedAt: now,
+        reason: "Queued titles waiting for generation start.",
+        updatedAt: now
+      });
     }
     return jobs;
   }

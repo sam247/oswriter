@@ -1,10 +1,10 @@
 "use client";
 
-import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, SkipForward, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Settings, SkipForward, Trash2, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, QueueControlMode, QueueJob, ResearchPack, ResearchSource } from "@/lib/types";
+import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 
@@ -14,6 +14,12 @@ type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" |
 type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
+type WorkspacePreferencePatch = {
+  account?: Partial<WorkspacePreferencesDocument["account"]>;
+  notifications?: Partial<WorkspacePreferencesDocument["notifications"]>;
+  aiProvider?: Partial<WorkspacePreferencesDocument["aiProvider"]>;
+  operational?: Partial<WorkspacePreferencesDocument["operational"]>;
+};
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -101,6 +107,7 @@ function Workbench() {
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [showLeftPane, setShowLeftPane] = useState(true);
   const [showRightPane, setShowRightPane] = useState(true);
   const [articleViewMode, setArticleViewMode] = useState<ArticleViewMode>("rich");
@@ -126,6 +133,7 @@ function Workbench() {
   const articles = state?.articles ?? [];
   const projects = state?.projects ?? (state?.project ? [state.project] : []);
   const controls = state?.settings.controls;
+  const preferences = state?.preferences;
   const selectedArticle = useMemo(
     () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : null,
     [articles, selectedArticleId]
@@ -169,12 +177,11 @@ function Workbench() {
   const projectSummary = useMemo(() => state ? calculateProjectSummary(state) : null, [state]);
   const accountStats = useMemo(() => calculateAccountOutcomeStats(articles), [articles]);
   const shouldPollState = running || busy || displayJobs.some((job) => job.status === "queued" || job.status === "processing");
-  const queueState = state ? describeQueueState(state.queueControl.mode, displayJobs) : null;
   const queueMutationBlockedReason = queueMutationBlockReason(state, displayJobs);
   const settingsBlockedReason = settingsMutationBlockReason(displayJobs);
   const hasRunnableQueueWork = stats.queued > 0 || stats.processing > 0;
-  const showRunAllControl = running || stats.queued > 1 || state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused";
   const hasRecoverableQueueWork = displayJobs.some((job) => isRecoverableProcessingJob(job, state?.settings.staleProcessingMinutes ?? 15, tick));
+  const generateButton = describeGenerateButton(stats, queueMetrics, busy || running || state?.queueControl.mode === "stop_after_current");
 
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
@@ -215,6 +222,10 @@ function Workbench() {
   useEffect(() => {
     if (!selectedArticleId && tab !== "project") setTab("project");
   }, [selectedArticleId, tab]);
+
+  useEffect(() => {
+    if (selectedArticleId && settingsOpen) setSettingsOpen(false);
+  }, [selectedArticleId, settingsOpen]);
 
   useEffect(() => {
     if (tab !== "project") return;
@@ -312,6 +323,10 @@ function Workbench() {
       setTitles("");
       setMessage("Titles queued.");
       await refresh();
+      if (preferences?.operational.autoStartQueueOnAdd) {
+        setMessage("Titles queued. Starting queue...");
+        void runSequential();
+      }
     } else setMessage("Could not add titles.");
   }
 
@@ -456,12 +471,16 @@ function Workbench() {
       settings: {
         ...current.settings,
         controls: { ...current.settings.controls, lengthTargetWords }
+      },
+      preferences: {
+        ...current.preferences,
+        operational: { ...current.preferences.operational, defaultTargetWordCount: clampTargetWords(lengthTargetWords) }
       }
     } : current);
     const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lengthTargetWords })
+      body: JSON.stringify({ preferences: { operational: { defaultTargetWordCount: lengthTargetWords } } })
     });
     if (!res.ok) void refresh();
   }
@@ -541,7 +560,7 @@ function Workbench() {
     const message = projectId === "default"
       ? "Reset Default Project? This removes its queue, articles, research packs, and debug logs."
       : `Delete "${name}"? This removes that project's queue, articles, research packs, and debug logs.`;
-    if (!window.confirm(message)) return;
+    if (preferences?.operational.confirmBeforeDeletingProjects !== false && !window.confirm(message)) return;
     const res = await fetch("/api/project", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -574,7 +593,7 @@ function Workbench() {
   async function deleteArticle(articleId: string) {
     const article = articles.find((item) => item.id === articleId);
     if (!article) return;
-    if (!window.confirm(`Delete article "${article.title}" from this project? Queue and research records are kept.`)) return;
+    if (preferences?.operational.confirmBeforeDeletingArticles !== false && !window.confirm(`Delete article "${article.title}" from this project? Queue and research records are kept.`)) return;
     const res = await fetch(`/api/articles/${articleId}`, { method: "DELETE" });
     if (res.ok) {
       if (selectedArticleId === articleId) {
@@ -687,6 +706,38 @@ function Workbench() {
     await refresh();
   }
 
+  async function updatePreferences(patch: WorkspacePreferencePatch) {
+    if (!state) return;
+    const nextPreferences = mergeWorkspacePreferences(state.preferences, patch);
+    const targetWords = patch.operational?.defaultTargetWordCount;
+    setState((current) => current ? {
+      ...current,
+      preferences: nextPreferences,
+      settings: targetWords === undefined ? current.settings : {
+        ...current.settings,
+        controls: {
+          ...current.settings.controls,
+          lengthTargetWords: clampTargetWords(targetWords)
+        }
+      }
+    } : current);
+    const res = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferences: patch })
+    });
+    const data = await res.json().catch(() => ({})) as { settings?: AppState["settings"]; preferences?: WorkspacePreferencesDocument; error?: string };
+    if (!res.ok) {
+      setMessage(data.error ?? "Settings save failed.");
+      await refresh();
+      return;
+    }
+    setMessage("Settings saved.");
+    if (data.settings && data.preferences) {
+      setState((current) => current ? { ...current, settings: data.settings!, preferences: data.preferences! } : current);
+    }
+  }
+
   function openSearchResult(result: GlobalSearchResult) {
     if (result.type === "project" && result.projectId !== state?.project.id) {
       void switchProject(result.projectId);
@@ -763,12 +814,20 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <button onClick={processNext} disabled={!hasRunnableQueueWork || busy || running || state?.queueControl.mode === "stop_after_current"} title={hasRunnableQueueWork ? "Start the next queued article." : "Add titles to create queue work."} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
-            <Play className="size-3 fill-current" /> Generate
+          <button
+            onClick={processNext}
+            disabled={generateButton.disabled}
+            title={generateButton.title}
+            className={cn(
+              "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+              generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+            )}
+          >
+            <Play className="size-3 fill-current" /> {generateButton.label}
           </button>
-          {showRunAllControl && (
-            <button onClick={running ? stopRun : runSequential} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
-              {running ? "Stop after current" : state?.queueControl.mode === "stopped" ? "Resume" : "Run all queued"}
+          {stats.processing > 0 && (
+            <button onClick={stopRun} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+              Stop after current
             </button>
           )}
         </div>
@@ -803,6 +862,12 @@ function Workbench() {
                     onSwitch={switchProject}
                     onOverview={() => {
                       setSelectedArticleId(null);
+                      setSettingsOpen(false);
+                      setProjectMenuOpen(false);
+                    }}
+                    onSettings={() => {
+                      setSelectedArticleId(null);
+                      setSettingsOpen(true);
                       setProjectMenuOpen(false);
                     }}
                     onNew={createProject}
@@ -820,14 +885,16 @@ function Workbench() {
               <MetricPill label="Review" value={articles.filter((article) => article.status === "needs_review").length} warn={stats.needs_review > 0} active={sidebarTab === "articles" && filter === "needs_review"} onClick={() => { setSidebarTab("articles"); setFilter("needs_review"); }} />
               <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} active={sidebarTab === "queue" && filter === "failed"} onClick={() => { setSidebarTab("queue"); setFilter("failed"); }} />
             </div>
-            <QueueStateBanner
-              state={queueState}
-              metrics={queueMetrics}
-              owner={state?.queueControl.requestedBy ?? state?.queueControl.reason ?? null}
-              onResume={() => setQueueControl("resume", "Queue resumed.")}
-              onRetryFailed={stats.failed > 0 ? retryFailedJobs : undefined}
-              onRecover={hasRecoverableQueueWork ? recoverQueue : undefined}
-            />
+            {(stats.failed > 0 || hasRecoverableQueueWork) && (
+              <div className="mt-2 flex items-center gap-1">
+                {stats.failed > 0 && (
+                  <button onClick={retryFailedJobs} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Retry failed</button>
+                )}
+                {hasRecoverableQueueWork && (
+                  <button onClick={recoverQueue} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink" title="Recover a job that was left processing after a timeout or refresh.">Recover stuck</button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -913,7 +980,14 @@ function Workbench() {
         </aside>}
 
         <section className="flex min-h-0 flex-col bg-background">
-          {selectedArticle || selectedJob ? (
+          {settingsOpen && state ? (
+            <SettingsPanel
+              state={state}
+              settingsBlockedReason={settingsBlockedReason}
+              onClose={() => setSettingsOpen(false)}
+              onUpdatePreferences={updatePreferences}
+            />
+          ) : selectedArticle || selectedJob ? (
             <>
               <ArticleHeader
                 article={selectedArticle}
@@ -1171,6 +1245,152 @@ function ProjectDashboard({
         </div>
       </div>
     </div>
+  );
+}
+
+function SettingsPanel({
+  state,
+  settingsBlockedReason,
+  onClose,
+  onUpdatePreferences
+}: {
+  state: AppState;
+  settingsBlockedReason: string | null;
+  onClose: () => void;
+  onUpdatePreferences: (patch: WorkspacePreferencePatch) => void;
+}) {
+  const preferences = state.preferences;
+  const providerLabel = preferences.aiProvider.preference === "bring_your_own_key" ? "Using Personal API Key" : "Using Platform AI";
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Workspace settings</div>
+        <div className="mt-1 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">Settings</h1>
+            <div className="mono mt-2 text-[11px] text-ink-muted">{providerLabel}</div>
+          </div>
+          <button onClick={onClose} className="h-8 rounded-md px-3 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">Close</button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-2">
+          <SettingsSection title="Account">
+            <SettingsTextInput label="Name" value={preferences.account.name} onSave={(name) => onUpdatePreferences({ account: { name } })} />
+            <SettingsTextInput label="Email address" value={preferences.account.email} type="email" onSave={(email) => onUpdatePreferences({ account: { email } })} />
+            <SettingsTextInput label="Organisation / workspace name" value={preferences.account.workspaceName} onSave={(workspaceName) => onUpdatePreferences({ account: { workspaceName } })} />
+          </SettingsSection>
+
+          <SettingsSection title="Notifications">
+            <SettingsToggle label="Queue completed" checked={preferences.notifications.queueCompleted} onChange={(queueCompleted) => onUpdatePreferences({ notifications: { queueCompleted } })} />
+            <SettingsToggle label="Queue completed with warnings" checked={preferences.notifications.queueCompletedWithWarnings} onChange={(queueCompletedWithWarnings) => onUpdatePreferences({ notifications: { queueCompletedWithWarnings } })} />
+            <SettingsToggle label="Queue failed" checked={preferences.notifications.queueFailed} onChange={(queueFailed) => onUpdatePreferences({ notifications: { queueFailed } })} />
+            <SettingsToggle label="Daily summary email" checked={preferences.notifications.dailySummaryEmail} onChange={(dailySummaryEmail) => onUpdatePreferences({ notifications: { dailySummaryEmail } })} />
+            <SettingsToggle label="Weekly summary email" checked={preferences.notifications.weeklySummaryEmail} onChange={(weeklySummaryEmail) => onUpdatePreferences({ notifications: { weeklySummaryEmail } })} />
+          </SettingsSection>
+
+          <SettingsSection title="AI Providers">
+            <div className="rounded-md border border-line bg-surface-2 p-3">
+              <div className="text-[13px] font-medium text-ink">{providerLabel}</div>
+              <div className="mono mt-1 text-[10.5px] text-ink-subtle">
+                Key status: {preferences.aiProvider.personalKeyStatus === "placeholder" ? "Personal key placeholder" : "No personal key configured"}
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <ProviderOption
+                label="Platform managed AI"
+                detail="Default workspace AI provider."
+                active={preferences.aiProvider.preference === "platform_managed"}
+                onClick={() => onUpdatePreferences({ aiProvider: { preference: "platform_managed" } })}
+              />
+              <ProviderOption
+                label="Bring Your Own Key"
+                detail="Stored as a preference only for now."
+                active={preferences.aiProvider.preference === "bring_your_own_key"}
+                onClick={() => onUpdatePreferences({ aiProvider: { preference: "bring_your_own_key" } })}
+              />
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="Operational Preferences">
+            <SettingsToggle label="Auto-start queue when articles are added" checked={preferences.operational.autoStartQueueOnAdd} onChange={(autoStartQueueOnAdd) => onUpdatePreferences({ operational: { autoStartQueueOnAdd } })} />
+            <SettingsToggle label="Require confirmation before deleting articles" checked={preferences.operational.confirmBeforeDeletingArticles} onChange={(confirmBeforeDeletingArticles) => onUpdatePreferences({ operational: { confirmBeforeDeletingArticles } })} />
+            <SettingsToggle label="Require confirmation before deleting projects" checked={preferences.operational.confirmBeforeDeletingProjects} onChange={(confirmBeforeDeletingProjects) => onUpdatePreferences({ operational: { confirmBeforeDeletingProjects } })} />
+            <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
+              <span className="text-ink-muted">Default target word count</span>
+              <input
+                type="number"
+                min={300}
+                max={5000}
+                step={100}
+                defaultValue={preferences.operational.defaultTargetWordCount}
+                disabled={Boolean(settingsBlockedReason)}
+                title={settingsBlockedReason ?? "Default target word count"}
+                onBlur={(event) => onUpdatePreferences({ operational: { defaultTargetWordCount: Number(event.currentTarget.value) } })}
+                className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
+              />
+            </label>
+            {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
+            <SettingsToggle label="Reuse project research" checked={false} disabled note="Future option. Existing research reuse is not active yet." onChange={() => undefined} />
+            <SettingsToggle label="Reuse title research" checked={false} disabled note="Future option. Title-level research reuse is not active yet." onChange={() => undefined} />
+          </SettingsSection>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-md border border-line bg-surface-1 p-4">
+      <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
+      <div className="mt-3 space-y-2">{children}</div>
+    </section>
+  );
+}
+
+function SettingsTextInput({ label, value, onSave, type = "text" }: { label: string; value: string; onSave: (value: string) => void; type?: string }) {
+  return (
+    <label className="block text-[12px] text-ink-muted">
+      <span>{label}</span>
+      <input
+        type={type}
+        defaultValue={value}
+        onBlur={(event) => onSave(event.currentTarget.value)}
+        className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+      />
+    </label>
+  );
+}
+
+function SettingsToggle({ label, checked, onChange, disabled = false, note }: { label: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean; note?: string }) {
+  return (
+    <label className={cn("flex items-start justify-between gap-3 rounded py-1.5 text-[13px]", disabled && "opacity-60")} title={note}>
+      <span className="min-w-0">
+        <span className="block text-ink-muted">{label}</span>
+        {note && <span className="mt-0.5 block text-[11px] leading-snug text-ink-subtle">{note}</span>}
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+        className="mt-0.5 size-4 rounded border-line text-ink"
+      />
+    </label>
+  );
+}
+
+function ProviderOption({ label, detail, active, onClick }: { label: string; detail: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn("rounded-md border p-3 text-left transition-colors", active ? "border-ink bg-ink/[0.04]" : "border-line bg-background hover:border-line-strong")}
+    >
+      <span className="block text-[13px] font-medium text-ink">{label}</span>
+      <span className="mt-1 block text-[11px] leading-snug text-ink-subtle">{detail}</span>
+    </button>
   );
 }
 
@@ -1594,6 +1814,7 @@ function ProjectMenu({
   projects,
   onSwitch,
   onOverview,
+  onSettings,
   onNew,
   onRename,
   onDelete,
@@ -1604,6 +1825,7 @@ function ProjectMenu({
   projects: ProjectDocument[];
   onSwitch: (projectId: string) => void;
   onOverview: () => void;
+  onSettings: () => void;
   onNew: () => void;
   onRename: () => void;
   onDelete: (projectId?: string) => void;
@@ -1618,6 +1840,10 @@ function ProjectMenu({
       <button onClick={onOverview} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
         <span>Project overview</span>
         <span className="mono text-[10.5px] text-ink-subtle">Open</span>
+      </button>
+      <button onClick={onSettings} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
+        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Settings</span>
+        <span className="mono text-[10.5px] text-ink-subtle">Workspace</span>
       </button>
       {projects.length > 0 && (
         <div className="my-1 max-h-48 overflow-auto rounded border border-line bg-background p-1">
@@ -2668,14 +2894,6 @@ function PipelinePanel({
   const runtime = calculatePipelineRuntime(pipeline);
   return (
     <div className="space-y-4">
-      <MetricGrid compact items={[
-        ["Active total", formatDuration(runtime.totalMs)],
-        ["Research", formatDuration(runtime.researchMs)],
-        ["Generation", formatDuration(runtime.generationMs)],
-        ["Validation", formatDuration(runtime.validationMs)],
-        ["Save", formatDuration(runtime.saveMs)]
-      ]} />
-      <PipelineTimingDiagnostics pipeline={pipeline} article={article} job={job} />
       <ol className="relative space-y-2.5 pl-5">
         <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
         {pipeline.map((step) => (
@@ -2704,6 +2922,14 @@ function PipelinePanel({
       ))}
     </ol>
       {selected && <StageDetails step={selected} article={article} details={details} />}
+      <MetricGrid compact items={[
+        ["Active total", formatDuration(runtime.totalMs)],
+        ["Research", formatDuration(runtime.researchMs)],
+        ["Generation", formatDuration(runtime.generationMs)],
+        ["Validation", formatDuration(runtime.validationMs)],
+        ["Save", formatDuration(runtime.saveMs)]
+      ]} />
+      <PipelineTimingDiagnostics pipeline={pipeline} article={article} job={job} />
     </div>
   );
 }
@@ -3600,6 +3826,40 @@ function jobActionMessage(action: string) {
   }[action] ?? "Queue item updated.";
 }
 
+function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, patch: WorkspacePreferencePatch): WorkspacePreferencesDocument {
+  const providerPreference = patch.aiProvider?.preference ?? preferences.aiProvider.preference;
+  return {
+    ...preferences,
+    account: {
+      ...preferences.account,
+      ...patch.account
+    },
+    notifications: {
+      ...preferences.notifications,
+      ...patch.notifications
+    },
+    aiProvider: {
+      ...preferences.aiProvider,
+      ...patch.aiProvider,
+      personalKeyStatus: providerPreference === "bring_your_own_key" ? "placeholder" : "not_configured"
+    },
+    operational: {
+      ...preferences.operational,
+      ...patch.operational,
+      defaultTargetWordCount: patch.operational?.defaultTargetWordCount === undefined
+        ? preferences.operational.defaultTargetWordCount
+        : clampTargetWords(patch.operational.defaultTargetWordCount),
+      reuseProjectResearch: false,
+      reuseTitleResearch: false
+    },
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function clampTargetWords(value: number) {
+  return Number.isFinite(value) ? Math.max(300, Math.min(5000, Math.round(value))) : 1400;
+}
+
 interface QueueMetrics {
   total: number;
   completed: number;
@@ -3619,6 +3879,34 @@ interface QueueMetrics {
   averageSaveMs: number | null;
   etaMs: number | null;
   throughputPerHour: number | null;
+}
+
+function describeGenerateButton(
+  stats: Record<"queued" | "processing" | "generated" | "needs_review" | "failed" | "skipped", number>,
+  metrics: QueueMetrics,
+  blocked: boolean
+) {
+  if (stats.processing > 0) {
+    const total = metrics.total || stats.processing + stats.queued;
+    const current = Math.min(total, Math.max(1, metrics.completed + stats.processing));
+    return {
+      label: `Generating ${current} of ${total}`,
+      disabled: true,
+      title: "Generation is currently running."
+    };
+  }
+  if (stats.queued > 0) {
+    return {
+      label: "Generate",
+      disabled: blocked,
+      title: blocked ? "Queue is busy." : "Start queued article generation."
+    };
+  }
+  return {
+    label: "Generate",
+    disabled: true,
+    title: "Add titles to create queue work."
+  };
 }
 
 interface ProjectSummary {

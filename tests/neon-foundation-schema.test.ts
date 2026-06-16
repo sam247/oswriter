@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const schema = readFileSync("db/migrations/0001_neon_foundation.sql", "utf8");
+const workspacePreferencesMigration = readFileSync("db/migrations/0004_workspace_preferences.sql", "utf8");
 
 test("neon foundation schema includes organisation-first tenancy", () => {
   for (const table of [
@@ -74,6 +75,12 @@ test("usage events and provider requests are separate ledgers", () => {
   assert.match(tableBody("provider_requests"), /request_type text not null/);
   assert.match(tableBody("provider_requests"), /duration_ms integer/);
   assert.match(tableBody("provider_requests"), /success boolean not null default false/);
+});
+
+test("workspace preferences are persisted on organisation settings", () => {
+  assert.match(workspacePreferencesMigration, /alter table organisation_settings/);
+  assert.match(workspacePreferencesMigration, /workspace_preferences jsonb not null default '\{\}'::jsonb/);
+  assert.match(workspacePreferencesMigration, /BYOK key material is not stored here/);
 });
 
 function tableBody(table: string) {

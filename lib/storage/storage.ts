@@ -1,6 +1,6 @@
-import type { ArticleDocument, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, WorkerLeaseDocument } from "@/lib/types";
-import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, DEFAULT_PROJECT_ID } from "@/lib/defaults";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath } from "@/lib/storage/paths";
+import type { ArticleDocument, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
@@ -58,13 +58,23 @@ export class WorkspaceStore {
     return { project, settings, queueControl };
   }
 
+  async ensureWorkspacePreferences() {
+    let preferences = await this.storage.getJson<WorkspacePreferencesDocument>(workspacePreferencesPath());
+    if (!preferences) {
+      preferences = createDefaultWorkspacePreferences();
+      await this.storage.putJson(workspacePreferencesPath(), preferences);
+    }
+    return preferences;
+  }
+
   async getState(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
     const { project, settings, queueControl } = await this.ensureProject(resolvedProjectId);
+    const preferences = await this.ensureWorkspacePreferences();
     const projects = await this.listProjects();
     const jobs = await this.listJobs(resolvedProjectId);
     const articles = await this.listArticles(resolvedProjectId);
-    return { project, projects, settings, queueControl, jobs, articles };
+    return { project, projects, settings, preferences, queueControl, jobs, articles };
   }
 
   async saveProject(project: ProjectDocument) {
@@ -221,6 +231,14 @@ export class WorkspaceStore {
 
   async saveSettings(settings: SettingsDocument) {
     await this.storage.putJson(settingsPath(settings.projectId), settings);
+  }
+
+  async getWorkspacePreferences() {
+    return this.ensureWorkspacePreferences();
+  }
+
+  async saveWorkspacePreferences(preferences: WorkspacePreferencesDocument) {
+    await this.storage.putJson(workspacePreferencesPath(), preferences);
   }
 
   async getQueueControl(projectId?: string) {
