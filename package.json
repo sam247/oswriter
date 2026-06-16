@@ -7,11 +7,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "mcp": "tsx mcp/server.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@neondatabase/serverless": "^1.1.0",
     "@vercel/blob": "^1.0.2",
     "clsx": "^2.1.1",
