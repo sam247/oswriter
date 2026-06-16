@@ -1,19 +1,24 @@
+import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import type { ValidationInput, ValidationResult } from "@/lib/types";
 
-export function heuristicValidation({ markdown, research }: ValidationInput): ValidationResult {
+export function heuristicValidation({ markdown, research, controls, targetWords }: ValidationInput): ValidationResult {
   const warnings: string[] = [];
   const needsReviewReasons: string[] = [];
   const h2Count = (markdown.match(/^## /gm) ?? []).length;
   const hasFaq = /faq|frequently asked/i.test(markdown);
   const hasLeakage = /according to (the|this) source|research process|sources say/i.test(markdown);
   const wordCount = markdown.trim().split(/\s+/).filter(Boolean).length;
+  const plan = controls ? buildArticleGenerationPlan(controls) : null;
+  const effectiveTargetWords = targetWords ?? plan?.targetWords ?? null;
+  const minimumWords = effectiveTargetWords ? Math.round(effectiveTargetWords * 0.8) : 650;
+  const expectedH2Count = plan?.h2SectionCount ?? 4;
 
   if (research.warnings.length) {
     warnings.push(...research.warnings);
     needsReviewReasons.push(...research.warnings);
   }
-  if (h2Count < 4) {
-    warnings.push("Article has fewer than 4 H2 sections.");
+  if (h2Count < expectedH2Count) {
+    warnings.push(`Article has fewer than ${expectedH2Count} H2 sections.`);
     needsReviewReasons.push("Heading structure may be thin.");
   }
   if (!hasFaq) {
@@ -24,8 +29,8 @@ export function heuristicValidation({ markdown, research }: ValidationInput): Va
     warnings.push("Article may contain source or research-process language.");
     needsReviewReasons.push("Research leakage needs review.");
   }
-  if (wordCount < 650) {
-    warnings.push("Article is shorter than expected.");
+  if (wordCount < minimumWords) {
+    warnings.push(effectiveTargetWords ? `Article is below 80% of the ${effectiveTargetWords}-word target.` : "Article is shorter than expected.");
     needsReviewReasons.push("Completeness needs review.");
   }
 
@@ -41,8 +46,8 @@ export function heuristicValidation({ markdown, research }: ValidationInput): Va
     sectionScores: {
       research: research.confidence,
       intent: 75,
-      headings: h2Count >= 4 ? 82 : 50,
-      readability: wordCount > 650 ? 78 : 55
+      headings: h2Count >= expectedH2Count ? 82 : 50,
+      readability: wordCount >= minimumWords ? 78 : 55
     },
     faqScore,
     seoScore

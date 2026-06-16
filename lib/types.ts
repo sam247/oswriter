@@ -246,6 +246,7 @@ export interface ArticleDocument {
   currentVersionNumber?: number;
   versionedAt?: string | null;
   wordCount: number;
+  targetWords?: number;
   qualityScore: number;
   researchSummary: string;
   validation: ValidationResult;
@@ -260,6 +261,7 @@ export interface ModelGenerationResult {
   model?: string;
   inputTokens?: number;
   outputTokens?: number;
+  finishReason?: string | null;
   estimatedAiCostUsd?: number;
 }
 
@@ -363,6 +365,7 @@ export interface ArticleGenerationInput {
   title: string;
   research: ResearchPack;
   controls: ContentControls;
+  plan?: import("@/lib/generation/plan").ArticleGenerationPlan;
 }
 
 export interface EditorInput {
@@ -375,4 +378,6 @@ export interface ValidationInput {
   title: string;
   markdown: string;
   research: ResearchPack;
+  controls?: ContentControls;
+  targetWords?: number;
 }

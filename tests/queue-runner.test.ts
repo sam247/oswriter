@@ -102,6 +102,7 @@ class MeteredModel implements ModelAdapter {
       model: "metered-model",
       inputTokens: 1200,
       outputTokens: 800,
+      finishReason: "stop",
       estimatedAiCostUsd: 0.004
     };
   }
@@ -120,7 +121,8 @@ function setup(search: SearchAdapter = new FakeSearch(), model: ModelAdapter = n
   return { store, runner };
 }
 
-async function drainQueue(runner: QueueRunner, maxSteps = 1000) {
+async function drainQueue(runner: QueueRunner, maxSteps = 1000, resume = true) {
+  if (resume) await runner.resumeQueue();
   for (let i = 0; i < maxSteps; i += 1) {
     const result = await runner.processNext();
     if (!result.processed) return;
@@ -132,6 +134,7 @@ describe("QueueRunner", () => {
   it("processes queued titles in the order they were submitted", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["First queued article", "Second queued article", "Third queued article"]);
+    await runner.resumeQueue();
 
     const initial = await store.getState();
     assert.deepEqual(initial.jobs.map((job) => job.title), ["First queued article", "Second queued article", "Third queued article"]);
@@ -156,6 +159,20 @@ describe("QueueRunner", () => {
       "Third queued article",
       "Third queued article"
     ]);
+  });
+
+  it("keeps newly queued work stopped until generation is explicitly started", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Wait for the generate button"]);
+
+    const workerAttempt = await runner.processNext(undefined, { source: "worker" });
+    assert.equal(workerAttempt.processed, false);
+    assert.equal((await store.getState()).jobs[0].status, "queued");
+
+    await runner.resumeQueue();
+    const manualAttempt = await runner.processNext(undefined, { source: "manual" });
+    assert.equal(manualAttempt.processed, true);
+    assert.equal(manualAttempt.job?.status, "processing");
   });
 
   it("does not let the worker duplicate research for an active manual job", async () => {
@@ -189,6 +206,7 @@ describe("QueueRunner", () => {
   it("stops gracefully after the current article completes", async () => {
     const { store, runner } = setup();
     const [first, second] = await runner.addTitles(["Finish me first", "Do not start yet"]);
+    await runner.resumeQueue();
 
     const started = await runner.processNext(undefined, { source: "manual" });
     assert.equal(started.job?.id, first.id);
@@ -197,7 +215,7 @@ describe("QueueRunner", () => {
     const control = await runner.stopAfterCurrent();
     assert.equal(control.mode, "stop_after_current");
 
-    await drainQueue(runner);
+    await drainQueue(runner, 1000, false);
     const state = await store.getState();
     assert.equal(state.queueControl.mode, "stopped");
     assert.ok(["generated", "needs_review"].includes(state.jobs.find((job) => job.id === first.id)?.status ?? ""));
@@ -208,6 +226,7 @@ describe("QueueRunner", () => {
   it("protects queue ownership while a job is processing", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Owned processing job"]);
+    await runner.resumeQueue();
     await runner.processNext(undefined, { source: "manual" });
 
     const blocker = await getQueueMutationBlocker(store);
@@ -262,6 +281,7 @@ describe("QueueRunner", () => {
       assert.equal(telemetry.exaContentCalls, 6);
       assert.equal(telemetry.estimatedResearchCostUsd, 0.018);
       assert.equal(telemetry.totalCostUsd, 0.022);
+      assert.equal(telemetry.metadata.finishReason, "stop");
       assert.ok((telemetry.generationDurationMs ?? -1) >= 0);
     } finally {
       restoreEnv("EXA_SEARCH_COST_USD", previousSearchCost);
@@ -498,6 +518,7 @@ describe("QueueRunner", () => {
   it("recovers after browser refresh during processing", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Refresh during processing"]);
+    await runner.resumeQueue();
     const firstStep = await runner.processNext();
     assert.equal(firstStep.job?.status, "processing");
 
@@ -512,6 +533,7 @@ describe("QueueRunner", () => {
   it("recovers after app restart during processing", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Restart during processing"]);
+    await runner.resumeQueue();
     await runner.processNext();
     await runner.processNext();
 
@@ -526,6 +548,7 @@ describe("QueueRunner", () => {
   it("recovers safely across 25 queued jobs", async () => {
     const { store, runner } = setup();
     await runner.addTitles(Array.from({ length: 25 }, (_, index) => `Recovery article ${index + 1}`));
+    await runner.resumeQueue();
     await runner.processNext();
     await runner.processNext();
 
@@ -541,6 +564,7 @@ describe("QueueRunner", () => {
   it("recovers safely across 50 queued jobs", async () => {
     const { store, runner } = setup();
     await runner.addTitles(Array.from({ length: 50 }, (_, index) => `Large queue article ${index + 1}`));
+    await runner.resumeQueue();
     await runner.processNext();
 
     const restarted = setup(new FakeSearch(), new FakeModel(), store).runner;

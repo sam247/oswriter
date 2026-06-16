@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, ValidationInput, ValidationResult } from "@/lib/types";
+import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import { cleanJsonText } from "@/lib/text";
 import { estimateAiCostUsd } from "@/lib/telemetry/costs";
 import { heuristicValidation } from "@/lib/validation/heuristics";
@@ -15,14 +16,15 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
     const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
+    const plan = input.plan ?? buildArticleGenerationPlan(input.controls);
     const response = await this.client.chat.completions.create({
       model,
       messages: promptToMessages(
         "You write useful, technically careful Markdown articles from research notes.",
-        buildGenerationPrompt(input)
+        buildGenerationPrompt({ ...input, plan })
       ),
       temperature: 0.4,
-      max_tokens: 3200
+      max_tokens: plan.maxOutputTokens
     });
     const text = response.choices[0]?.message.content?.trim();
     if (!text) throw new Error("OpenAI generation unavailable: empty response.");
@@ -34,6 +36,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
       model: response.model ?? model,
       inputTokens,
       outputTokens,
+      finishReason: response.choices[0]?.finish_reason ?? null,
       estimatedAiCostUsd: estimateAiCostUsd(inputTokens, outputTokens, response.model ?? model)
     };
   }
@@ -105,7 +108,7 @@ function normaliseBaseUrl(value: string | undefined) {
     .replace(/\/v1$/i, "");
 }
 
-function buildGenerationPrompt({ title, research, controls }: ArticleGenerationInput) {
+function buildGenerationPrompt({ title, research, controls, plan = buildArticleGenerationPlan(controls) }: ArticleGenerationInput) {
   return `Write a practical Markdown article.
 
 Non-negotiable:
@@ -114,11 +117,13 @@ Non-negotiable:
 - Do not use source-language like "according to the source".
 - Do not invent precise technical claims not supported by the notes.
 - FAQs must be natural questions with short direct answers.
+- Write a complete article. Do not stop mid-sentence.
 
 Title: ${title}
 Style profile: ${controls.styleProfile}
 Tone: ${controls.targetTone}
-Target length: about ${controls.lengthTargetWords} words
+Target length: about ${plan.targetWords} words (${plan.minimumWords}-${plan.maximumWords} acceptable)
+Structure target: about ${plan.h2SectionCount} main H2 sections, roughly ${plan.wordsPerSection} words per main section, then a short conclusion and FAQ when enabled.
 Include TL;DR: ${controls.includeTldr ? "yes" : "no"}
 Include FAQ: ${controls.includeFaq ? "yes" : "no"}
 

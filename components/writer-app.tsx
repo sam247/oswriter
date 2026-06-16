@@ -318,6 +318,20 @@ function Workbench() {
   async function processNext() {
     setBusy(true);
     setMessage("Processing next queued title...");
+    if (state?.queueControl.mode !== "running") {
+      const controlRes = await fetch("/api/queue/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resume" })
+      });
+      const controlData = await controlRes.json().catch(() => ({})) as { queueControl?: AppState["queueControl"]; error?: string };
+      if (!controlRes.ok) {
+        setBusy(false);
+        setMessage(controlData.error ?? "Queue start failed.");
+        return false;
+      }
+      if (controlData.queueControl) setState((current) => current ? { ...current, queueControl: controlData.queueControl! } : current);
+    }
     const optimisticJob = markNextJobGenerating();
     if (optimisticJob) {
       if (!traceJobIdRef.current) {
@@ -749,7 +763,7 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <button onClick={processNext} disabled={!hasRunnableQueueWork || busy || running || state?.queueControl.mode === "stop_after_current" || state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused"} title={hasRunnableQueueWork ? queueState?.detail : "Add titles to create queue work."} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
+          <button onClick={processNext} disabled={!hasRunnableQueueWork || busy || running || state?.queueControl.mode === "stop_after_current"} title={hasRunnableQueueWork ? "Start the next queued article." : "Add titles to create queue work."} className="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-white disabled:opacity-50">
             <Play className="size-3 fill-current" /> Generate
           </button>
           {showRunAllControl && (

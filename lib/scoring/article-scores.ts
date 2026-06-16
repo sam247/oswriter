@@ -93,8 +93,13 @@ function calculateQualityScore(article: ArticleDocument, researchScore: number, 
   const warningCount = article.validation.warnings.length;
   const reviewCount = article.needsReviewReasons.length;
   const wordCount = article.wordCount;
+  const targetWords = article.targetWords ?? 1400;
+  const idealMinWords = Math.round(targetWords * 0.85);
+  const idealMaxWords = Math.round(targetWords * 1.15);
+  const floorMinWords = Math.round(targetWords * 0.45);
+  const floorMaxWords = Math.round(targetWords * 1.5);
   const structureQuality = clamp(Math.round((Math.min(h2Count, 6) / 6) * 70 + (Math.min(h3Count, 8) / 8) * 15 + (hasFaq ? 15 : 0)));
-  const readabilityCompleteness = scoreRange(wordCount, 900, 1900, 450, 2800);
+  const readabilityCompleteness = scoreRange(wordCount, idealMinWords, idealMaxWords, floorMinWords, floorMaxWords);
   const editorialChecks = clamp(100 - warningCount * 14 - reviewCount * 10 - (article.status === "needs_review" ? 10 : 0));
   const sourceUtilisation = clamp(Math.round((Math.min(article.sources.length, 12) / 12) * 100));
   const components = weightedComponents(ARTICLE_SCORE_WEIGHTS.quality, {

@@ -36,11 +36,11 @@ export function createDefaultSettings(): SettingsDocument {
 export function createDefaultQueueControl(projectId = DEFAULT_PROJECT_ID): QueueControlDocument {
   return {
     projectId,
-    mode: "running",
+    mode: "stopped",
     requestedBy: null,
     requestedAt: null,
-    stoppedAt: null,
-    reason: null,
+    stoppedAt: nowIso(),
+    reason: "Waiting for generation start.",
     updatedAt: nowIso()
   };
 }

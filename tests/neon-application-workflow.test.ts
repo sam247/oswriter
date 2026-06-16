@@ -190,6 +190,7 @@ Check the current project requirements first.`;
 }
 
 async function drainQueue(runner: QueueRunner, maxSteps = 20) {
+  await runner.resumeQueue();
   for (let index = 0; index < maxSteps; index += 1) {
     const result = await runner.processNext();
     if (!result.processed) return;

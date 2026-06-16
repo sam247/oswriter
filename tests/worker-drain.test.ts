@@ -128,6 +128,7 @@ describe("autonomous worker drain", () => {
   it("continues queue processing without browser polling", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Worker article one", "Worker article two", "Worker article three"]);
+    await runner.resumeQueue();
 
     const result = await drainQueueWithLease({
       store,
@@ -146,6 +147,7 @@ describe("autonomous worker drain", () => {
   it("does not start a heavy generation step late in the drain window", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Late generation should wait"]);
+    await runner.resumeQueue();
     await runner.processNext();
     await runner.processNext();
     let calls = 0;

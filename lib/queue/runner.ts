@@ -1,5 +1,6 @@
 import type { ArticleDocument, DebugDocument, DebugEvent, GenerationTelemetryDocument, ModelAdapter, ModelGenerationResult, QueueJob, SearchAdapter } from "@/lib/types";
 import { createPipeline, nowIso } from "@/lib/defaults";
+import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
 import { runResearch } from "@/lib/research/research-engine";
@@ -231,7 +232,10 @@ export class QueueRunner {
       return { processed: false, job: null };
     }
     const job = processing ?? jobs.find((item) => item.status === "queued");
-    if (!job) return { processed: false, job: null };
+    if (!job) {
+      await this.markStoppedIfQueueEmpty(resolvedProjectId);
+      return { processed: false, job: null };
+    }
     return { processed: true, job: await this.processJobStep(job, context) };
   }
 
@@ -266,6 +270,7 @@ export class QueueRunner {
 
     try {
       const settings = await this.store.getSettings(job.projectId);
+      const plan = buildArticleGenerationPlan(settings.controls);
 
       if (!stageDone(job, "research")) {
         job = { ...job, timings: markTiming(job.timings, "research_started_at"), pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
@@ -282,7 +287,17 @@ export class QueueRunner {
 
       if (!stageDone(job, "outline")) {
         job = { ...job, timings: markTiming(job.timings, "outline_started_at"), pipeline: startStage(job.pipeline, "outline", "Using generation prompt structure."), updatedAt: nowIso() };
-        job = { ...job, timings: markTiming(job.timings, "outline_completed_at"), pipeline: completeStage(job.pipeline, "outline", { strategy: "model-guided" }), updatedAt: nowIso() };
+        job = {
+          ...job,
+          timings: markTiming(job.timings, "outline_completed_at"),
+          pipeline: completeStage(job.pipeline, "outline", {
+            strategy: "target-guided",
+            targetWords: plan.targetWords,
+            h2SectionCount: plan.h2SectionCount,
+            wordsPerSection: plan.wordsPerSection
+          }),
+          updatedAt: nowIso()
+        };
         await this.store.saveJob(job);
         log({ stage: "outline", level: "info", message: "Outline stage prepared." });
         await this.store.saveDebug(debug, job.projectId);
@@ -294,16 +309,26 @@ export class QueueRunner {
 
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls }));
+      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan }));
       const markdown = generation.markdown;
-      job = { ...job, timings: markTiming(job.timings, "generation_completed_at"), pipeline: completeStage(job.pipeline, "generation", { model: generation.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash" }), updatedAt: nowIso() };
+      job = {
+        ...job,
+        timings: markTiming(job.timings, "generation_completed_at"),
+        pipeline: completeStage(job.pipeline, "generation", {
+          model: generation.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+          finishReason: generation.finishReason ?? null,
+          outputTokens: generation.outputTokens ?? 0,
+          maxOutputTokens: plan.maxOutputTokens
+        }),
+        updatedAt: nowIso()
+      };
       await this.store.saveJob(job);
       log({ stage: "generation", level: "info", message: "Article generation completed.", data: { words: countWords(markdown) } });
 
       job = { ...job, timings: markTiming(job.timings, "save_started_at"), pipeline: startStage(job.pipeline, "save", "Saving generated article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
       const needsReview = [...research.warnings];
-      const validation = heuristicValidation({ title: job.title, markdown, research });
+      const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords });
       needsReview.push(...validation.needsReviewReasons);
       const uniqueReasons = [...new Set(needsReview)];
       const finalStatus = statusFromReviewReasons(uniqueReasons);
@@ -328,13 +353,14 @@ export class QueueRunner {
         updatedAt: completedAt
       };
 
-      const article = createArticle(job, markdown, uniqueReasons, validation, research);
+      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords);
       await this.store.saveArticle(article);
       await this.saveGenerationTelemetry(job, research, generation, log);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
       await this.store.saveJob(job);
       await this.store.saveDebug(debug, job.projectId);
       await this.markStoppedIfRequested(job.projectId);
+      await this.markStoppedIfQueueEmpty(job.projectId);
       return job;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -349,6 +375,7 @@ export class QueueRunner {
       await this.store.saveJob(failed);
       await this.store.saveDebug(debug, job.projectId);
       await this.markStoppedIfRequested(job.projectId);
+      await this.markStoppedIfQueueEmpty(job.projectId);
       return failed;
     }
   }
@@ -383,6 +410,7 @@ export class QueueRunner {
       generationDurationMs: durationMs(job.timings?.generation_started_at, job.timings?.generation_completed_at),
       metadata: {
         status: job.status,
+        finishReason: generation.finishReason ?? null,
         researchRunId: research.id ?? null,
         researchRequestIds: research.requestIds,
         sourceCount: research.sources.length
@@ -413,6 +441,21 @@ export class QueueRunner {
       updatedAt: now
     });
   }
+
+  private async markStoppedIfQueueEmpty(projectId: string) {
+    const control = await this.store.getQueueControl(projectId);
+    if (control.mode !== "running") return;
+    const active = (await this.store.listJobs(projectId)).some((job) => job.status === "queued" || job.status === "processing");
+    if (active) return;
+    const now = nowIso();
+    await this.store.saveQueueControl({
+      ...control,
+      mode: "stopped",
+      stoppedAt: now,
+      reason: "Queue completed.",
+      updatedAt: now
+    });
+  }
 }
 
 function normaliseGenerationResult(result: string | ModelGenerationResult): ModelGenerationResult {
@@ -422,6 +465,7 @@ function normaliseGenerationResult(result: string | ModelGenerationResult): Mode
       model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
       inputTokens: 0,
       outputTokens: 0,
+      finishReason: null,
       estimatedAiCostUsd: 0
     };
   }
@@ -430,6 +474,7 @@ function normaliseGenerationResult(result: string | ModelGenerationResult): Mode
     model: result.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
     inputTokens: result.inputTokens ?? 0,
     outputTokens: result.outputTokens ?? 0,
+    finishReason: result.finishReason ?? null,
     estimatedAiCostUsd: result.estimatedAiCostUsd ?? 0
   };
 }
@@ -456,7 +501,8 @@ function createArticle(
   markdown: string,
   needsReviewReasons: string[],
   validation: ArticleDocument["validation"],
-  research: Parameters<typeof heuristicValidation>[0]["research"]
+  research: Parameters<typeof heuristicValidation>[0]["research"],
+  targetWords?: number
 ): ArticleDocument {
   const now = nowIso();
   const sources = research.sources;
@@ -470,6 +516,7 @@ function createArticle(
     createdAt: job.createdAt,
     updatedAt: now,
     wordCount: countWords(markdown),
+    targetWords,
     qualityScore: validation.qualityScore,
     researchSummary: research.usefulFacts.slice(0, 5).join(" "),
     validation,
