@@ -7,7 +7,8 @@ export async function POST(req: Request) {
   if (unauth) return unauth;
   const body = await req.json().catch(() => ({})) as { titles?: string[] | string };
   const titles = Array.isArray(body.titles) ? body.titles : String(body.titles ?? "").split("\n");
-  const { runner } = createRuntime();
+  const { runner, store } = createRuntime();
   const jobs = await runner.addTitles(titles);
-  return NextResponse.json({ jobs });
+  const state = await store.getState();
+  return NextResponse.json({ jobs, state });
 }

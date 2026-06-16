@@ -40,9 +40,7 @@ export class QueueRunner {
         timings: { queued_at: createdAt }
       };
     });
-    for (const job of jobs) {
-      await this.store.saveJob(job);
-    }
+    await this.store.saveJobs(jobs);
     if (jobs.length && !processing) {
       const now = nowIso();
       await this.store.saveQueueControl({

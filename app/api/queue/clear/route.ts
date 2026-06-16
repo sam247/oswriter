@@ -10,5 +10,6 @@ export async function POST() {
   const blocker = await getQueueMutationBlocker(store);
   if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
   const count = await store.clearQueueData();
-  return NextResponse.json({ count });
+  const state = await store.getState();
+  return NextResponse.json({ count, state });
 }

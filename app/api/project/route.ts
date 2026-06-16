@@ -27,7 +27,8 @@ export async function PATCH(req: Request) {
   const { project } = await store.ensureProject();
   const updated = { ...project, name, updatedAt: nowIso() };
   await store.saveProject(updated);
-  return NextResponse.json({ project: updated });
+  const state = await store.getState(updated.id);
+  return NextResponse.json({ project: updated, state });
 }
 
 export async function POST(req: Request) {
@@ -43,7 +44,8 @@ export async function POST(req: Request) {
   await store.saveProject(project);
   await store.saveSettings({ ...createDefaultSettings(), projectId });
   await store.setActiveProjectId(projectId);
-  return NextResponse.json({ project });
+  const state = await store.getState(projectId);
+  return NextResponse.json({ project, state });
 }
 
 export async function DELETE(req: Request) {
@@ -56,5 +58,6 @@ export async function DELETE(req: Request) {
   const blocker = await getQueueMutationBlocker(store, projectId);
   if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
   const result = await store.deleteProject(projectId);
-  return NextResponse.json(result);
+  const state = await store.getState(result.project.id);
+  return NextResponse.json({ ...result, state });
 }

@@ -70,10 +70,12 @@ export class WorkspaceStore {
   async getState(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
     const { project, settings, queueControl } = await this.ensureProject(resolvedProjectId);
-    const preferences = await this.ensureWorkspacePreferences();
-    const projects = await this.listProjects();
-    const jobs = await this.listJobs(resolvedProjectId);
-    const articles = await this.listArticles(resolvedProjectId);
+    const [preferences, projects, jobs, articles] = await Promise.all([
+      this.ensureWorkspacePreferences(),
+      this.listProjects(),
+      this.listJobs(resolvedProjectId),
+      this.listArticles(resolvedProjectId)
+    ]);
     return { project, projects, settings, preferences, queueControl, jobs, articles };
   }
 

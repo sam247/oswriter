@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Settings, SkipForward, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Settings, SkipForward, Trash2, Unlink, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
@@ -12,7 +12,7 @@ type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
 type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" | "debug";
 type SidebarTab = "queue" | "articles";
-type FormatCommand = "bold" | "italic" | "link" | "h2" | "h3" | "bullet" | "numbered";
+type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
 type WorkspacePreferencePatch = {
   account?: Partial<WorkspacePreferencesDocument["account"]>;
@@ -111,7 +111,6 @@ function Workbench() {
   const [showLeftPane, setShowLeftPane] = useState(true);
   const [showRightPane, setShowRightPane] = useState(true);
   const [articleViewMode, setArticleViewMode] = useState<ArticleViewMode>("rich");
-  const [searchQuery, setSearchQuery] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResponse | null>(null);
@@ -122,6 +121,7 @@ function Workbench() {
   const stopRequested = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const saveRevisionRef = useRef(0);
   const warningsRef = useRef<HTMLDivElement | null>(null);
@@ -151,19 +151,9 @@ function Workbench() {
     const article = articles.find((item) => item.jobId === job.id);
     return article ? { ...job, status: article.status } : job;
   }), [articles, jobs]);
-  const visibleJobs = displayJobs.filter((job) => {
-    const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId);
-    const matchesFilter = filter === "all" || job.status === filter;
-    const query = searchQuery.trim().toLowerCase();
-    const matchesSearch = !query || job.title.toLowerCase().includes(query) || article?.title.toLowerCase().includes(query);
-    return matchesFilter && matchesSearch;
-  });
+  const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter);
   const queueJobs = visibleJobs.filter(isQueueJobVisible);
-  const visibleArticles = articles.filter((article) => {
-    const query = searchQuery.trim().toLowerCase();
-    return !query || article.title.toLowerCase().includes(query) || article.markdown.toLowerCase().includes(query);
-  });
-  const libraryArticles = visibleArticles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
+  const libraryArticles = articles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
   const stats = useMemo(() => ({
     queued: displayJobs.filter((job) => job.status === "queued").length,
     processing: displayJobs.filter((job) => job.status === "processing").length,
@@ -183,20 +173,24 @@ function Workbench() {
   const hasRecoverableQueueWork = displayJobs.some((job) => isRecoverableProcessingJob(job, state?.settings.staleProcessingMinutes ?? 15, tick));
   const generateButton = describeGenerateButton(stats, queueMetrics, busy || running || state?.queueControl.mode === "stop_after_current");
 
+  function applyServerState(next: AppState, source: string) {
+    recordStateTrace(next, traceJobIdRef.current, source);
+    setState(next);
+    const selectedExists = selectedArticleId && (
+      next.jobs.some((job) => job.articleId === selectedArticleId) ||
+      next.articles.some((article) => article.id === selectedArticleId)
+    );
+    if (!selectedExists) {
+      const active = next.jobs.find((job) => job.status === "processing");
+      setSelectedArticleId(active?.articleId ?? null);
+    }
+  }
+
   async function refresh() {
     const res = await fetchWithTimeout("/api/state", { cache: "no-store" }, 8_000);
     if (res?.ok) {
       const next = await res.json() as AppState;
-      recordStateTrace(next, traceJobIdRef.current, "api-state");
-      setState(next);
-      const selectedExists = selectedArticleId && (
-        next.jobs.some((job) => job.articleId === selectedArticleId) ||
-        next.articles.some((article) => article.id === selectedArticleId)
-      );
-      if (!selectedExists) {
-        const active = next.jobs.find((job) => job.status === "processing");
-        setSelectedArticleId(active?.articleId ?? null);
-      }
+      applyServerState(next, "api-state");
     }
   }
 
@@ -253,11 +247,25 @@ function Workbench() {
         event.preventDefault();
         setGlobalSearchOpen(true);
       }
-      if (event.key === "Escape") setGlobalSearchOpen(false);
+      if (event.key === "Escape") {
+        setGlobalSearchOpen(false);
+        setProjectMenuOpen(false);
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && projectMenuRef.current?.contains(target)) return;
+      setProjectMenuOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [projectMenuOpen]);
 
   useEffect(() => {
     if (!globalSearchOpen) return;
@@ -318,11 +326,13 @@ function Workbench() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ titles: titles.split("\n") })
     });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; jobs?: QueueJob[]; error?: string };
     setBusy(false);
     if (res.ok) {
       setTitles("");
       setMessage("Titles queued.");
-      await refresh();
+      if (data.state) applyServerState(data.state, "jobs-bulk");
+      else await refresh();
       if (preferences?.operational.autoStartQueueOnAdd) {
         setMessage("Titles queued. Starting queue...");
         void runSequential();
@@ -451,12 +461,13 @@ function Workbench() {
     setRunning(false);
     setBusy(true);
     const res = await fetch("/api/queue/clear", { method: "POST" });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
     setBusy(false);
     if (res.ok) {
       setMessage("Queue work cleared.");
-      await refresh();
+      if (data.state) applyServerState(data.state, "queue-clear");
+      else await refresh();
     } else {
-      const data = await res.json().catch(() => ({})) as { error?: string };
       setMessage(data.error ?? "Clear queue failed.");
     }
   }
@@ -494,9 +505,11 @@ function Workbench() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name })
     });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string };
     setProjectMenuOpen(false);
     setMessage(res.ok ? "Project renamed." : "Project rename failed.");
-    await refresh();
+    if (res.ok && data.state) applyServerState(data.state, "project-rename");
+    else await refresh();
   }
 
   async function createProject() {
@@ -508,15 +521,17 @@ function Workbench() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name })
     });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string };
     setProjectMenuOpen(false);
     if (res.ok) {
       setSelectedArticleId(null);
       setDetails({ research: null, debug: null });
       setMessage("New project created.");
+      if (data.state) applyServerState(data.state, "project-create");
     } else {
-      setMessage("New project failed.");
+      setMessage(data.error ?? "New project failed.");
     }
-    await refresh();
+    if (!res.ok || !data.state) await refresh();
   }
 
   async function switchProject(projectId: string) {
@@ -537,10 +552,7 @@ function Workbench() {
       setSelectedArticleId(null);
       setDetails({ research: null, debug: null });
       setSidebarTab("queue");
-      if (data.state) {
-        recordStateTrace(data.state, traceJobIdRef.current, "project-switch");
-        setState(data.state);
-      }
+      if (data.state) applyServerState(data.state, "project-switch");
       setMessage("Project switched.");
     } else {
       setMessage(data.error ?? "Project switch failed.");
@@ -566,6 +578,7 @@ function Workbench() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectId })
     });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
     setProjectMenuOpen(false);
     if (res.ok) {
       if (isCurrent) {
@@ -573,11 +586,11 @@ function Workbench() {
         setDetails({ research: null, debug: null });
       }
       setMessage("Project deleted.");
+      if (data.state) applyServerState(data.state, "project-delete");
     } else {
-      const data = await res.json().catch(() => ({})) as { error?: string };
       setMessage(data.error ?? "Project delete failed.");
     }
-    await refresh();
+    if (!res.ok || !data.state) await refresh();
   }
 
   async function shareAccountStats() {
@@ -587,6 +600,52 @@ function Workbench() {
       setMessage("Share text copied.");
     } catch {
       setMessage(text);
+    }
+  }
+
+  async function copySelectedArticle() {
+    if (!selectedArticle) return;
+    try {
+      await navigator.clipboard.writeText(selectedMarkdown);
+      setMessage("Article copied.");
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = selectedMarkdown;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setMessage(copied ? "Article copied." : "Copy failed.");
+    }
+  }
+
+  async function copyQueueTitles() {
+    const titles = [...displayJobs]
+      .sort((a, b) => (a.queuePosition ?? new Date(a.createdAt).getTime()) - (b.queuePosition ?? new Date(b.createdAt).getTime()) || a.createdAt.localeCompare(b.createdAt))
+      .map((job) => job.title.trim())
+      .filter(Boolean);
+    if (!titles.length) {
+      setMessage("No queue titles to copy.");
+      return;
+    }
+    const text = titles.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage(`Copied ${titles.length} titles.`);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setMessage(copied ? `Copied ${titles.length} titles.` : "Copy titles failed.");
     }
   }
 
@@ -794,15 +853,6 @@ function Workbench() {
           ) : null}
         </div>
         <div className="flex items-center gap-1">
-          <div className="hidden h-7 w-56 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-ink-muted md:flex">
-            <Search className="size-3.5" />
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder={sidebarTab === "queue" ? "Search queue..." : "Search articles..."}
-              className="h-full min-w-0 flex-1 bg-transparent text-[12px] text-ink outline-none placeholder:text-ink-subtle"
-            />
-          </div>
           <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
             <Search className="size-3.5" />
             <span>Search</span>
@@ -843,7 +893,7 @@ function Workbench() {
         {showLeftPane && <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
           <div className="hairline-b px-3 pb-3 pt-3">
             <div className="flex items-start justify-between gap-3">
-              <div className="relative min-w-0 flex-1">
+              <div ref={projectMenuRef} className="relative min-w-0 flex-1">
                 <button onClick={() => setProjectMenuOpen((open) => !open)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-3">
                   <span className="grid size-7 shrink-0 place-items-center rounded-md bg-ink text-white">
                     <PanelLeft className="size-3.5" />
@@ -946,9 +996,14 @@ function Workbench() {
           <div className="hairline-t px-3 pb-3 pt-2">
             <div className="mb-1 flex items-center justify-between px-1">
               <PanelTitle title="Add titles" />
-              <button onClick={clearQueue} disabled={Boolean(queueMutationBlockedReason)} title={queueMutationBlockedReason ?? "Clear queued, failed and skipped work"} className="flex items-center gap-1 text-[10.5px] text-ink-subtle hover:text-danger disabled:cursor-not-allowed disabled:opacity-50">
-                <Trash2 className="size-3" /> Clear
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={copyQueueTitles} disabled={!displayJobs.length} title="Copy all current project queue titles" className="flex items-center gap-1 text-[10.5px] text-ink-subtle hover:text-ink disabled:cursor-not-allowed disabled:opacity-50">
+                  <Copy className="size-3" /> Copy titles
+                </button>
+                <button onClick={clearQueue} disabled={Boolean(queueMutationBlockedReason)} title={queueMutationBlockedReason ?? "Clear queued, failed and skipped work"} className="flex items-center gap-1 text-[10.5px] text-ink-subtle hover:text-danger disabled:cursor-not-allowed disabled:opacity-50">
+                  <Trash2 className="size-3" /> Clear
+                </button>
+              </div>
             </div>
             <textarea
               value={titles}
@@ -1007,6 +1062,7 @@ function Workbench() {
                 viewMode={articleViewMode}
                 onViewModeChange={setArticleViewMode}
                 onFormat={applyFormat}
+                onCopyAll={copySelectedArticle}
               />
               <div className="min-h-0 flex-1">
                 {selectedArticle ? (
@@ -1931,7 +1987,7 @@ function ProjectExportMenu({ summary }: { summary: ProjectSummary | null }) {
   return (
     <ExportLink
       href="/api/export/project/package"
-      label="Export"
+      label="Export All"
       icon={<Download className="size-3.5" />}
       disabled={!summary?.articleCount}
     />
@@ -2133,17 +2189,20 @@ function ArticleToolbar({
   article,
   viewMode,
   onViewModeChange,
-  onFormat
+  onFormat,
+  onCopyAll
 }: {
   article: ArticleDocument | null;
   viewMode: ArticleViewMode;
   onViewModeChange: (mode: ArticleViewMode) => void;
   onFormat: (command: FormatCommand) => void;
+  onCopyAll: () => void;
 }) {
   const formatting = [
     { command: "bold" as const, icon: Bold, title: "Bold" },
     { command: "italic" as const, icon: Italic, title: "Italic" },
-    { command: "link" as const, icon: LinkIcon, title: "Link" },
+    { command: "link" as const, icon: LinkIcon, title: "Add or edit link" },
+    { command: "unlink" as const, icon: Unlink, title: "Remove link" },
     { command: "h2" as const, icon: Heading2, title: "Heading 2" },
     { command: "h3" as const, icon: Heading3, title: "Heading 3" },
     { command: "bullet" as const, icon: List, title: "Bullet list" },
@@ -2152,6 +2211,15 @@ function ArticleToolbar({
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
+      <button
+        onClick={onCopyAll}
+        disabled={!article}
+        className="flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-40"
+        title="Copy full article"
+      >
+        <Copy className="size-3.5" />
+        Copy All
+      </button>
       <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
       <div className="flex shrink-0 items-center gap-0.5">
         {formatting.map(({ command, icon: Icon, title }) => (
@@ -2302,26 +2370,52 @@ function ScoreDetailPanel({ score }: { score: ArticleScore }) {
 }
 
 function ArticleExportActions({ articleId }: { articleId: string }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
   return (
-    <details className="group relative shrink-0">
-      <summary className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3">
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3"
+      >
         <Download className="size-3.5" />
         Export
-        <ChevronDown className="size-3 text-ink-subtle transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="absolute left-0 top-9 z-20 w-44 rounded-md border border-line bg-surface-1 p-1 shadow-lg">
-        <ExportMenuLink href={`/api/export/article/${articleId}/markdown`} label="Markdown" icon={<FileText className="size-3.5" />} />
-        <ExportMenuLink href={`/api/export/article/${articleId}/docx`} label="DOCX" icon={<FileArchive className="size-3.5" />} />
-        <ExportMenuLink href={`/api/export/article/${articleId}/html`} label="HTML" icon={<FileCode className="size-3.5" />} />
-        <ExportMenuLink href={`/api/export/article/${articleId}/json`} label="JSON" icon={<FileJson className="size-3.5" />} />
-      </div>
-    </details>
+        <ChevronDown className={cn("size-3 text-ink-subtle transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-20 w-44 rounded-md border border-line bg-surface-1 p-1 shadow-lg">
+          <ExportMenuLink href={`/api/export/article/${articleId}/markdown`} label="Markdown" icon={<FileText className="size-3.5" />} onClick={() => setOpen(false)} />
+          <ExportMenuLink href={`/api/export/article/${articleId}/docx`} label="DOCX" icon={<FileArchive className="size-3.5" />} onClick={() => setOpen(false)} />
+          <ExportMenuLink href={`/api/export/article/${articleId}/html`} label="HTML" icon={<FileCode className="size-3.5" />} onClick={() => setOpen(false)} />
+          <ExportMenuLink href={`/api/export/article/${articleId}/json`} label="JSON" icon={<FileJson className="size-3.5" />} onClick={() => setOpen(false)} />
+        </div>
+      )}
+    </div>
   );
 }
 
-function ExportMenuLink({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) {
+function ExportMenuLink({ href, label, icon, onClick }: { href: string; label: string; icon: React.ReactNode; onClick?: () => void }) {
   return (
-    <a href={href} className="flex h-8 items-center gap-2 rounded px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+    <a href={href} onClick={onClick} className="flex h-8 items-center gap-2 rounded px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
       {icon}
       <span>{label}</span>
     </a>
@@ -2355,7 +2449,7 @@ function ProjectSummaryPanel({ state, metrics }: { state: AppState | null; metri
             <MetricLine label="Evidence" value={summary.averageEvidence || "-"} />
             <MetricLine label="Success rate" value={`${summary.successRate}%`} />
           </div>
-          <ExportLink href="/api/export/project/package" label="Export Project" icon={<Download className="size-3.5" />} disabled={!summary.articleCount} block />
+          <ExportLink href="/api/export/project/package" label="Export All" icon={<Download className="size-3.5" />} disabled={!summary.articleCount} block />
         </div>
       ) : <Empty text="Project summary will appear once state loads." />}
     </SummarySection>
@@ -3629,9 +3723,26 @@ function formatMarkdown(markdown: string, start: number, end: number, command: F
   if (command === "bold") return wrapSelection(markdown, start, end, "**", selected || "bold text");
   if (command === "italic") return wrapSelection(markdown, start, end, "*", selected || "italic text");
   if (command === "link") {
+    const existing = findMarkdownLinkAt(markdown, start, end);
+    if (existing) {
+      const label = window.prompt("Link text", existing.label)?.trim();
+      if (label === null || label === undefined) return replaceRange(markdown, start, end, selected, start, end);
+      const url = window.prompt("Link URL", existing.url)?.trim();
+      if (url === null || url === undefined) return replaceRange(markdown, start, end, selected, start, end);
+      const safeLabel = label || existing.label;
+      const safeUrl = url || existing.url;
+      return replaceRange(markdown, existing.start, existing.end, `[${safeLabel}](${safeUrl})`, existing.start + 1, existing.start + 1 + safeLabel.length);
+    }
     const label = selected || "link text";
-    const insertion = `[${label}](https://example.com)`;
+    const url = window.prompt("Link URL", "https://")?.trim();
+    if (url === null || url === undefined || !url) return replaceRange(markdown, start, end, selected, start, end);
+    const insertion = `[${label}](${url})`;
     return replaceRange(markdown, start, end, insertion, start + 1, start + 1 + label.length);
+  }
+  if (command === "unlink") {
+    const existing = findMarkdownLinkAt(markdown, start, end);
+    if (!existing) return replaceRange(markdown, start, end, selected, start, end);
+    return replaceRange(markdown, existing.start, existing.end, existing.label, existing.start, existing.start + existing.label.length);
   }
   if (command === "h2" || command === "h3") {
     const prefix = command === "h2" ? "## " : "### ";
@@ -3645,6 +3756,29 @@ function formatMarkdown(markdown: string, start: number, end: number, command: F
   const lines = (selectedLines || "List item").split("\n");
   const next = lines.map((line, index) => `${index + 1}. ${line.replace(/^\d+\.\s+/, "")}`).join("\n");
   return replaceRange(markdown, lineStart, lineEnd, next, lineStart + 3, lineStart + next.length);
+}
+
+function findMarkdownLinkAt(markdown: string, start: number, end: number) {
+  const pattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(markdown))) {
+    const linkStart = match.index;
+    const linkEnd = linkStart + match[0].length;
+    const labelStart = linkStart + 1;
+    const labelEnd = labelStart + match[1].length;
+    const cursorInsideLink = start >= linkStart && start <= linkEnd;
+    const selectionTouchesLink = end > linkStart && start < linkEnd;
+    const selectionInsideLabel = start >= labelStart && end <= labelEnd;
+    if (cursorInsideLink || selectionTouchesLink || selectionInsideLabel) {
+      return {
+        start: linkStart,
+        end: linkEnd,
+        label: match[1],
+        url: match[2]
+      };
+    }
+  }
+  return null;
 }
 
 function wrapSelection(markdown: string, start: number, end: number, marker: string, fallback: string) {
@@ -3670,13 +3804,39 @@ function applyRichFormat(command: FormatCommand) {
   if (command === "bold") document.execCommand("bold");
   else if (command === "italic") document.execCommand("italic");
   else if (command === "link") {
-    const url = window.prompt("Link URL");
-    if (url) document.execCommand("createLink", false, url);
+    const anchor = currentRichLink();
+    if (anchor) {
+      const label = window.prompt("Link text", anchor.textContent ?? "")?.trim();
+      if (label === undefined) return;
+      const url = window.prompt("Link URL", anchor.getAttribute("href") ?? "")?.trim();
+      if (url === undefined) return;
+      anchor.textContent = label || anchor.textContent || "link text";
+      if (url) anchor.setAttribute("href", url);
+    } else {
+      const url = window.prompt("Link URL", "https://")?.trim();
+      if (url) document.execCommand("createLink", false, url);
+    }
+  } else if (command === "unlink") {
+    const anchor = currentRichLink();
+    if (anchor) {
+      const text = document.createTextNode(anchor.textContent ?? "");
+      anchor.replaceWith(text);
+    } else {
+      document.execCommand("unlink");
+    }
   } else if (command === "h2") document.execCommand("formatBlock", false, "h2");
   else if (command === "h3") document.execCommand("formatBlock", false, "h3");
   else if (command === "bullet") document.execCommand("insertUnorderedList");
   else if (command === "numbered") document.execCommand("insertOrderedList");
   window.setTimeout(() => target?.dispatchEvent(new InputEvent("input", { bubbles: true })), 0);
+}
+
+function currentRichLink() {
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  if (!node) return null;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  return element?.closest("a") as HTMLAnchorElement | null;
 }
 
 function countWordsLocal(markdown: string) {
