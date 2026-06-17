@@ -135,7 +135,6 @@ function Workbench() {
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
   const projects = state?.projects ?? (state?.project ? [state.project] : []);
-  const controls = state?.settings.controls;
   const preferences = state?.preferences;
   const projectSettingsProject = projectSettingsProjectId
     ? projects.find((project) => project.id === projectSettingsProjectId) ?? null
@@ -477,10 +476,6 @@ function Workbench() {
     } else {
       setMessage(data.error ?? "Clear queue failed.");
     }
-  }
-
-  async function updateLengthTarget(lengthTargetWords: number) {
-    await updateProjectProfile({ defaultTargetWords: lengthTargetWords });
   }
 
   async function updateProjectProfile(profilePatch: ProjectProfilePatch, projectId = state?.project.id) {
@@ -1035,20 +1030,6 @@ function Workbench() {
                 <Upload className="size-3.5" /> Add
               </button>
             </div>
-            <label className="mt-2 flex items-center justify-between px-1 text-[11.5px] text-ink-muted">
-              <span>Target words</span>
-              <input
-                type="number"
-                min={300}
-                max={5000}
-                step={100}
-                value={state?.project.profile?.defaultTargetWords ?? controls?.lengthTargetWords ?? 1400}
-                onChange={(event) => updateLengthTarget(Number(event.target.value))}
-                disabled={Boolean(settingsBlockedReason)}
-                title={settingsBlockedReason ?? "Target article length"}
-                className="mono h-7 w-24 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink"
-              />
-            </label>
           </div>
         </aside>}
 
@@ -1434,7 +1415,7 @@ function ProjectSettingsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl">
-          <SettingsSection title="Project Identity">
+          <SettingsSection title="Project Settings">
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
@@ -1459,12 +1440,6 @@ function ProjectSettingsPanel({
                 className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
               />
             </label>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border border-line bg-background p-3 text-xs">
-              <MetricLine label="Region" value={profile.regionLabel} />
-              <MetricLine label="Industry" value={profile.industryLabel} />
-              <MetricLine label="Audience" value={profile.audienceLabel} />
-              <MetricLine label="Profile Version" value={`v${profile.profileVersion}`} />
-            </div>
             {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
           </SettingsSection>
         </div>
