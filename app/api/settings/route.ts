@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
 import { nowIso } from "@/lib/defaults";
-import type { AiProviderPreference, WorkspacePreferencesDocument } from "@/lib/types";
+import type { WorkspacePreferencesDocument } from "@/lib/types";
 
 type SettingsPatch = {
   preferences?: Partial<{
@@ -45,8 +45,12 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
   const account = patch.preferences?.account ?? {};
   const notifications = patch.preferences?.notifications ?? {};
   const aiProvider = patch.preferences?.aiProvider ?? {};
-  const operational = patch.preferences?.operational ?? {};
-  const providerPreference = normalizeProviderPreference(aiProvider.preference ?? preferences.aiProvider.preference);
+  const writerKeyEnabled = bool(aiProvider.writerKeyEnabled, preferences.aiProvider.writerKeyEnabled);
+  const researchKeyEnabled = bool(aiProvider.researchKeyEnabled, preferences.aiProvider.researchKeyEnabled);
+  const writerApiKey = cleanSecret(aiProvider.writerApiKey, preferences.aiProvider.writerApiKey);
+  const researchApiKey = cleanSecret(aiProvider.researchApiKey, preferences.aiProvider.researchApiKey);
+  const providerPreference = writerKeyEnabled || researchKeyEnabled ? "bring_your_own_key" : "platform_managed";
+  const notificationsEnabled = bool(notifications.enabled, preferences.notifications.enabled);
   return {
     ...preferences,
     account: {
@@ -57,21 +61,29 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
     },
     notifications: {
       ...preferences.notifications,
-      queueCompleted: bool(notifications.queueCompleted, preferences.notifications.queueCompleted),
-      queueCompletedWithWarnings: bool(notifications.queueCompletedWithWarnings, preferences.notifications.queueCompletedWithWarnings),
-      queueFailed: bool(notifications.queueFailed, preferences.notifications.queueFailed),
-      dailySummaryEmail: bool(notifications.dailySummaryEmail, preferences.notifications.dailySummaryEmail),
-      weeklySummaryEmail: bool(notifications.weeklySummaryEmail, preferences.notifications.weeklySummaryEmail)
+      enabled: notificationsEnabled,
+      queueCompleted: notificationsEnabled,
+      queueCompletedWithWarnings: notificationsEnabled,
+      queueFailed: notificationsEnabled,
+      dailySummaryEmail: false,
+      weeklySummaryEmail: false
     },
     aiProvider: {
+      ...preferences.aiProvider,
       preference: providerPreference,
-      personalKeyStatus: providerPreference === "bring_your_own_key" ? "placeholder" : "not_configured"
+      personalKeyStatus: providerPreference === "bring_your_own_key" ? "placeholder" : "not_configured",
+      writerKeyEnabled,
+      writerApiKey: writerKeyEnabled ? writerApiKey : "",
+      writerKeyStatus: writerKeyEnabled && writerApiKey ? "configured" : writerKeyEnabled ? "placeholder" : "not_configured",
+      researchKeyEnabled,
+      researchApiKey: researchKeyEnabled ? researchApiKey : "",
+      researchKeyStatus: researchKeyEnabled && researchApiKey ? "configured" : researchKeyEnabled ? "placeholder" : "not_configured"
     },
     operational: {
       ...preferences.operational,
-      autoStartQueueOnAdd: bool(operational.autoStartQueueOnAdd, preferences.operational.autoStartQueueOnAdd),
-      confirmBeforeDeletingArticles: bool(operational.confirmBeforeDeletingArticles, preferences.operational.confirmBeforeDeletingArticles),
-      confirmBeforeDeletingProjects: bool(operational.confirmBeforeDeletingProjects, preferences.operational.confirmBeforeDeletingProjects),
+      autoStartQueueOnAdd: false,
+      confirmBeforeDeletingArticles: true,
+      confirmBeforeDeletingProjects: true,
       defaultTargetWordCount: preferences.operational.defaultTargetWordCount,
       reuseProjectResearch: false,
       reuseTitleResearch: false
@@ -84,10 +96,10 @@ function cleanString(value: unknown, fallback: string) {
   return typeof value === "string" ? value.trim().slice(0, 180) : fallback;
 }
 
-function bool(value: unknown, fallback: boolean) {
-  return typeof value === "boolean" ? value : fallback;
+function cleanSecret(value: unknown, fallback: string) {
+  return typeof value === "string" ? value.trim().slice(0, 500) : fallback;
 }
 
-function normalizeProviderPreference(value: unknown): AiProviderPreference {
-  return value === "bring_your_own_key" ? "bring_your_own_key" : "platform_managed";
+function bool(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
 }

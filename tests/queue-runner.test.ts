@@ -463,7 +463,13 @@ describe("QueueRunner", () => {
       },
       aiProvider: {
         preference: "bring_your_own_key",
-        personalKeyStatus: "placeholder"
+        personalKeyStatus: "placeholder",
+        writerKeyEnabled: true,
+        writerKeyStatus: "configured",
+        writerApiKey: "writer-test-key",
+        researchKeyEnabled: true,
+        researchKeyStatus: "configured",
+        researchApiKey: "research-test-key"
       },
       operational: {
         ...preferences.operational,
@@ -481,6 +487,8 @@ describe("QueueRunner", () => {
     assert.equal(state.preferences.account.email, "sam@example.com");
     assert.equal(state.preferences.notifications.dailySummaryEmail, true);
     assert.equal(state.preferences.aiProvider.preference, "bring_your_own_key");
+    assert.equal(state.preferences.aiProvider.writerKeyEnabled, true);
+    assert.equal(state.preferences.aiProvider.researchKeyStatus, "configured");
     assert.equal(state.preferences.operational.autoStartQueueOnAdd, true);
     assert.equal(state.preferences.operational.defaultTargetWordCount, 1800);
   });

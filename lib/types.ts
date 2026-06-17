@@ -79,7 +79,7 @@ export interface SettingsDocument {
 }
 
 export type AiProviderPreference = "platform_managed" | "bring_your_own_key";
-export type PersonalApiKeyStatus = "not_configured" | "placeholder";
+export type PersonalApiKeyStatus = "not_configured" | "placeholder" | "configured";
 
 export interface WorkspacePreferencesDocument {
   organisationId?: string;
@@ -90,6 +90,7 @@ export interface WorkspacePreferencesDocument {
     workspaceName: string;
   };
   notifications: {
+    enabled: boolean;
     queueCompleted: boolean;
     queueCompletedWithWarnings: boolean;
     queueFailed: boolean;
@@ -99,6 +100,12 @@ export interface WorkspacePreferencesDocument {
   aiProvider: {
     preference: AiProviderPreference;
     personalKeyStatus: PersonalApiKeyStatus;
+    writerKeyEnabled: boolean;
+    writerKeyStatus: PersonalApiKeyStatus;
+    writerApiKey: string;
+    researchKeyEnabled: boolean;
+    researchKeyStatus: PersonalApiKeyStatus;
+    researchApiKey: string;
   };
   operational: {
     autoStartQueueOnAdd: boolean;

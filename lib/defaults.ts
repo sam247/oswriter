@@ -56,15 +56,22 @@ export function createDefaultWorkspacePreferences(input: Partial<WorkspacePrefer
       workspaceName: input.workspaceName ?? "Default Workspace"
     },
     notifications: {
+      enabled: true,
       queueCompleted: true,
       queueCompletedWithWarnings: true,
       queueFailed: true,
       dailySummaryEmail: false,
-      weeklySummaryEmail: true
+      weeklySummaryEmail: false
     },
     aiProvider: {
       preference: "platform_managed",
-      personalKeyStatus: "not_configured"
+      personalKeyStatus: "not_configured",
+      writerKeyEnabled: false,
+      writerKeyStatus: "not_configured",
+      writerApiKey: "",
+      researchKeyEnabled: false,
+      researchKeyStatus: "not_configured",
+      researchApiKey: ""
     },
     operational: {
       autoStartQueueOnAdd: false,
