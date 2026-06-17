@@ -6,6 +6,7 @@ const migration = readFileSync("db/migrations/0004_generation_telemetry.sql", "u
 const expansion = readFileSync("db/migrations/0005_telemetry_expansion.sql", "utf8");
 const profileMigration = readFileSync("db/migrations/0006_project_identity_profile.sql", "utf8");
 const planningMigration = readFileSync("db/migrations/0007_planning_diagnostics.sql", "utf8");
+const breadthMigration = readFileSync("db/migrations/0008_topic_breadth_diagnostics.sql", "utf8");
 
 test("generation telemetry migration creates article-level cost table", () => {
   const body = tableBody("generation_telemetry");
@@ -85,6 +86,21 @@ test("planning diagnostics migration adds planner observability columns", () => 
   }
   assert.match(planningMigration, /generation_telemetry_planning_idx/);
   assert.match(planningMigration, /metadata #>> '\{planningDiagnostics,expectedDepth\}'/);
+});
+
+test("topic breadth diagnostics migration adds concept coverage telemetry", () => {
+  for (const column of [
+    "research_concept_count integer not null default 0",
+    "research_concepts jsonb not null default '[]'::jsonb",
+    "planned_breadth_ratio numeric(6,2)",
+    "actual_breadth_coverage integer not null default 0",
+    "actual_breadth_coverage_percent numeric(6,2)",
+    "breadth_status text"
+  ]) {
+    assert.match(breadthMigration, new RegExp(escapeRegExp(column)));
+  }
+  assert.match(breadthMigration, /generation_telemetry_breadth_idx/);
+  assert.match(breadthMigration, /planningDiagnostics,researchConcepts/);
 });
 
 test("telemetry export status tracks Google Sheets delivery separately", () => {

@@ -1,9 +1,10 @@
-import { buildArticleGenerationPlan } from "@/lib/generation/plan";
+import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
 import { calculateProfileRelevanceScore } from "@/lib/project/profile";
 import type { ValidationInput, ValidationResult } from "@/lib/types";
 
 export function heuristicValidation({ markdown, research, controls, targetWords, profileSnapshot }: ValidationInput): ValidationResult {
   const warnings: string[] = [];
+  const advisories: string[] = [];
   const needsReviewReasons: string[] = [];
   const h2Count = (markdown.match(/^## /gm) ?? []).length;
   const hasFaq = /faq|frequently asked/i.test(markdown);
@@ -13,6 +14,7 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   const effectiveTargetWords = targetWords ?? plan?.targetWords ?? null;
   const minimumWords = effectiveTargetWords ? Math.round(effectiveTargetWords * 0.8) : 650;
   const expectedH2Count = plan?.h2SectionCount ?? 4;
+  const planningDiagnostics = plan ? buildPlanningDiagnostics(plan, markdown, research) : null;
 
   if (research.warnings.length) {
     warnings.push(...research.warnings);
@@ -34,6 +36,13 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
     warnings.push(effectiveTargetWords ? `Article is below 80% of the ${effectiveTargetWords}-word target.` : "Article is shorter than expected.");
     needsReviewReasons.push("Completeness needs review.");
   }
+  if (
+    planningDiagnostics
+    && planningDiagnostics.researchConceptCount >= 4
+    && planningDiagnostics.actualBreadthCoveragePercent < 60
+  ) {
+    advisories.push("Topic breadth may be underrepresented.");
+  }
 
   const qualityScore = Math.max(35, 100 - warnings.length * 10 - (research.confidence < 60 ? 15 : 0));
   const faqScore = hasFaq ? 80 : 45;
@@ -43,6 +52,7 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   return {
     pass: warnings.length === 0,
     warnings: [...new Set(warnings)],
+    advisories: [...new Set(advisories)],
     needsReviewReasons: [...new Set(needsReviewReasons)],
     qualityScore,
     sectionScores: {

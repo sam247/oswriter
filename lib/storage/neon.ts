@@ -1012,6 +1012,8 @@ export class NeonStorageProvider implements StorageProvider {
         target_words, actual_words, planned_sections, actual_sections, finish_reason, review_status,
         planned_h2_count, planned_h3_count, expected_depth, actual_h2_count, actual_h3_count, actual_depth,
         h2_achievement_percent, h3_achievement_percent, target_achievement_percent, planner_outcome,
+        research_concept_count, research_concepts, planned_breadth_ratio, actual_breadth_coverage,
+        actual_breadth_coverage_percent, breadth_status,
         profile_version, region, industry, audience, profile_relevance_score, region_awareness_active,
         industry_awareness_active, audience_awareness_active, research_duration_ms, sources_discovered, sources_accepted, sources_rejected, findings_extracted,
         useful_facts_extracted, citations_generated, input_tokens, output_tokens, research_tokens, generation_tokens,
@@ -1024,7 +1026,9 @@ export class NeonStorageProvider implements StorageProvider {
         ${next.finishReason ?? null}, ${next.reviewStatus}, ${next.plannedH2Count ?? 0}, ${next.plannedH3Count ?? 0},
         ${next.expectedDepth ?? null}, ${next.actualH2Count ?? 0}, ${next.actualH3Count ?? 0}, ${next.actualDepth ?? null},
         ${next.h2AchievementPercent ?? null}, ${next.h3AchievementPercent ?? null}, ${next.targetAchievementPercent ?? null},
-        ${next.plannerOutcome ?? null}, ${next.profileVersion ?? 0}, ${next.region ?? null},
+        ${next.plannerOutcome ?? null}, ${next.researchConceptCount ?? 0}, ${JSON.stringify(next.researchConcepts ?? [])}::jsonb,
+        ${next.plannedBreadthRatio ?? null}, ${next.actualBreadthCoverage ?? 0}, ${next.actualBreadthCoveragePercent ?? null},
+        ${next.breadthStatus ?? null}, ${next.profileVersion ?? 0}, ${next.region ?? null},
         ${next.industry ?? null}, ${next.audience ?? null}, ${next.profileRelevanceScore ?? null},
         ${Boolean(next.regionAwarenessActive)}, ${Boolean(next.industryAwarenessActive)}, ${Boolean(next.audienceAwarenessActive)},
         ${next.researchDurationMs ?? null}, ${next.sourcesDiscovered},
@@ -1052,6 +1056,12 @@ export class NeonStorageProvider implements StorageProvider {
         h3_achievement_percent = excluded.h3_achievement_percent,
         target_achievement_percent = excluded.target_achievement_percent,
         planner_outcome = excluded.planner_outcome,
+        research_concept_count = excluded.research_concept_count,
+        research_concepts = excluded.research_concepts,
+        planned_breadth_ratio = excluded.planned_breadth_ratio,
+        actual_breadth_coverage = excluded.actual_breadth_coverage,
+        actual_breadth_coverage_percent = excluded.actual_breadth_coverage_percent,
+        breadth_status = excluded.breadth_status,
         finish_reason = excluded.finish_reason,
         review_status = excluded.review_status,
         profile_version = excluded.profile_version,
@@ -1335,7 +1345,9 @@ function withResearchDefaults(research: ResearchPack, tenant: TenantSeed, projec
     id: research.id ?? researchId(projectId, research.articleId),
     organisationId: research.organisationId ?? tenant.organisationId,
     projectId: research.projectId ?? projectId,
-    runNumber: research.runNumber ?? 0
+    runNumber: research.runNumber ?? 0,
+    researchConcepts: research.researchConcepts ?? [],
+    researchConceptCount: research.researchConceptCount ?? research.researchConcepts?.length ?? 0
   };
 }
 
@@ -1371,6 +1383,12 @@ function withGenerationTelemetryDefaults(telemetry: GenerationTelemetryDocument,
     h3AchievementPercent: telemetry.h3AchievementPercent ?? percentage(actualH3Count, plannedH3Count),
     targetAchievementPercent: telemetry.targetAchievementPercent ?? percentage(actualWords, targetWords),
     plannerOutcome: telemetry.plannerOutcome ?? "matched_plan",
+    researchConceptCount: telemetry.researchConceptCount ?? telemetry.researchConcepts?.length ?? 0,
+    researchConcepts: telemetry.researchConcepts ?? [],
+    plannedBreadthRatio: telemetry.plannedBreadthRatio ?? ratio(plannedH2Count, telemetry.researchConceptCount ?? telemetry.researchConcepts?.length ?? 0),
+    actualBreadthCoverage: telemetry.actualBreadthCoverage ?? 0,
+    actualBreadthCoveragePercent: telemetry.actualBreadthCoveragePercent ?? percentage(telemetry.actualBreadthCoverage ?? 0, telemetry.researchConceptCount ?? telemetry.researchConcepts?.length ?? 0),
+    breadthStatus: telemetry.breadthStatus ?? "sufficient",
     finishReason: telemetry.finishReason ?? null,
     reviewStatus: telemetry.reviewStatus ?? "generated",
     profileVersion: telemetry.profileVersion ?? 0,
@@ -1663,6 +1681,12 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
     h3AchievementPercent: nullableNumber(row.h3_achievement_percent) ?? undefined,
     targetAchievementPercent: nullableNumber(row.target_achievement_percent) ?? undefined,
     plannerOutcome: nullableString(row.planner_outcome),
+    researchConceptCount: Number(row.research_concept_count ?? 0),
+    researchConcepts: stringArray(row.research_concepts),
+    plannedBreadthRatio: nullableNumber(row.planned_breadth_ratio) ?? undefined,
+    actualBreadthCoverage: Number(row.actual_breadth_coverage ?? 0),
+    actualBreadthCoveragePercent: nullableNumber(row.actual_breadth_coverage_percent) ?? undefined,
+    breadthStatus: nullableString(row.breadth_status),
     finishReason: nullableString(row.finish_reason),
     reviewStatus: String(row.review_status ?? "generated") as GenerationTelemetryDocument["reviewStatus"],
     profileVersion: Number(row.profile_version ?? 0),
@@ -1725,6 +1749,11 @@ function nullableNumber(value: unknown) {
 function percentage(actual: number, planned: number) {
   if (planned <= 0) return actual > 0 ? 200 : 100;
   return Math.round((actual / planned) * 1000) / 10;
+}
+
+function ratio(actual: number, planned: number) {
+  if (planned <= 0) return actual > 0 ? 1 : 0;
+  return Math.round((actual / planned) * 100) / 100;
 }
 
 function dateIso(value: unknown) {

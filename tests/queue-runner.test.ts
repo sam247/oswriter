@@ -378,6 +378,12 @@ describe("QueueRunner", () => {
       assert.ok((telemetry.h3AchievementPercent ?? 0) >= 0);
       assert.ok((telemetry.targetAchievementPercent ?? 0) > 0);
       assert.ok(telemetry.plannerOutcome);
+      assert.ok((telemetry.researchConceptCount ?? 0) >= 0);
+      assert.ok(Array.isArray(telemetry.researchConcepts));
+      assert.ok((telemetry.plannedBreadthRatio ?? 0) >= 0);
+      assert.ok((telemetry.actualBreadthCoverage ?? 0) >= 0);
+      assert.ok((telemetry.actualBreadthCoveragePercent ?? 0) >= 0);
+      assert.ok(telemetry.breadthStatus);
       assert.equal(telemetry.finishReason, "stop");
       assert.ok(["generated", "needs_review"].includes(telemetry.reviewStatus));
       assert.equal(telemetry.sourcesDiscovered, telemetry.sourcesAccepted + telemetry.sourcesRejected);

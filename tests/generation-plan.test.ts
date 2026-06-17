@@ -51,6 +51,26 @@ Useful detail.`);
     assert.ok(["under_depth", "under_target"].includes(diagnostics.plannerOutcome));
   });
 
+  it("diagnoses topic breadth planning and coverage", () => {
+    const plan = buildArticleGenerationPlan({ ...DEFAULT_CONTROLS, lengthTargetWords: 1400 });
+    const research = {
+      researchConcepts: ["Basic Authentication", "API Keys", "Sessions", "JWT", "OAuth 2.0", "OpenID Connect", "Mutual TLS", "Signed Requests"],
+      researchConceptCount: 8
+    };
+    const diagnostics = buildPlanningDiagnostics(plan, `# REST API Authentication Methods
+
+## Basic Authentication
+Basic auth details.
+
+## API Keys
+API key details.`, research);
+
+    assert.equal(diagnostics.researchConceptCount, 8);
+    assert.equal(diagnostics.actualBreadthCoverage, 2);
+    assert.equal(diagnostics.actualBreadthCoveragePercent, 25);
+    assert.equal(diagnostics.breadthStatus, plan.h2SectionCount < 6 ? "underplanned" : "undercovered");
+  });
+
   it("flags outputs that are materially under the requested target", () => {
     const validation = heuristicValidation({
       title: "Soil Bearing Capacity Explained",
@@ -75,7 +95,46 @@ Short section.`,
     assert.ok(validation.warnings.some((warning) => warning.includes("3000-word target")));
     assert.ok(validation.needsReviewReasons.includes("Completeness needs review."));
   });
+
+  it("adds breadth advisories without reducing quality score", () => {
+    const base = heuristicValidation({
+      title: "REST API Authentication Methods",
+      markdown: broadMarkdown(),
+      research: researchPack(),
+      controls: { ...DEFAULT_CONTROLS, lengthTargetWords: 1200 }
+    });
+    const broadResearch = {
+      ...researchPack(),
+      researchConcepts: ["Basic Authentication", "API Keys", "Sessions", "JWT", "OAuth 2.0", "OpenID Connect", "Mutual TLS", "Signed Requests"],
+      researchConceptCount: 8
+    };
+    const withBreadthAdvisory = heuristicValidation({
+      title: "REST API Authentication Methods",
+      markdown: broadMarkdown(),
+      research: broadResearch,
+      controls: { ...DEFAULT_CONTROLS, lengthTargetWords: 1200 }
+    });
+
+    assert.equal(withBreadthAdvisory.qualityScore, base.qualityScore);
+    assert.ok(withBreadthAdvisory.advisories?.includes("Topic breadth may be underrepresented."));
+    assert.equal(withBreadthAdvisory.needsReviewReasons.includes("Topic breadth may be underrepresented."), false);
+  });
 });
+
+function broadMarkdown() {
+  return `# REST API Authentication Methods
+
+## Basic Authentication
+Basic auth details for APIs.
+
+## API Keys
+API key details for APIs.
+
+## FAQ
+
+### What should teams compare first?
+Compare implementation needs first.`;
+}
 
 function researchPack(): ResearchPack {
   return {

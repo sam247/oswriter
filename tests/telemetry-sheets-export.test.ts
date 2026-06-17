@@ -41,7 +41,13 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(articleRow?.[14], 8);
     assert.equal(articleRow?.[17], "deep");
     assert.equal(articleRow?.[19], "under_depth");
-    assert.equal(articleRow?.[24], 74);
+    assert.equal(articleRow?.[20], 8);
+    assert.equal(articleRow?.[21], "Basic Authentication, API Keys, JWT");
+    assert.equal(articleRow?.[22], 0.75);
+    assert.equal(articleRow?.[23], 3);
+    assert.equal(articleRow?.[24], 37.5);
+    assert.equal(articleRow?.[25], "undercovered");
+    assert.equal(articleRow?.[30], 74);
     assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 5);
     assert.equal((await store.getTelemetryExportStatus("article:default-project:article-telemetry"))?.status, "exported");
     assert.equal((await store.getTelemetryExportStatus("anomaly:default-project:article-telemetry:under-target-output"))?.status, "exported");
@@ -113,6 +119,12 @@ function sampleTelemetry(overrides: Partial<GenerationTelemetryDocument> = {}): 
     h3AchievementPercent: 37.5,
     targetAchievementPercent: 70,
     plannerOutcome: "under_depth",
+    researchConceptCount: 8,
+    researchConcepts: ["Basic Authentication", "API Keys", "JWT"],
+    plannedBreadthRatio: 0.75,
+    actualBreadthCoverage: 3,
+    actualBreadthCoveragePercent: 37.5,
+    breadthStatus: "undercovered",
     finishReason: "stop",
     reviewStatus: "generated",
     profileVersion: 1,

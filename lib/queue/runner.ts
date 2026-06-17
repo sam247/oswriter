@@ -379,7 +379,7 @@ export class QueueRunner {
       await this.store.saveJob(job);
       const needsReview = [...research.warnings];
       const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords, profileSnapshot });
-      const planningDiagnostics = buildPlanningDiagnostics(plan, markdown);
+      const planningDiagnostics = buildPlanningDiagnostics(plan, markdown, research);
       needsReview.push(...validation.needsReviewReasons);
       const uniqueReasons = [...new Set(needsReview)];
       const finalStatus = statusFromReviewReasons(uniqueReasons);
@@ -456,7 +456,7 @@ export class QueueRunner {
     const inputTokens = generation.inputTokens ?? 0;
     const outputTokens = generation.outputTokens ?? 0;
     const findingsExtracted = research.usefulFacts.length + research.rejectedFacts.length + research.questionsFound.length + research.headingsFound.length;
-    const planningDiagnostics = article.planningDiagnostics ?? buildPlanningDiagnostics(plan, article.markdown);
+    const planningDiagnostics = article.planningDiagnostics ?? buildPlanningDiagnostics(plan, article.markdown, research);
     const telemetry: GenerationTelemetryDocument = {
       projectId: job.projectId,
       articleId: job.articleId,
@@ -477,6 +477,12 @@ export class QueueRunner {
       h3AchievementPercent: planningDiagnostics.h3AchievementPercent,
       targetAchievementPercent: planningDiagnostics.targetAchievementPercent,
       plannerOutcome: planningDiagnostics.plannerOutcome,
+      researchConceptCount: planningDiagnostics.researchConceptCount,
+      researchConcepts: planningDiagnostics.researchConcepts,
+      plannedBreadthRatio: planningDiagnostics.plannedBreadthRatio,
+      actualBreadthCoverage: planningDiagnostics.actualBreadthCoverage,
+      actualBreadthCoveragePercent: planningDiagnostics.actualBreadthCoveragePercent,
+      breadthStatus: planningDiagnostics.breadthStatus,
       finishReason: generation.finishReason ?? null,
       reviewStatus: article.status,
       profileVersion: article.profileSnapshot?.profileVersion ?? 0,

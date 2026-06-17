@@ -216,6 +216,8 @@ export interface ResearchPack {
   rejectedFacts: string[];
   questionsFound: string[];
   headingsFound: string[];
+  researchConcepts?: string[];
+  researchConceptCount?: number;
   authorityScore: number;
   relevanceScore: number;
   confidence: number;
@@ -286,6 +288,7 @@ export interface SourceCitation {
 export interface ValidationResult {
   pass: boolean;
   warnings: string[];
+  advisories?: string[];
   needsReviewReasons: string[];
   qualityScore: number;
   sectionScores: Record<string, number>;
@@ -354,6 +357,12 @@ export interface GenerationTelemetryDocument {
   h3AchievementPercent?: number;
   targetAchievementPercent?: number;
   plannerOutcome?: import("@/lib/generation/plan").PlannerOutcome | string | null;
+  researchConceptCount?: number;
+  researchConcepts?: string[];
+  plannedBreadthRatio?: number;
+  actualBreadthCoverage?: number;
+  actualBreadthCoveragePercent?: number;
+  breadthStatus?: import("@/lib/generation/plan").BreadthStatus | string | null;
   finishReason?: string | null;
   reviewStatus: JobStatus;
   profileVersion?: number | null;

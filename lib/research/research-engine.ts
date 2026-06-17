@@ -13,6 +13,24 @@ const EXCLUDE_DOMAINS = [
   "definitions.net"
 ];
 
+const KNOWN_CONCEPT_PATTERNS: Array<[RegExp, string]> = [
+  [/\bbasic authentication\b|\bbasic auth\b/i, "Basic Authentication"],
+  [/\bapi keys?\b/i, "API Keys"],
+  [/\bsessions?\b|\bsession cookies?\b/i, "Sessions"],
+  [/\bjwts?\b|\bjson web tokens?\b/i, "JWT"],
+  [/\boauth\s*2(?:\.0)?\b|\boauth\b/i, "OAuth 2.0"],
+  [/\bopenid connect\b|\boidc\b/i, "OpenID Connect"],
+  [/\bmutual tls\b|\bmtls\b|\bclient certificates?\b/i, "Mutual TLS"],
+  [/\bsigned requests?\b|\brequest signing\b|\bhmac\b/i, "Signed Requests"],
+  [/\bbearer tokens?\b/i, "Bearer Tokens"],
+  [/\bsaml\b/i, "SAML"],
+  [/\bsingle sign-?on\b|\bsso\b/i, "Single Sign-On"],
+  [/\bwebhooks?\b/i, "Webhooks"],
+  [/\brate limits?\b|\bratelimits?\b/i, "Rate Limits"],
+  [/\bpermissions?\b|\bscopes?\b/i, "Permissions And Scopes"],
+  [/\brefresh tokens?\b/i, "Refresh Tokens"]
+];
+
 export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null): Promise<ResearchPack> {
   const started = Date.now();
   const queries = buildQueryVariants(title, profileSnapshot);
@@ -64,6 +82,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const usefulFacts = usefulFactSources.map((item) => item.fact);
   const questionsFound = extractQuestions(accepted, title);
   const headingsFound = extractHeadings(accepted);
+  const researchConcepts = extractResearchConcepts(title, accepted, usefulFacts);
   const authorityScore = average(accepted.map((source) => source.authorityScore));
   const relevanceScore = average(accepted.map((source) => source.relevanceScore));
   const confidence = Math.round((authorityScore * 0.45) + (relevanceScore * 0.35) + (Math.min(accepted.length, 8) / 8 * 20));
@@ -86,6 +105,8 @@ export async function runResearch(title: string, articleId: string, search: Sear
     rejectedFacts: rejected.slice(0, 8).map((source) => `${source.title}: ${source.rejectionReason ?? "low relevance or authority"}`),
     questionsFound,
     headingsFound,
+    researchConcepts,
+    researchConceptCount: researchConcepts.length,
     authorityScore,
     relevanceScore,
     confidence,
@@ -99,6 +120,79 @@ export async function runResearch(title: string, articleId: string, search: Sear
     profileRelevanceScore,
     createdAt: nowIso()
   };
+}
+
+export function extractResearchConcepts(title: string, sources: ResearchPack["sources"], usefulFacts: string[] = []) {
+  const text = [
+    title,
+    ...sources.flatMap((source) => [source.title, source.summary, ...(source.highlights ?? []), source.text]),
+    ...usefulFacts
+  ].filter(Boolean).join(" ");
+  const candidates = new Map<string, { label: string; score: number }>();
+
+  for (const [pattern, label] of KNOWN_CONCEPT_PATTERNS) {
+    if (pattern.test(text)) addConcept(candidates, label, 8);
+  }
+
+  for (const source of sources) {
+    for (const label of conceptCandidatesFromText([source.title, source.summary, ...(source.highlights ?? [])].filter(Boolean).join(" "))) {
+      addConcept(candidates, label, source.title.toLowerCase().includes(label.toLowerCase()) ? 4 : 2);
+    }
+  }
+
+  for (const label of conceptCandidatesFromText(usefulFacts.join(" "))) {
+    addConcept(candidates, label, 1);
+  }
+
+  return [...candidates.values()]
+    .filter((item) => usefulConcept(item.label, title))
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label))
+    .map((item) => item.label)
+    .slice(0, 20);
+}
+
+function conceptCandidatesFromText(text: string) {
+  const candidates = new Set<string>();
+  for (const match of text.matchAll(/\b(?:[A-Z][a-z0-9]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z0-9]+|[A-Z]{2,}|and|or|2\.0)){0,4}\b/g)) {
+    candidates.add(cleanConceptLabel(match[0]));
+  }
+  for (const match of text.matchAll(/\b(?:including|such as|like|covers?|methods? include)\s+([^.;:]{8,180})/gi)) {
+    for (const part of match[1].split(/,|\bor\b|\band\b/gi)) {
+      candidates.add(cleanConceptLabel(part));
+    }
+  }
+  return [...candidates].filter(Boolean);
+}
+
+function addConcept(candidates: Map<string, { label: string; score: number }>, label: string, score: number) {
+  const clean = cleanConceptLabel(label);
+  if (!clean) return;
+  const key = conceptKey(clean);
+  const existing = candidates.get(key);
+  candidates.set(key, { label: existing?.label ?? clean, score: (existing?.score ?? 0) + score });
+}
+
+function cleanConceptLabel(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^[^a-z0-9]+|[^a-z0-9)]+$/gi, "")
+    .trim()
+    .replace(/\bApi\b/g, "API")
+    .replace(/\bJwt\b/g, "JWT")
+    .replace(/\bOauth\b/g, "OAuth")
+    .replace(/\bTls\b/g, "TLS");
+}
+
+function conceptKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function usefulConcept(label: string, title: string) {
+  const key = conceptKey(label);
+  if (key.length < 3 || key.length > 48) return false;
+  if (conceptKey(title) === key) return false;
+  if (/^(the|this|that|these|those|guide|article|summary|overview|introduction|common|best|key|what|why|how|using|use|uses|used|when|where|which)$/i.test(key)) return false;
+  return /[a-z]{3,}|api|jwt|tls|sso|saml|oidc/i.test(label);
 }
 
 export function extractFacts(sources: ResearchPack["sources"]): ResearchFactSource[] {

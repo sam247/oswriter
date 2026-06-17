@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
-import { extractFacts, runResearch } from "@/lib/research/research-engine";
+import { extractFacts, extractResearchConcepts, runResearch } from "@/lib/research/research-engine";
 import type { ResearchSource, SearchAdapter } from "@/lib/types";
 
 test("extractFacts decomposes long summaries into attributed useful facts", () => {
@@ -69,6 +69,27 @@ test("runResearch applies lightweight profile source bias without stuffing queri
   assert.ok(queries.every((query) => !/technical professionals/i.test(query)));
   assert.ok(queries.every((query) => !/technical professionals|construction technical/i.test(query)));
   assert.ok((research.profileRelevanceScore ?? 0) > 60);
+});
+
+test("extractResearchConcepts captures lightweight topic breadth from research text", () => {
+  const concepts = extractResearchConcepts("REST API Authentication Methods", [
+    {
+      id: "src_1",
+      title: "REST API authentication guide",
+      url: "https://example.com/api-auth",
+      domain: "example.com",
+      summary: "Common REST API authentication methods include Basic Authentication, API keys, sessions, JWT, OAuth 2.0, OpenID Connect, mutual TLS, and signed requests.",
+      highlights: ["Bearer tokens, refresh tokens, permissions and scopes are important for API authentication design."],
+      authorityScore: 90,
+      relevanceScore: 94,
+      accepted: true
+    }
+  ]);
+
+  for (const expected of ["Basic Authentication", "API Keys", "Sessions", "JWT", "OAuth 2.0", "OpenID Connect", "Mutual TLS", "Signed Requests"]) {
+    assert.ok(concepts.includes(expected), `${expected} should be extracted`);
+  }
+  assert.ok(concepts.length <= 20);
 });
 
 test("runResearch preserves accepted and rejected source status while populating useful facts", async () => {

@@ -1,10 +1,11 @@
 import { clampTargetWords } from "@/lib/project/profile";
-import type { ContentControls, ProjectProfileSnapshot } from "@/lib/types";
+import type { ContentControls, ProjectProfileSnapshot, ResearchPack } from "@/lib/types";
 
 const MIN_OUTPUT_TOKENS = 3200;
 const MAX_OUTPUT_TOKENS = 8000;
 export type ExpectedDepth = "light" | "standard" | "deep" | "reference";
 export type PlannerOutcome = "matched_plan" | "under_depth" | "over_depth" | "under_target" | "over_target";
+export type BreadthStatus = "sufficient" | "underplanned" | "undercovered";
 
 export interface ArticleGenerationPlan {
   targetWords: number;
@@ -28,6 +29,12 @@ export interface PlanningDiagnostics {
   h3AchievementPercent: number;
   targetAchievementPercent: number;
   plannerOutcome: PlannerOutcome;
+  researchConceptCount: number;
+  researchConcepts: string[];
+  plannedBreadthRatio: number;
+  actualBreadthCoverage: number;
+  actualBreadthCoveragePercent: number;
+  breadthStatus: BreadthStatus;
 }
 
 export function buildArticleGenerationPlan(controls: ContentControls, profileSnapshot?: ProjectProfileSnapshot | null): ArticleGenerationPlan {
@@ -48,7 +55,7 @@ export function buildArticleGenerationPlan(controls: ContentControls, profileSna
   };
 }
 
-export function buildPlanningDiagnostics(plan: ArticleGenerationPlan, markdown: string): PlanningDiagnostics {
+export function buildPlanningDiagnostics(plan: ArticleGenerationPlan, markdown: string, research?: Pick<ResearchPack, "researchConcepts" | "researchConceptCount"> | null): PlanningDiagnostics {
   const actualH2Count = countMatches(markdown, /^##\s+/gm);
   const actualH3Count = countMatches(markdown, /^###\s+/gm);
   const actualWords = countWords(markdown);
@@ -56,6 +63,11 @@ export function buildPlanningDiagnostics(plan: ArticleGenerationPlan, markdown: 
   const h3AchievementPercent = plan.h3SectionCount === 0 ? (actualH3Count === 0 ? 100 : 200) : percent(actualH3Count, plan.h3SectionCount);
   const targetAchievementPercent = percent(actualWords, plan.targetWords);
   const actualDepth = actualDepthFromStructure(actualH2Count, actualH3Count);
+  const researchConcepts = (research?.researchConcepts ?? []).slice(0, 20);
+  const researchConceptCount = research?.researchConceptCount ?? researchConcepts.length;
+  const plannedBreadthRatio = ratio(plan.h2SectionCount, researchConceptCount);
+  const actualBreadthCoverage = countCoveredConcepts(markdown, researchConcepts);
+  const actualBreadthCoveragePercent = percent(actualBreadthCoverage, researchConceptCount);
   return {
     plannedH2Count: plan.h2SectionCount,
     plannedH3Count: plan.h3SectionCount,
@@ -66,7 +78,13 @@ export function buildPlanningDiagnostics(plan: ArticleGenerationPlan, markdown: 
     h2AchievementPercent,
     h3AchievementPercent,
     targetAchievementPercent,
-    plannerOutcome: plannerOutcome({ h2AchievementPercent, h3AchievementPercent, targetAchievementPercent })
+    plannerOutcome: plannerOutcome({ h2AchievementPercent, h3AchievementPercent, targetAchievementPercent }),
+    researchConceptCount,
+    researchConcepts,
+    plannedBreadthRatio,
+    actualBreadthCoverage,
+    actualBreadthCoveragePercent,
+    breadthStatus: breadthStatus({ researchConceptCount, plannedBreadthRatio, actualBreadthCoveragePercent })
   };
 }
 
@@ -132,6 +150,44 @@ function countMatches(text: string, pattern: RegExp) {
 function percent(actual: number, planned: number) {
   if (planned <= 0) return actual > 0 ? 200 : 100;
   return Math.round((actual / planned) * 1000) / 10;
+}
+
+function ratio(actual: number, planned: number) {
+  if (planned <= 0) return actual > 0 ? 1 : 0;
+  return Math.round((actual / planned) * 100) / 100;
+}
+
+function countCoveredConcepts(markdown: string, concepts: string[]) {
+  const text = normalizeForMatch(markdown);
+  return concepts.filter((concept) => conceptCovered(text, concept)).length;
+}
+
+function conceptCovered(normalizedMarkdown: string, concept: string) {
+  const normalizedConcept = normalizeForMatch(concept);
+  if (!normalizedConcept) return false;
+  if (normalizedMarkdown.includes(normalizedConcept)) return true;
+  const tokens = normalizedConcept.split(" ").filter((token) => token.length > 2);
+  if (tokens.length <= 1) return false;
+  return tokens.every((token) => normalizedMarkdown.includes(token));
+}
+
+function normalizeForMatch(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function breadthStatus({
+  researchConceptCount,
+  plannedBreadthRatio,
+  actualBreadthCoveragePercent
+}: {
+  researchConceptCount: number;
+  plannedBreadthRatio: number;
+  actualBreadthCoveragePercent: number;
+}): BreadthStatus {
+  if (researchConceptCount < 4) return "sufficient";
+  if (plannedBreadthRatio < 0.75) return "underplanned";
+  if (actualBreadthCoveragePercent < 60) return "undercovered";
+  return "sufficient";
 }
 
 function clamp(value: number, min: number, max: number) {

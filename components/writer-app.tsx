@@ -3311,9 +3311,22 @@ function ValidationPanel({
             <MetricLine label="Actual depth" value={titleCase(planning.actualDepth)} />
             <MetricLine label="Target achieved" value={`${formatNumber(planning.targetAchievementPercent)}%`} />
             <MetricLine label="Outcome" value={titleCase(planning.plannerOutcome)} />
+            <MetricLine label="Research concepts" value={formatNumber(planning.researchConceptCount ?? 0)} />
+            <MetricLine label="Breadth ratio" value={(planning.plannedBreadthRatio ?? 0).toFixed(2)} />
+            <MetricLine label="Concepts covered" value={formatNumber(planning.actualBreadthCoverage ?? 0)} />
+            <MetricLine label="Breadth covered" value={`${formatNumber(planning.actualBreadthCoveragePercent ?? 0)}%`} />
+            <MetricLine label="Breadth status" value={titleCase(planning.breadthStatus ?? "sufficient")} />
           </div>
         </div>
       )}
+      {article.validation.advisories?.length ? (
+        <div className="rounded-md border border-line bg-surface-1 p-3">
+          <PanelTitle title="Advisories" />
+          <ul className="mt-2 space-y-2 text-xs text-ink-muted">
+            {article.validation.advisories.map((advisory) => <li key={advisory} className="rounded-md bg-surface-2 p-2">{advisory}</li>)}
+          </ul>
+        </div>
+      ) : null}
       <div
         ref={warningsRef}
         className={cn(
