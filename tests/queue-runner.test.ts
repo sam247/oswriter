@@ -235,6 +235,47 @@ describe("QueueRunner", () => {
     assert.equal(state.articles.length, 1);
   });
 
+  it("continues a recovered current article while stop-after-current is active", async () => {
+    const { store, runner } = setup();
+    const [first, second] = await runner.addTitles(["Recovered current", "Do not start after recovery"]);
+    await runner.resumeQueue();
+
+    const researched = await runner.processNext(undefined, { source: "manual" });
+    assert.equal(researched.job?.id, first.id);
+    assert.equal(researched.job?.pipeline.find((step) => step.stage === "research")?.status, "done");
+
+    await runner.stopAfterCurrent();
+    await store.saveJob({
+      ...researched.job!,
+      status: "queued",
+      updatedAt: new Date(Date.now() - 60 * 60_000).toISOString()
+    });
+
+    await drainQueue(runner, 1000, false);
+    const state = await store.getState();
+    assert.equal(state.queueControl.mode, "stopped");
+    assert.ok(["generated", "needs_review"].includes(state.jobs.find((job) => job.id === first.id)?.status ?? ""));
+    assert.equal(state.jobs.find((job) => job.id === second.id)?.status, "queued");
+    assert.equal(state.articles.length, 1);
+  });
+
+  it("emergency stop fails the current resumable job and stops the queue", async () => {
+    const { store, runner } = setup();
+    const [first, second] = await runner.addTitles(["Emergency current", "Still queued"]);
+    await runner.resumeQueue();
+    const researched = await runner.processNext(undefined, { source: "manual" });
+    await store.saveJob({ ...researched.job!, status: "queued" });
+
+    const stopped = await runner.emergencyStop();
+    const state = await store.getState();
+
+    assert.equal(stopped?.id, first.id);
+    assert.equal(state.queueControl.mode, "stopped");
+    assert.match(state.queueControl.reason ?? "", /Emergency stopped/i);
+    assert.equal(state.jobs.find((job) => job.id === first.id)?.status, "failed");
+    assert.equal(state.jobs.find((job) => job.id === second.id)?.status, "queued");
+  });
+
   it("protects queue ownership while a job is processing", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Owned processing job"]);

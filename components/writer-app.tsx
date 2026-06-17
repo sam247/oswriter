@@ -176,7 +176,9 @@ function Workbench() {
   const settingsBlockedReason = settingsMutationBlockReason(displayJobs);
   const hasRunnableQueueWork = stats.queued > 0 || stats.processing > 0;
   const hasRecoverableQueueWork = displayJobs.some((job) => isRecoverableProcessingJob(job, state?.settings.staleProcessingMinutes ?? 15, tick));
-  const generateButton = describeGenerateButton(stats, queueMetrics, busy || running || state?.queueControl.mode === "stop_after_current");
+  const resumableQueuedJob = useMemo(() => displayJobs.find(isResumableQueuedJob), [displayJobs]);
+  const generateBlocked = busy || running || (state?.queueControl.mode === "stop_after_current" && !resumableQueuedJob);
+  const generateButton = describeGenerateButton(stats, queueMetrics, generateBlocked, state?.queueControl.mode ?? "stopped", Boolean(resumableQueuedJob));
 
   function applyServerState(next: AppState, source: string) {
     recordStateTrace(next, traceJobIdRef.current, source);
@@ -349,7 +351,8 @@ function Workbench() {
   async function processNext() {
     setBusy(true);
     setMessage("Processing next queued title...");
-    if (state?.queueControl.mode !== "running") {
+    const canResumeCurrentUnderStop = state?.queueControl.mode === "stop_after_current" && Boolean(resumableQueuedJob);
+    if (state?.queueControl.mode !== "running" && !canResumeCurrentUnderStop) {
       const controlRes = await fetch("/api/queue/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -417,6 +420,25 @@ function Workbench() {
   async function stopRun() {
     setMessage("Queue will stop after the current article.");
     await setQueueControl("stop_after_current", "Stop after current article requested.");
+  }
+
+  async function emergencyStopRun() {
+    setMessage("Emergency stop requested...");
+    stopRequested.current = true;
+    activeRequest.current?.abort();
+    setRunning(false);
+    setBusy(true);
+    const res = await fetch("/api/queue/cancel-current", { method: "POST" });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; job?: QueueJob | null; error?: string };
+    setBusy(false);
+    if (res.ok) {
+      setMessage(data.job ? "Emergency stop applied. Article can be retried." : "Queue stopped.");
+      if (data.state) applyServerState(data.state, "queue-emergency-stop");
+      else await refresh();
+    } else {
+      setMessage(data.error ?? "Emergency stop failed.");
+      await refresh();
+    }
   }
 
   async function setQueueControl(action: "stop_after_current" | "resume", success: string) {
@@ -880,9 +902,14 @@ function Workbench() {
           >
             <Play className="size-3 fill-current" /> {generateButton.label}
           </button>
-          {stats.processing > 0 && (
+          {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
             <button onClick={stopRun} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
               Stop after current
+            </button>
+          )}
+          {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
+            <button onClick={emergencyStopRun} className="h-7 rounded-md px-2 text-[12px] text-danger hover:bg-danger/10" title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried.">
+              Emergency stop
             </button>
           )}
         </div>
@@ -4155,15 +4182,24 @@ interface QueueMetrics {
 function describeGenerateButton(
   stats: Record<"queued" | "processing" | "generated" | "needs_review" | "failed" | "skipped", number>,
   metrics: QueueMetrics,
-  blocked: boolean
+  blocked: boolean,
+  queueMode: QueueControlMode,
+  hasResumableCurrent: boolean
 ) {
   if (stats.processing > 0) {
-    const total = metrics.total || stats.processing + stats.queued;
-    const current = Math.min(total, Math.max(1, metrics.completed + stats.processing));
+    const total = Math.max(1, stats.processing + stats.queued);
+    const current = Math.min(total, stats.processing);
     return {
       label: `Generating ${current} of ${total}`,
       disabled: true,
       title: "Generation is currently running."
+    };
+  }
+  if (queueMode === "stop_after_current" && hasResumableCurrent) {
+    return {
+      label: "Resume current",
+      disabled: blocked,
+      title: "Continue the article that already started, then stop before the next item."
     };
   }
   if (stats.queued > 0) {
@@ -4178,6 +4214,13 @@ function describeGenerateButton(
     disabled: true,
     title: "Add titles to create queue work."
   };
+}
+
+function isResumableQueuedJob(job: QueueJob) {
+  return job.status === "queued" && (
+    job.attempts > 0 ||
+    job.pipeline.some((step) => step.status === "done" || step.status === "running")
+  );
 }
 
 interface ProjectSummary {

@@ -5,7 +5,8 @@ import { createRuntime } from "@/lib/server/runtime";
 export async function POST() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
-  const { runner } = createRuntime();
+  const { runner, store } = createRuntime();
   const job = await runner.cancelCurrent();
-  return NextResponse.json({ job });
+  const state = await store.getState();
+  return NextResponse.json({ job, state });
 }

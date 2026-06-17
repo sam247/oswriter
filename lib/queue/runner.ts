@@ -11,6 +11,8 @@ import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/projec
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 
+const EMERGENCY_STOP_REASON = "Emergency stopped by user.";
+
 export class QueueRunner {
   constructor(
     private readonly store: WorkspaceStore,
@@ -175,15 +177,36 @@ export class QueueRunner {
   }
 
   async cancelCurrent(projectId?: string) {
+    return this.emergencyStop(projectId);
+  }
+
+  async emergencyStop(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const jobs = await this.store.listJobs(resolvedProjectId);
-    const current = jobs.find((job) => job.status === "processing");
+    const current = jobs.find((job) => job.status === "processing") ?? jobs.find(isResumableQueuedJob) ?? null;
+    const now = nowIso();
+    await this.store.saveQueueControl({
+      ...await this.store.getQueueControl(resolvedProjectId),
+      mode: "stopped",
+      requestedBy: "user",
+      requestedAt: now,
+      stoppedAt: now,
+      reason: EMERGENCY_STOP_REASON,
+      updatedAt: now
+    });
+    await this.store.deleteWorkerLease(resolvedProjectId);
     if (!current) return null;
     const cancelled: QueueJob = {
       ...current,
-      status: "queued",
-      updatedAt: nowIso(),
-      pipeline: failStage(current.pipeline, "generation", "Cancelled by user; returned to queued.")
+      status: "failed",
+      statusReason: EMERGENCY_STOP_REASON,
+      fatalError: EMERGENCY_STOP_REASON,
+      updatedAt: now,
+      pipeline: failCurrentOrNextStage(current.pipeline, EMERGENCY_STOP_REASON),
+      timings: {
+        ...current.timings,
+        completed_at: now
+      }
     };
     await this.store.saveJob(cancelled);
     return cancelled;
@@ -242,10 +265,14 @@ export class QueueRunner {
       return { processed: false, job: processing };
     }
     const control = await this.store.getQueueControl(resolvedProjectId);
-    if (!processing && control.mode !== "running") {
+    const resumableCurrent = jobs.find(isResumableQueuedJob);
+    if (!processing && control.mode === "stop_after_current" && !resumableCurrent) {
       return { processed: false, job: null };
     }
-    const job = processing ?? jobs.find((item) => item.status === "queued");
+    if (!processing && control.mode !== "running" && control.mode !== "stop_after_current") {
+      return { processed: false, job: null };
+    }
+    const job = processing ?? (control.mode === "stop_after_current" ? resumableCurrent : jobs.find((item) => item.status === "queued"));
     if (!job) {
       await this.markStoppedIfQueueEmpty(resolvedProjectId);
       return { processed: false, job: null };
@@ -283,12 +310,14 @@ export class QueueRunner {
     log({ stage: "queue", level: "info", message: "Job claimed for processing.", data: { attempt: job.attempts } });
 
     try {
+      await this.throwIfEmergencyStopped(job.projectId);
       const { project, settings } = await this.store.ensureProject(job.projectId);
       const projectProfile = projectProfileFromControls(project.profile, settings.controls);
       const profileSnapshot = snapshotProjectProfile(projectProfile);
       const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot);
 
       if (!stageDone(job, "research")) {
+        await this.throwIfEmergencyStopped(job.projectId);
         job = { ...job, timings: markTiming(job.timings, "research_started_at"), pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
         await this.store.saveJob(job);
         log({ stage: "research", level: "info", message: "Research started." });
@@ -302,6 +331,7 @@ export class QueueRunner {
       }
 
       if (!stageDone(job, "outline")) {
+        await this.throwIfEmergencyStopped(job.projectId);
         job = { ...job, timings: markTiming(job.timings, "outline_started_at"), pipeline: startStage(job.pipeline, "outline", "Using generation prompt structure."), updatedAt: nowIso() };
         job = {
           ...job,
@@ -323,9 +353,11 @@ export class QueueRunner {
       const research = await this.store.getResearch(job.articleId, job.projectId);
       if (!research) throw new Error("Research unavailable after research stage.");
 
+      await this.throwIfEmergencyStopped(job.projectId);
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
       const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot }));
+      await this.throwIfEmergencyStopped(job.projectId);
       const markdown = generation.markdown;
       job = {
         ...job,
@@ -510,6 +542,13 @@ export class QueueRunner {
       updatedAt: now
     });
   }
+
+  private async throwIfEmergencyStopped(projectId: string) {
+    const control = await this.store.getQueueControl(projectId);
+    if (control.mode === "stopped" && control.reason === EMERGENCY_STOP_REASON) {
+      throw new Error(EMERGENCY_STOP_REASON);
+    }
+  }
 }
 
 function countMarkdownSections(markdown: string) {
@@ -567,6 +606,13 @@ function canContinueProcessing(job: QueueJob, source: "manual" | "worker" | unde
   return owner === source;
 }
 
+function isResumableQueuedJob(job: QueueJob) {
+  return job.status === "queued" && (
+    job.attempts > 0 ||
+    job.pipeline.some((step) => step.status === "done" || step.status === "running")
+  );
+}
+
 function createArticle(
   job: QueueJob,
   markdown: string,
@@ -613,4 +659,11 @@ function markTiming(timings: QueueJob["timings"], key: keyof NonNullable<QueueJo
 function failRunningStage(pipeline: QueueJob["pipeline"], message: string) {
   const running = pipeline.find((step) => step.status === "running");
   return running ? failStage(pipeline, running.stage, message) : pipeline;
+}
+
+function failCurrentOrNextStage(pipeline: QueueJob["pipeline"], message: string) {
+  const running = pipeline.find((step) => step.status === "running");
+  if (running) return failStage(pipeline, running.stage, message);
+  const next = pipeline.find((step) => step.status === "idle");
+  return next ? failStage(pipeline, next.stage, message) : pipeline;
 }
