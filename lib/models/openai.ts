@@ -4,6 +4,7 @@ import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import { profileContextLines } from "@/lib/project/profile";
 import { cleanJsonText } from "@/lib/text";
 import { estimateAiCostUsd } from "@/lib/telemetry/costs";
+import { pricingForModel } from "@/lib/telemetry/pricing";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 
 export class OpenAIModelAdapter implements ModelAdapter {
@@ -32,13 +33,16 @@ export class OpenAIModelAdapter implements ModelAdapter {
     const markdown = normaliseMarkdown(text, input.title);
     const inputTokens = response.usage?.prompt_tokens ?? 0;
     const outputTokens = response.usage?.completion_tokens ?? 0;
+    const resolvedModel = response.model ?? model;
     return {
       markdown,
-      model: response.model ?? model,
+      provider: pricingForModel(resolvedModel).provider,
+      model: resolvedModel,
       inputTokens,
       outputTokens,
+      totalTokens: response.usage?.total_tokens ?? inputTokens + outputTokens,
       finishReason: response.choices[0]?.finish_reason ?? null,
-      estimatedAiCostUsd: estimateAiCostUsd(inputTokens, outputTokens, response.model ?? model)
+      estimatedAiCostUsd: estimateAiCostUsd(inputTokens, outputTokens, resolvedModel)
     };
   }
 

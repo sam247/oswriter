@@ -48,6 +48,13 @@ export class ExaSearchAdapter implements SearchAdapter {
       highlights: item.highlights,
       requestId: data.requestId
     }));
-    return { results, requestId: data.requestId };
+    return {
+      results,
+      requestId: data.requestId,
+      usage: {
+        exaSearchRequests: 1,
+        exaContentPages: results.filter((result) => result.text || result.summary || (result.highlights?.length ?? 0) > 0).length
+      }
+    };
   }
 }

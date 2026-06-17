@@ -233,6 +233,10 @@ export interface ResearchPack {
   durationMs: number;
   exaSearchCalls?: number;
   exaContentCalls?: number;
+  exaSearchRequests?: number;
+  exaContentPages?: number;
+  estimatedExaSearchCostUsd?: number;
+  estimatedExaContentCostUsd?: number;
   estimatedResearchCostUsd?: number;
   profileSnapshot?: ProjectProfileSnapshot | null;
   profileRelevanceScore?: number | null;
@@ -324,6 +328,7 @@ export interface ArticleDocument {
   profileSnapshot?: ProjectProfileSnapshot | null;
   profileRelevanceScore?: number | null;
   planningDiagnostics?: import("@/lib/generation/plan").PlanningDiagnostics | null;
+  costTelemetry?: ArticleCostTelemetry | null;
   qualityScore: number;
   researchSummary: string;
   validation: ValidationResult;
@@ -335,11 +340,34 @@ export interface ArticleDocument {
 
 export interface ModelGenerationResult {
   markdown: string;
+  provider?: string;
   model?: string;
   inputTokens?: number;
   outputTokens?: number;
+  totalTokens?: number;
   finishReason?: string | null;
   estimatedAiCostUsd?: number;
+}
+
+export interface ArticleCostTelemetry {
+  generationProvider: string;
+  generationModel: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  exaSearchRequests: number;
+  exaContentPages: number;
+  estimatedExaSearchCostUsd: number;
+  estimatedExaContentCostUsd: number;
+  estimatedResearchCostUsd: number;
+  estimatedGenerationCostUsd: number;
+  estimatedTotalCostUsd: number;
+  costPerWord: number;
+  costPerResearchConcept: number;
+  costPerSource: number;
+  researchDurationMs: number | null;
+  generationDurationMs: number | null;
+  totalDurationMs: number | null;
 }
 
 export interface GenerationTelemetryDocument {
@@ -349,7 +377,9 @@ export interface GenerationTelemetryDocument {
   articleId: string;
   jobId?: string;
   createdByUserId?: string | null;
+  generationProvider?: string | null;
   model?: string | null;
+  generationModel?: string | null;
   targetWords: number;
   actualWords: number;
   plannedSections: number;
@@ -389,13 +419,23 @@ export interface GenerationTelemetryDocument {
   citationsGenerated: number;
   inputTokens: number;
   outputTokens: number;
+  totalTokens?: number;
   researchTokens: number;
   generationTokens: number;
   estimatedAiCostUsd: number;
+  estimatedGenerationCostUsd?: number;
   exaSearchCalls: number;
   exaContentCalls: number;
+  exaSearchRequests?: number;
+  exaContentPages?: number;
+  estimatedExaSearchCostUsd?: number;
+  estimatedExaContentCostUsd?: number;
   estimatedResearchCostUsd: number;
   totalCostUsd: number;
+  totalDurationMs?: number | null;
+  costPerWord?: number;
+  costPerResearchConcept?: number;
+  costPerSource?: number;
   generationDurationMs?: number | null;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -488,8 +528,19 @@ export interface SearchResult {
   requestId?: string;
 }
 
+export interface SearchUsage {
+  exaSearchRequests?: number;
+  exaContentPages?: number;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  requestId?: string;
+  usage?: SearchUsage;
+}
+
 export interface SearchAdapter {
-  search(query: string, options: { numResults: number; includeDomains?: string[]; excludeDomains?: string[] }): Promise<{ results: SearchResult[]; requestId?: string }>;
+  search(query: string, options: { numResults: number; includeDomains?: string[]; excludeDomains?: string[] }): Promise<SearchResponse>;
 }
 
 export interface ModelAdapter {

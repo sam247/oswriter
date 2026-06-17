@@ -1008,7 +1008,7 @@ export class NeonStorageProvider implements StorageProvider {
     const next = withGenerationTelemetryDefaults(telemetry, tenant, projectId);
     await this.sql`
       insert into generation_telemetry (
-        id, organisation_id, project_id, article_id, job_id, created_by_user_id, model,
+        id, organisation_id, project_id, article_id, job_id, created_by_user_id, generation_provider, model, generation_model,
         target_words, actual_words, planned_sections, actual_sections, finish_reason, review_status,
         planned_h2_count, planned_h3_count, expected_depth, actual_h2_count, actual_h3_count, actual_depth,
         h2_achievement_percent, h3_achievement_percent, target_achievement_percent, planner_outcome,
@@ -1016,13 +1016,16 @@ export class NeonStorageProvider implements StorageProvider {
         actual_breadth_coverage_percent, breadth_status,
         profile_version, region, industry, audience, profile_relevance_score, region_awareness_active,
         industry_awareness_active, audience_awareness_active, research_duration_ms, sources_discovered, sources_accepted, sources_rejected, findings_extracted,
-        useful_facts_extracted, citations_generated, input_tokens, output_tokens, research_tokens, generation_tokens,
-        estimated_ai_cost_usd, exa_search_calls, exa_content_calls, estimated_research_cost_usd,
-        total_cost_usd, generation_duration_ms, metadata, created_at, updated_at
+        useful_facts_extracted, citations_generated, input_tokens, output_tokens, total_tokens, research_tokens, generation_tokens,
+        estimated_ai_cost_usd, estimated_generation_cost_usd, exa_search_calls, exa_content_calls, exa_search_requests, exa_content_pages,
+        estimated_exa_search_cost_usd, estimated_exa_content_cost_usd, estimated_research_cost_usd,
+        total_cost_usd, generation_duration_ms, total_duration_ms, cost_per_word, cost_per_research_concept, cost_per_source,
+        metadata, created_at, updated_at
       )
       values (
         ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.jobId ?? null}, ${next.createdByUserId ?? null},
-        ${next.model ?? null}, ${next.targetWords}, ${next.actualWords}, ${next.plannedSections}, ${next.actualSections},
+        ${next.generationProvider ?? null}, ${next.model ?? null}, ${next.generationModel ?? next.model ?? null},
+        ${next.targetWords}, ${next.actualWords}, ${next.plannedSections}, ${next.actualSections},
         ${next.finishReason ?? null}, ${next.reviewStatus}, ${next.plannedH2Count ?? 0}, ${next.plannedH3Count ?? 0},
         ${next.expectedDepth ?? null}, ${next.actualH2Count ?? 0}, ${next.actualH3Count ?? 0}, ${next.actualDepth ?? null},
         ${next.h2AchievementPercent ?? null}, ${next.h3AchievementPercent ?? null}, ${next.targetAchievementPercent ?? null},
@@ -1033,15 +1036,20 @@ export class NeonStorageProvider implements StorageProvider {
         ${Boolean(next.regionAwarenessActive)}, ${Boolean(next.industryAwarenessActive)}, ${Boolean(next.audienceAwarenessActive)},
         ${next.researchDurationMs ?? null}, ${next.sourcesDiscovered},
         ${next.sourcesAccepted}, ${next.sourcesRejected}, ${next.findingsExtracted}, ${next.usefulFactsExtracted},
-        ${next.citationsGenerated}, ${next.inputTokens}, ${next.outputTokens}, ${next.researchTokens}, ${next.generationTokens}, ${next.estimatedAiCostUsd},
-        ${next.exaSearchCalls}, ${next.exaContentCalls}, ${next.estimatedResearchCostUsd}, ${next.totalCostUsd},
-        ${next.generationDurationMs ?? null}, ${JSON.stringify(next.metadata)}::jsonb,
+        ${next.citationsGenerated}, ${next.inputTokens}, ${next.outputTokens}, ${next.totalTokens ?? next.generationTokens}, ${next.researchTokens},
+        ${next.generationTokens}, ${next.estimatedAiCostUsd}, ${next.estimatedGenerationCostUsd ?? next.estimatedAiCostUsd},
+        ${next.exaSearchCalls}, ${next.exaContentCalls}, ${next.exaSearchRequests ?? next.exaSearchCalls}, ${next.exaContentPages ?? next.exaContentCalls},
+        ${next.estimatedExaSearchCostUsd ?? 0}, ${next.estimatedExaContentCostUsd ?? 0}, ${next.estimatedResearchCostUsd}, ${next.totalCostUsd},
+        ${next.generationDurationMs ?? null}, ${next.totalDurationMs ?? null}, ${next.costPerWord ?? 0}, ${next.costPerResearchConcept ?? 0}, ${next.costPerSource ?? 0},
+        ${JSON.stringify(next.metadata)}::jsonb,
         ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
       )
       on conflict (organisation_id, project_id, article_id) do update set
         job_id = excluded.job_id,
         created_by_user_id = excluded.created_by_user_id,
+        generation_provider = excluded.generation_provider,
         model = excluded.model,
+        generation_model = excluded.generation_model,
         target_words = excluded.target_words,
         actual_words = excluded.actual_words,
         planned_sections = excluded.planned_sections,
@@ -1081,14 +1089,24 @@ export class NeonStorageProvider implements StorageProvider {
         citations_generated = excluded.citations_generated,
         input_tokens = excluded.input_tokens,
         output_tokens = excluded.output_tokens,
+        total_tokens = excluded.total_tokens,
         research_tokens = excluded.research_tokens,
         generation_tokens = excluded.generation_tokens,
         estimated_ai_cost_usd = excluded.estimated_ai_cost_usd,
+        estimated_generation_cost_usd = excluded.estimated_generation_cost_usd,
         exa_search_calls = excluded.exa_search_calls,
         exa_content_calls = excluded.exa_content_calls,
+        exa_search_requests = excluded.exa_search_requests,
+        exa_content_pages = excluded.exa_content_pages,
+        estimated_exa_search_cost_usd = excluded.estimated_exa_search_cost_usd,
+        estimated_exa_content_cost_usd = excluded.estimated_exa_content_cost_usd,
         estimated_research_cost_usd = excluded.estimated_research_cost_usd,
         total_cost_usd = excluded.total_cost_usd,
         generation_duration_ms = excluded.generation_duration_ms,
+        total_duration_ms = excluded.total_duration_ms,
+        cost_per_word = excluded.cost_per_word,
+        cost_per_research_concept = excluded.cost_per_research_concept,
+        cost_per_source = excluded.cost_per_source,
         metadata = excluded.metadata,
         updated_at = excluded.updated_at
     `;
@@ -1361,12 +1379,22 @@ function withGenerationTelemetryDefaults(telemetry: GenerationTelemetryDocument,
   const actualH2Count = telemetry.actualH2Count ?? actualSections;
   const plannedH3Count = telemetry.plannedH3Count ?? 0;
   const actualH3Count = telemetry.actualH3Count ?? 0;
+  const inputTokens = telemetry.inputTokens ?? 0;
+  const outputTokens = telemetry.outputTokens ?? 0;
+  const totalTokens = telemetry.totalTokens ?? telemetry.generationTokens ?? inputTokens + outputTokens;
+  const estimatedGenerationCostUsd = telemetry.estimatedGenerationCostUsd ?? telemetry.estimatedAiCostUsd ?? 0;
+  const exaSearchRequests = telemetry.exaSearchRequests ?? telemetry.exaSearchCalls ?? 0;
+  const exaContentPages = telemetry.exaContentPages ?? telemetry.exaContentCalls ?? 0;
+  const totalCostUsd = telemetry.totalCostUsd ?? 0;
+  const sourceCount = telemetry.sourcesDiscovered ?? telemetry.sourcesAccepted ?? 0;
   return {
     ...telemetry,
     id: telemetry.id ?? `${projectId}:${telemetry.articleId}:generation`,
     organisationId: telemetry.organisationId ?? tenant.organisationId,
     projectId: telemetry.projectId ?? projectId,
     model: telemetry.model ?? null,
+    generationProvider: telemetry.generationProvider ?? null,
+    generationModel: telemetry.generationModel ?? telemetry.model ?? null,
     jobId: telemetry.jobId,
     createdByUserId: telemetry.createdByUserId ?? null,
     targetWords,
@@ -1406,9 +1434,26 @@ function withGenerationTelemetryDefaults(telemetry: GenerationTelemetryDocument,
     findingsExtracted: telemetry.findingsExtracted ?? 0,
     usefulFactsExtracted: telemetry.usefulFactsExtracted ?? 0,
     citationsGenerated: telemetry.citationsGenerated ?? 0,
+    inputTokens,
+    outputTokens,
     researchTokens: telemetry.researchTokens ?? 0,
-    generationTokens: telemetry.generationTokens ?? (telemetry.inputTokens ?? 0) + (telemetry.outputTokens ?? 0),
+    totalTokens,
+    generationTokens: telemetry.generationTokens ?? totalTokens,
+    estimatedAiCostUsd: telemetry.estimatedAiCostUsd ?? estimatedGenerationCostUsd,
+    estimatedGenerationCostUsd,
+    exaSearchCalls: telemetry.exaSearchCalls ?? exaSearchRequests,
+    exaContentCalls: telemetry.exaContentCalls ?? exaContentPages,
+    exaSearchRequests,
+    exaContentPages,
+    estimatedExaSearchCostUsd: telemetry.estimatedExaSearchCostUsd ?? 0,
+    estimatedExaContentCostUsd: telemetry.estimatedExaContentCostUsd ?? 0,
+    estimatedResearchCostUsd: telemetry.estimatedResearchCostUsd ?? 0,
+    totalCostUsd,
     generationDurationMs: telemetry.generationDurationMs ?? null,
+    totalDurationMs: telemetry.totalDurationMs ?? null,
+    costPerWord: telemetry.costPerWord ?? (actualWords ? Number((totalCostUsd / actualWords).toFixed(6)) : 0),
+    costPerResearchConcept: telemetry.costPerResearchConcept ?? ((telemetry.researchConceptCount ?? 0) ? Number((totalCostUsd / (telemetry.researchConceptCount ?? 1)).toFixed(6)) : 0),
+    costPerSource: telemetry.costPerSource ?? (sourceCount ? Number((totalCostUsd / sourceCount).toFixed(6)) : 0),
     createdAt: telemetry.createdAt ?? now,
     updatedAt: telemetry.updatedAt ?? now
   };
@@ -1666,7 +1711,9 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
     articleId: String(row.article_id),
     jobId: nullableString(row.job_id) ?? undefined,
     createdByUserId: nullableString(row.created_by_user_id),
+    generationProvider: nullableString(row.generation_provider),
     model: nullableString(row.model),
+    generationModel: nullableString(row.generation_model) ?? nullableString(row.model),
     targetWords: Number(row.target_words ?? 0),
     actualWords: Number(row.actual_words ?? 0),
     plannedSections: Number(row.planned_sections ?? 0),
@@ -1706,13 +1753,23 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
     citationsGenerated: Number(row.citations_generated ?? 0),
     inputTokens: Number(row.input_tokens),
     outputTokens: Number(row.output_tokens),
+    totalTokens: Number(row.total_tokens ?? Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0)),
     researchTokens: Number(row.research_tokens ?? 0),
     generationTokens: Number(row.generation_tokens ?? Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0)),
     estimatedAiCostUsd: Number(row.estimated_ai_cost_usd),
+    estimatedGenerationCostUsd: Number(row.estimated_generation_cost_usd ?? row.estimated_ai_cost_usd ?? 0),
     exaSearchCalls: Number(row.exa_search_calls),
     exaContentCalls: Number(row.exa_content_calls),
+    exaSearchRequests: Number(row.exa_search_requests ?? row.exa_search_calls ?? 0),
+    exaContentPages: Number(row.exa_content_pages ?? row.exa_content_calls ?? 0),
+    estimatedExaSearchCostUsd: Number(row.estimated_exa_search_cost_usd ?? 0),
+    estimatedExaContentCostUsd: Number(row.estimated_exa_content_cost_usd ?? 0),
     estimatedResearchCostUsd: Number(row.estimated_research_cost_usd),
     totalCostUsd: Number(row.total_cost_usd),
+    totalDurationMs: nullableNumber(row.total_duration_ms),
+    costPerWord: Number(row.cost_per_word ?? 0),
+    costPerResearchConcept: Number(row.cost_per_research_concept ?? 0),
+    costPerSource: Number(row.cost_per_source ?? 0),
     generationDurationMs: nullableNumber(row.generation_duration_ms),
     metadata: isRecord(row.metadata) ? row.metadata : {},
     createdAt: dateIso(row.created_at),

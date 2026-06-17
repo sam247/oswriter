@@ -2,7 +2,7 @@ import { calculateProfileRelevanceScore } from "@/lib/project/profile";
 import type { ProjectProfileSnapshot, ResearchFactSource, ResearchPack, SearchAdapter, SearchResult } from "@/lib/types";
 import { buildQueryVariants, average, toResearchSource } from "@/lib/research/scoring";
 import { nowIso } from "@/lib/defaults";
-import { estimateResearchCostUsd } from "@/lib/telemetry/costs";
+import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateResearchCostUsd } from "@/lib/telemetry/costs";
 
 const EXCLUDE_DOMAINS = [
   "dictionary.com",
@@ -37,6 +37,8 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const seen = new Set<string>();
   const raw: SearchResult[] = [];
   const requestIds: string[] = [];
+  let exaSearchRequests = queries.length;
+  let exaContentPages = 0;
 
   const responses = await Promise.allSettled(queries.map((query) => search.search(query, {
       numResults: 5,
@@ -44,10 +46,10 @@ export async function runResearch(title: string, articleId: string, search: Sear
     })));
 
   const failures = responses.filter((response) => response.status === "rejected");
-  const successfulResponses = responses.filter((response) => response.status === "fulfilled").length;
   for (const response of responses) {
     if (response.status === "rejected") continue;
     const { results, requestId } = response.value;
+    exaContentPages += response.value.usage?.exaContentPages ?? results.filter((result) => result.text || result.summary || (result.highlights?.length ?? 0) > 0).length;
     if (requestId) requestIds.push(requestId);
     for (const result of results) {
       if (!seen.has(result.url)) {
@@ -113,9 +115,13 @@ export async function runResearch(title: string, articleId: string, search: Sear
     warnings,
     requestIds: [...new Set(requestIds)],
     durationMs: Date.now() - started,
-    exaSearchCalls: queries.length,
-    exaContentCalls: successfulResponses,
-    estimatedResearchCostUsd: estimateResearchCostUsd(queries.length, successfulResponses),
+    exaSearchCalls: exaSearchRequests,
+    exaContentCalls: exaContentPages,
+    exaSearchRequests,
+    exaContentPages,
+    estimatedExaSearchCostUsd: estimatedExaSearchCostUsd(exaSearchRequests),
+    estimatedExaContentCostUsd: estimatedExaContentCostUsd(exaContentPages),
+    estimatedResearchCostUsd: estimateResearchCostUsd(exaSearchRequests, exaContentPages),
     profileSnapshot,
     profileRelevanceScore,
     createdAt: nowIso()

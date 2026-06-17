@@ -5,7 +5,8 @@ import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
 import { runResearch } from "@/lib/research/research-engine";
 import { statusFromReviewReasons } from "@/lib/status";
-import { roundUsd } from "@/lib/telemetry/costs";
+import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateResearchCostUsd, roundUsd } from "@/lib/telemetry/costs";
+import { pricingForModel } from "@/lib/telemetry/pricing";
 import { exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
 import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/project/profile";
 import { heuristicValidation } from "@/lib/validation/heuristics";
@@ -409,7 +410,8 @@ export class QueueRunner {
         updatedAt: completedAt
       };
 
-      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics);
+      const costTelemetry = buildArticleCostTelemetry(job, markdown, research, generation, plan, planningDiagnostics);
+      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics, costTelemetry);
       await this.store.saveArticle(article);
       await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
@@ -451,18 +453,21 @@ export class QueueRunner {
     log: (event: Omit<DebugEvent, "at">) => void
   ) {
     const now = nowIso();
-    const aiCost = generation.estimatedAiCostUsd ?? 0;
-    const researchCost = research.estimatedResearchCostUsd ?? 0;
+    const planningDiagnostics = article.planningDiagnostics ?? buildPlanningDiagnostics(plan, article.markdown, research);
+    const costTelemetry = article.costTelemetry ?? buildArticleCostTelemetry(job, article.markdown, research, generation, plan, planningDiagnostics);
+    const aiCost = costTelemetry.estimatedGenerationCostUsd;
+    const researchCost = costTelemetry.estimatedResearchCostUsd;
     const inputTokens = generation.inputTokens ?? 0;
     const outputTokens = generation.outputTokens ?? 0;
     const findingsExtracted = research.usefulFacts.length + research.rejectedFacts.length + research.questionsFound.length + research.headingsFound.length;
-    const planningDiagnostics = article.planningDiagnostics ?? buildPlanningDiagnostics(plan, article.markdown, research);
     const telemetry: GenerationTelemetryDocument = {
       projectId: job.projectId,
       articleId: job.articleId,
       jobId: job.id,
       createdByUserId: job.createdByUserId ?? article.createdByUserId ?? null,
-      model: generation.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      generationProvider: costTelemetry.generationProvider,
+      model: costTelemetry.generationModel,
+      generationModel: costTelemetry.generationModel,
       targetWords: plan.targetWords,
       actualWords: article.wordCount,
       plannedSections: plan.h2SectionCount,
@@ -502,14 +507,24 @@ export class QueueRunner {
       citationsGenerated: research.usefulFactSources?.length ?? 0,
       inputTokens,
       outputTokens,
+      totalTokens: costTelemetry.totalTokens,
       researchTokens: estimateResearchTokens(research),
-      generationTokens: inputTokens + outputTokens,
+      generationTokens: costTelemetry.totalTokens,
       estimatedAiCostUsd: aiCost,
-      exaSearchCalls: research.exaSearchCalls ?? research.queries.length,
-      exaContentCalls: research.exaContentCalls ?? research.requestIds.length,
+      estimatedGenerationCostUsd: aiCost,
+      exaSearchCalls: costTelemetry.exaSearchRequests,
+      exaContentCalls: costTelemetry.exaContentPages,
+      exaSearchRequests: costTelemetry.exaSearchRequests,
+      exaContentPages: costTelemetry.exaContentPages,
+      estimatedExaSearchCostUsd: costTelemetry.estimatedExaSearchCostUsd,
+      estimatedExaContentCostUsd: costTelemetry.estimatedExaContentCostUsd,
       estimatedResearchCostUsd: researchCost,
-      totalCostUsd: roundUsd(aiCost + researchCost),
-      generationDurationMs: durationMs(job.timings?.generation_started_at, job.timings?.generation_completed_at),
+      totalCostUsd: costTelemetry.estimatedTotalCostUsd,
+      totalDurationMs: costTelemetry.totalDurationMs,
+      costPerWord: costTelemetry.costPerWord,
+      costPerResearchConcept: costTelemetry.costPerResearchConcept,
+      costPerSource: costTelemetry.costPerSource,
+      generationDurationMs: costTelemetry.generationDurationMs,
       metadata: {
         status: job.status,
         finishReason: generation.finishReason ?? null,
@@ -523,7 +538,8 @@ export class QueueRunner {
         planningDiagnostics,
         findingsExtracted,
         profileSnapshot: article.profileSnapshot ?? null,
-        profileRelevanceScore: article.profileRelevanceScore ?? null
+        profileRelevanceScore: article.profileRelevanceScore ?? null,
+        costTelemetry
       },
       createdAt: now,
       updatedAt: now
@@ -592,22 +608,77 @@ function estimateResearchTokens(research: Parameters<typeof heuristicValidation>
 
 function normaliseGenerationResult(result: string | ModelGenerationResult): ModelGenerationResult {
   if (typeof result === "string") {
+    const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
     return {
       markdown: result,
-      model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      provider: pricingForModel(model).provider,
+      model,
       inputTokens: 0,
       outputTokens: 0,
+      totalTokens: 0,
       finishReason: null,
       estimatedAiCostUsd: 0
     };
   }
+  const model = result.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
   return {
     ...result,
-    model: result.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+    provider: result.provider ?? pricingForModel(model).provider,
+    model,
     inputTokens: result.inputTokens ?? 0,
     outputTokens: result.outputTokens ?? 0,
+    totalTokens: result.totalTokens ?? (result.inputTokens ?? 0) + (result.outputTokens ?? 0),
     finishReason: result.finishReason ?? null,
     estimatedAiCostUsd: result.estimatedAiCostUsd ?? 0
+  };
+}
+
+function buildArticleCostTelemetry(
+  job: QueueJob,
+  markdown: string,
+  research: Parameters<typeof heuristicValidation>[0]["research"],
+  generation: ModelGenerationResult,
+  _plan: ReturnType<typeof buildArticleGenerationPlan>,
+  planningDiagnostics: NonNullable<ArticleDocument["planningDiagnostics"]>
+): NonNullable<ArticleDocument["costTelemetry"]> {
+  const generationModel = generation.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
+  const generationProvider = generation.provider ?? pricingForModel(generationModel).provider;
+  const inputTokens = generation.inputTokens ?? 0;
+  const outputTokens = generation.outputTokens ?? 0;
+  const totalTokens = generation.totalTokens ?? inputTokens + outputTokens;
+  const exaSearchRequests = research.exaSearchRequests ?? research.exaSearchCalls ?? research.queries.length;
+  const exaContentPages = research.exaContentPages ?? research.exaContentCalls ?? research.requestIds.length;
+  const estimatedExaSearchCost = research.estimatedExaSearchCostUsd ?? estimatedExaSearchCostUsd(exaSearchRequests);
+  const estimatedExaContentCost = research.estimatedExaContentCostUsd ?? estimatedExaContentCostUsd(exaContentPages);
+  const estimatedResearchCost = research.estimatedResearchCostUsd ?? estimateResearchCostUsd(exaSearchRequests, exaContentPages);
+  const estimatedGenerationCost = generation.estimatedAiCostUsd ?? 0;
+  const estimatedTotalCost = roundUsd(estimatedResearchCost + estimatedGenerationCost);
+  const wordCount = countWords(markdown);
+  const researchConceptCount = planningDiagnostics.researchConceptCount ?? research.researchConceptCount ?? research.researchConcepts?.length ?? 0;
+  const sourceCount = research.sources.length + research.rejectedSources.length;
+  const researchDurationMs = durationMs(job.timings?.research_started_at, job.timings?.research_completed_at);
+  const generationDurationMs = durationMs(job.timings?.generation_started_at, job.timings?.generation_completed_at);
+  const totalDurationMs = durationMs(job.timings?.processing_at ?? job.timings?.started_at, job.timings?.completed_at ?? nowIso());
+
+  return {
+    generationProvider,
+    generationModel,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    exaSearchRequests,
+    exaContentPages,
+    estimatedExaSearchCostUsd: estimatedExaSearchCost,
+    estimatedExaContentCostUsd: estimatedExaContentCost,
+    estimatedResearchCostUsd: estimatedResearchCost,
+    estimatedGenerationCostUsd: estimatedGenerationCost,
+    estimatedTotalCostUsd: estimatedTotalCost,
+    costPerWord: wordCount ? roundUsd(estimatedTotalCost / wordCount) : 0,
+    costPerResearchConcept: researchConceptCount ? roundUsd(estimatedTotalCost / researchConceptCount) : 0,
+    costPerSource: sourceCount ? roundUsd(estimatedTotalCost / sourceCount) : 0,
+    researchDurationMs,
+    generationDurationMs,
+    totalDurationMs
   };
 }
 
@@ -649,7 +720,8 @@ function createArticle(
   research: Parameters<typeof heuristicValidation>[0]["research"],
   targetWords?: number,
   profileSnapshot?: ArticleDocument["profileSnapshot"],
-  planningDiagnostics?: ArticleDocument["planningDiagnostics"]
+  planningDiagnostics?: ArticleDocument["planningDiagnostics"],
+  costTelemetry?: ArticleDocument["costTelemetry"]
 ): ArticleDocument {
   const now = nowIso();
   const sources = research.sources;
@@ -667,6 +739,7 @@ function createArticle(
     profileSnapshot,
     profileRelevanceScore: validation.profileRelevanceScore ?? null,
     planningDiagnostics: planningDiagnostics ?? null,
+    costTelemetry: costTelemetry ?? null,
     qualityScore: validation.qualityScore,
     researchSummary: research.usefulFacts.slice(0, 5).join(" "),
     validation,

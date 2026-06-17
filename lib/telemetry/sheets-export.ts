@@ -160,8 +160,20 @@ export function buildArticleTelemetryRow({ telemetry, article, project }: Articl
     telemetry.finishReason ?? "",
     telemetry.reviewStatus,
     money(telemetry.estimatedResearchCostUsd),
-    money(telemetry.estimatedAiCostUsd),
-    money(telemetry.totalCostUsd)
+    money(telemetry.estimatedGenerationCostUsd ?? telemetry.estimatedAiCostUsd),
+    money(telemetry.totalCostUsd),
+    telemetry.exaSearchRequests ?? telemetry.exaSearchCalls,
+    telemetry.exaContentPages ?? telemetry.exaContentCalls,
+    telemetry.generationProvider ?? "",
+    telemetry.generationModel ?? telemetry.model ?? "",
+    telemetry.inputTokens,
+    telemetry.outputTokens,
+    telemetry.totalTokens ?? telemetry.generationTokens,
+    telemetry.researchDurationMs ?? "",
+    telemetry.totalDurationMs ?? "",
+    money(telemetry.costPerWord ?? 0),
+    money(telemetry.costPerResearchConcept ?? 0),
+    money(telemetry.costPerSource ?? 0)
   ];
 }
 
@@ -240,7 +252,7 @@ export function createGoogleSheetsAppendClient(): SheetsAppendClient {
     async appendRow(sheetName, row) {
       const spreadsheetId = process.env.WRITER_OS_TELEMETRY_SHEET_ID ?? process.env.GOOGLE_TELEMETRY_SHEET_ID ?? TELEMETRY_SPREADSHEET_ID;
       const token = await getGoogleAccessToken();
-      const range = encodeURIComponent(`${sheetName}!A:AO`);
+      const range = encodeURIComponent(`${sheetName}!A:BA`);
       const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
         method: "POST",
         headers: {

@@ -48,6 +48,14 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(articleRow?.[24], 37.5);
     assert.equal(articleRow?.[25], "undercovered");
     assert.equal(articleRow?.[30], 74);
+    assert.equal(articleRow?.[41], 4);
+    assert.equal(articleRow?.[42], 2);
+    assert.equal(articleRow?.[43], "test-provider");
+    assert.equal(articleRow?.[44], "test-model");
+    assert.equal(articleRow?.[47], 1700);
+    assert.equal(articleRow?.[48], 900);
+    assert.equal(articleRow?.[49], 2100);
+    assert.equal(articleRow?.[50], 0.000114);
     assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 5);
     assert.equal((await store.getTelemetryExportStatus("article:default-project:article-telemetry"))?.status, "exported");
     assert.equal((await store.getTelemetryExportStatus("anomaly:default-project:article-telemetry:under-target-output"))?.status, "exported");
@@ -104,7 +112,9 @@ function sampleTelemetry(overrides: Partial<GenerationTelemetryDocument> = {}): 
     articleId: "article-telemetry",
     jobId: "job-telemetry",
     createdByUserId: "user-default",
+    generationProvider: "test-provider",
     model: "test-model",
+    generationModel: "test-model",
     targetWords: 1000,
     actualWords: 700,
     plannedSections: 6,
@@ -144,14 +154,24 @@ function sampleTelemetry(overrides: Partial<GenerationTelemetryDocument> = {}): 
     citationsGenerated: 4,
     inputTokens: 1000,
     outputTokens: 700,
+    totalTokens: 1700,
     researchTokens: 1200,
     generationTokens: 1700,
     estimatedAiCostUsd: 0.05,
-    exaSearchCalls: 6,
-    exaContentCalls: 6,
+    estimatedGenerationCostUsd: 0.05,
+    exaSearchCalls: 4,
+    exaContentCalls: 2,
+    exaSearchRequests: 4,
+    exaContentPages: 2,
+    estimatedExaSearchCostUsd: 0.028,
+    estimatedExaContentCostUsd: 0.002,
     estimatedResearchCostUsd: 0.03,
     totalCostUsd: 0.08,
     generationDurationMs: 1200,
+    totalDurationMs: 2100,
+    costPerWord: 0.000114,
+    costPerResearchConcept: 0.01,
+    costPerSource: 0.02,
     metadata: {},
     createdAt: now,
     updatedAt: now,

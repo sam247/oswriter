@@ -920,7 +920,7 @@ function Workbench() {
           {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
             <button
               onClick={emergencyStopRun}
-              className="h-7 rounded-md border border-danger/30 bg-danger/15 px-2.5 text-[12px] font-medium text-danger shadow-sm hover:border-danger/40 hover:bg-danger/25"
+              className="h-7 rounded-md border border-[#d9a79d] bg-[#f6e3df] px-2.5 text-[12px] font-medium text-[#9f2f20] shadow-sm hover:border-[#c8796c] hover:bg-[#edc9c2] hover:text-[#842719]"
               title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried."
             >
               Emergency stop

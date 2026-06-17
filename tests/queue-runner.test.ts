@@ -99,9 +99,11 @@ class MeteredModel implements ModelAdapter {
     const markdown = await new FakeModel().generateArticle(input);
     return {
       markdown,
+      provider: "test-provider",
       model: "metered-model",
       inputTokens: 1200,
       outputTokens: 800,
+      totalTokens: 2000,
       finishReason: "stop",
       estimatedAiCostUsd: 0.004
     };
@@ -340,72 +342,77 @@ describe("QueueRunner", () => {
   });
 
   it("records generation telemetry after an article is saved", async () => {
-    const previousSearchCost = process.env.EXA_SEARCH_COST_USD;
-    const previousContentCost = process.env.EXA_CONTENT_COST_USD;
-    process.env.EXA_SEARCH_COST_USD = "0.001";
-    process.env.EXA_CONTENT_COST_USD = "0.002";
-    try {
-      const { store, runner } = setup(new FakeSearch(), new MeteredModel());
-      const [job] = await runner.addTitles(["Telemetry cost tracking"]);
+    const { store, runner } = setup(new FakeSearch(), new MeteredModel());
+    const [job] = await runner.addTitles(["Telemetry cost tracking"]);
 
-      await drainQueue(runner);
+    await drainQueue(runner);
 
-      const telemetry = await store.getGenerationTelemetry(job.articleId);
-      assert.ok(telemetry);
-      assert.equal(telemetry.projectId, job.projectId);
-      assert.equal(telemetry.articleId, job.articleId);
-      assert.equal(telemetry.jobId, job.id);
-      assert.equal(telemetry.model, "metered-model");
-      assert.equal(telemetry.inputTokens, 1200);
-      assert.equal(telemetry.outputTokens, 800);
-      assert.equal(telemetry.generationTokens, 2000);
-      assert.ok(telemetry.targetWords > 0);
-      assert.equal(telemetry.profileVersion, 1);
-      assert.equal(telemetry.region, "global");
-      assert.equal(telemetry.industry, "general");
-      assert.equal(telemetry.audience, "general_audience");
-      assert.equal(telemetry.regionAwarenessActive, false);
-      assert.ok(typeof telemetry.profileRelevanceScore === "number");
-      assert.ok(telemetry.actualWords > 0);
-      assert.ok(telemetry.plannedSections > 0);
-      assert.ok(telemetry.actualSections > 0);
-      assert.equal(telemetry.plannedH2Count, telemetry.plannedSections);
-      assert.ok((telemetry.plannedH3Count ?? 0) >= 0);
-      assert.ok(telemetry.expectedDepth);
-      assert.equal(telemetry.actualH2Count, telemetry.actualSections);
-      assert.equal(telemetry.actualH3Count, 1);
-      assert.ok((telemetry.h2AchievementPercent ?? 0) > 0);
-      assert.ok((telemetry.h3AchievementPercent ?? 0) >= 0);
-      assert.ok((telemetry.targetAchievementPercent ?? 0) > 0);
-      assert.ok(telemetry.plannerOutcome);
-      assert.ok((telemetry.researchConceptCount ?? 0) >= 0);
-      assert.ok(Array.isArray(telemetry.researchConcepts));
-      assert.ok((telemetry.plannedBreadthRatio ?? 0) >= 0);
-      assert.ok((telemetry.actualBreadthCoverage ?? 0) >= 0);
-      assert.ok((telemetry.actualBreadthCoveragePercent ?? 0) >= 0);
-      assert.ok(telemetry.breadthStatus);
-      assert.equal(telemetry.finishReason, "stop");
-      assert.ok(["generated", "needs_review"].includes(telemetry.reviewStatus));
-      assert.equal(telemetry.sourcesDiscovered, telemetry.sourcesAccepted + telemetry.sourcesRejected);
-      assert.ok(telemetry.sourcesDiscovered > 0);
-      assert.ok(telemetry.sourcesRejected >= 0);
-      assert.ok(telemetry.findingsExtracted > 0);
-      assert.ok(telemetry.researchTokens > 0);
-      assert.equal(telemetry.estimatedAiCostUsd, 0.004);
-      assert.equal(telemetry.exaSearchCalls, 5);
-      assert.equal(telemetry.exaContentCalls, 5);
-      assert.equal(telemetry.estimatedResearchCostUsd, 0.015);
-      assert.equal(telemetry.totalCostUsd, 0.019);
-      assert.equal(telemetry.metadata.finishReason, "stop");
-      assert.ok(telemetry.metadata.planningDiagnostics);
-      assert.ok((telemetry.generationDurationMs ?? -1) >= 0);
-      const article = await store.getArticle(job.articleId);
-      assert.ok(article?.planningDiagnostics);
-      assert.equal(article.planningDiagnostics.actualH3Count, 1);
-    } finally {
-      restoreEnv("EXA_SEARCH_COST_USD", previousSearchCost);
-      restoreEnv("EXA_CONTENT_COST_USD", previousContentCost);
-    }
+    const telemetry = await store.getGenerationTelemetry(job.articleId);
+    assert.ok(telemetry);
+    assert.equal(telemetry.projectId, job.projectId);
+    assert.equal(telemetry.articleId, job.articleId);
+    assert.equal(telemetry.jobId, job.id);
+    assert.equal(telemetry.generationProvider, "test-provider");
+    assert.equal(telemetry.model, "metered-model");
+    assert.equal(telemetry.generationModel, "metered-model");
+    assert.equal(telemetry.inputTokens, 1200);
+    assert.equal(telemetry.outputTokens, 800);
+    assert.equal(telemetry.totalTokens, 2000);
+    assert.equal(telemetry.generationTokens, 2000);
+    assert.ok(telemetry.targetWords > 0);
+    assert.equal(telemetry.profileVersion, 1);
+    assert.equal(telemetry.region, "global");
+    assert.equal(telemetry.industry, "general");
+    assert.equal(telemetry.audience, "general_audience");
+    assert.equal(telemetry.regionAwarenessActive, false);
+    assert.ok(typeof telemetry.profileRelevanceScore === "number");
+    assert.ok(telemetry.actualWords > 0);
+    assert.ok(telemetry.plannedSections > 0);
+    assert.ok(telemetry.actualSections > 0);
+    assert.equal(telemetry.plannedH2Count, telemetry.plannedSections);
+    assert.ok((telemetry.plannedH3Count ?? 0) >= 0);
+    assert.ok(telemetry.expectedDepth);
+    assert.equal(telemetry.actualH2Count, telemetry.actualSections);
+    assert.equal(telemetry.actualH3Count, 1);
+    assert.ok((telemetry.h2AchievementPercent ?? 0) > 0);
+    assert.ok((telemetry.h3AchievementPercent ?? 0) >= 0);
+    assert.ok((telemetry.targetAchievementPercent ?? 0) > 0);
+    assert.ok(telemetry.plannerOutcome);
+    assert.ok((telemetry.researchConceptCount ?? 0) >= 0);
+    assert.ok(Array.isArray(telemetry.researchConcepts));
+    assert.ok((telemetry.plannedBreadthRatio ?? 0) >= 0);
+    assert.ok((telemetry.actualBreadthCoverage ?? 0) >= 0);
+    assert.ok((telemetry.actualBreadthCoveragePercent ?? 0) >= 0);
+    assert.ok(telemetry.breadthStatus);
+    assert.equal(telemetry.finishReason, "stop");
+    assert.ok(["generated", "needs_review"].includes(telemetry.reviewStatus));
+    assert.equal(telemetry.sourcesDiscovered, telemetry.sourcesAccepted + telemetry.sourcesRejected);
+    assert.ok(telemetry.sourcesDiscovered > 0);
+    assert.ok(telemetry.sourcesRejected >= 0);
+    assert.ok(telemetry.findingsExtracted > 0);
+    assert.ok(telemetry.researchTokens > 0);
+    assert.equal(telemetry.estimatedAiCostUsd, 0.004);
+    assert.equal(telemetry.estimatedGenerationCostUsd, 0.004);
+    assert.equal(telemetry.exaSearchCalls, 5);
+    assert.equal(telemetry.exaSearchRequests, 5);
+    assert.equal(telemetry.exaContentCalls, 25);
+    assert.equal(telemetry.exaContentPages, 25);
+    assert.equal(telemetry.estimatedExaSearchCostUsd, 0.035);
+    assert.equal(telemetry.estimatedExaContentCostUsd, 0.025);
+    assert.equal(telemetry.estimatedResearchCostUsd, 0.06);
+    assert.equal(telemetry.totalCostUsd, 0.064);
+    assert.ok((telemetry.costPerWord ?? 0) > 0);
+    assert.ok((telemetry.costPerSource ?? 0) > 0);
+    assert.equal(telemetry.metadata.finishReason, "stop");
+    assert.ok(telemetry.metadata.planningDiagnostics);
+    assert.ok((telemetry.generationDurationMs ?? -1) >= 0);
+    assert.ok((telemetry.totalDurationMs ?? -1) >= 0);
+    const article = await store.getArticle(job.articleId);
+    assert.ok(article?.planningDiagnostics);
+    assert.ok(article.costTelemetry);
+    assert.equal(article.costTelemetry.exaSearchRequests, 5);
+    assert.equal(article.costTelemetry.exaContentPages, 25);
+    assert.equal(article.planningDiagnostics.actualH3Count, 1);
   });
 
   it("regenerates later by moving an item to the queue end with settings preserved", async () => {

@@ -7,6 +7,7 @@ const expansion = readFileSync("db/migrations/0005_telemetry_expansion.sql", "ut
 const profileMigration = readFileSync("db/migrations/0006_project_identity_profile.sql", "utf8");
 const planningMigration = readFileSync("db/migrations/0007_planning_diagnostics.sql", "utf8");
 const breadthMigration = readFileSync("db/migrations/0008_topic_breadth_diagnostics.sql", "utf8");
+const costMigration = readFileSync("db/migrations/0009_article_cost_telemetry.sql", "utf8");
 
 test("generation telemetry migration creates article-level cost table", () => {
   const body = tableBody("generation_telemetry");
@@ -101,6 +102,26 @@ test("topic breadth diagnostics migration adds concept coverage telemetry", () =
   }
   assert.match(breadthMigration, /generation_telemetry_breadth_idx/);
   assert.match(breadthMigration, /planningDiagnostics,researchConcepts/);
+});
+
+test("article cost telemetry migration adds actual usage and derived cost columns", () => {
+  for (const column of [
+    "generation_provider text",
+    "generation_model text",
+    "total_tokens integer not null default 0",
+    "estimated_generation_cost_usd numeric not null default 0",
+    "exa_search_requests integer not null default 0",
+    "exa_content_pages integer not null default 0",
+    "estimated_exa_search_cost_usd numeric not null default 0",
+    "estimated_exa_content_cost_usd numeric not null default 0",
+    "total_duration_ms integer",
+    "cost_per_word numeric not null default 0",
+    "cost_per_research_concept numeric not null default 0",
+    "cost_per_source numeric not null default 0"
+  ]) {
+    assert.match(costMigration, new RegExp(escapeRegExp(column)));
+  }
+  assert.match(costMigration, /generation_telemetry_cost_idx/);
 });
 
 test("telemetry export status tracks Google Sheets delivery separately", () => {
