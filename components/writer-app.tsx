@@ -900,12 +900,20 @@ function Workbench() {
             <Play className="size-3 fill-current" /> {generateButton.label}
           </button>
           {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
-            <button onClick={stopRun} disabled={busy && !running} className="h-7 rounded-md px-2 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">
+            <button
+              onClick={stopRun}
+              disabled={busy && !running}
+              className="h-7 rounded-md bg-surface-3 px-2.5 text-[12px] font-medium text-ink shadow-sm hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+            >
               Stop after current
             </button>
           )}
           {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
-            <button onClick={emergencyStopRun} className="h-7 rounded-md px-2 text-[12px] text-danger hover:bg-danger/10" title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried.">
+            <button
+              onClick={emergencyStopRun}
+              className="h-7 rounded-md bg-danger/80 px-2.5 text-[12px] font-medium text-white shadow-sm hover:bg-danger"
+              title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried."
+            >
               Emergency stop
             </button>
           )}
@@ -1301,6 +1309,7 @@ function ProjectDashboard({
   const attentionRows = inventoryRows
     .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "processing")
     .slice(0, 8);
+  const profile = state?.project.profile;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1310,6 +1319,11 @@ function ProjectDashboard({
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
             <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? articles.length)} articles in this workspace</div>
+            {profile && (
+              <div className="mono mt-1 text-[11px] text-ink-muted">
+                {profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words · v{profile.profileVersion}
+              </div>
+            )}
           </div>
           <ProjectExportMenu summary={summary} />
         </div>
