@@ -13,11 +13,38 @@ export interface ContentControls {
   lengthTargetWords: number;
 }
 
+export interface ProjectProfile {
+  profileVersion: number;
+  regionKey: string;
+  regionLabel: string;
+  industryKey: string;
+  industryLabel: string;
+  customIndustryLabel?: string;
+  audienceKey: string;
+  audienceLabel: string;
+  defaultTargetWords: number;
+}
+
+export interface ProjectProfileSnapshot {
+  profileVersion: number;
+  region: string;
+  regionLabel: string;
+  industry: string;
+  industryLabel: string;
+  audience: string;
+  audienceLabel: string;
+  targetWords: number;
+  regionAwarenessActive: boolean;
+  industryAwarenessActive: boolean;
+  audienceAwarenessActive: boolean;
+}
+
 export interface ProjectDocument {
   id: string;
   organisationId?: string;
   name: string;
   slug?: string;
+  profile?: ProjectProfile;
   createdByUserId?: string;
   createdAt: string;
   updatedAt: string;
@@ -198,6 +225,8 @@ export interface ResearchPack {
   exaSearchCalls?: number;
   exaContentCalls?: number;
   estimatedResearchCostUsd?: number;
+  profileSnapshot?: ProjectProfileSnapshot | null;
+  profileRelevanceScore?: number | null;
   createdAt: string;
 }
 
@@ -260,6 +289,7 @@ export interface ValidationResult {
   needsReviewReasons: string[];
   qualityScore: number;
   sectionScores: Record<string, number>;
+  profileRelevanceScore?: number | null;
   faqScore: number;
   seoScore: number;
 }
@@ -281,6 +311,8 @@ export interface ArticleDocument {
   versionedAt?: string | null;
   wordCount: number;
   targetWords?: number;
+  profileSnapshot?: ProjectProfileSnapshot | null;
+  profileRelevanceScore?: number | null;
   qualityScore: number;
   researchSummary: string;
   validation: ValidationResult;
@@ -305,9 +337,33 @@ export interface GenerationTelemetryDocument {
   projectId: string;
   articleId: string;
   jobId?: string;
+  createdByUserId?: string | null;
   model?: string | null;
+  targetWords: number;
+  actualWords: number;
+  plannedSections: number;
+  actualSections: number;
+  finishReason?: string | null;
+  reviewStatus: JobStatus;
+  profileVersion?: number | null;
+  region?: string | null;
+  industry?: string | null;
+  audience?: string | null;
+  profileRelevanceScore?: number | null;
+  regionAwarenessActive?: boolean;
+  industryAwarenessActive?: boolean;
+  audienceAwarenessActive?: boolean;
+  researchDurationMs?: number | null;
+  sourcesDiscovered: number;
+  sourcesAccepted: number;
+  sourcesRejected: number;
+  findingsExtracted: number;
+  usefulFactsExtracted: number;
+  citationsGenerated: number;
   inputTokens: number;
   outputTokens: number;
+  researchTokens: number;
+  generationTokens: number;
   estimatedAiCostUsd: number;
   exaSearchCalls: number;
   exaContentCalls: number;
@@ -315,6 +371,25 @@ export interface GenerationTelemetryDocument {
   totalCostUsd: number;
   generationDurationMs?: number | null;
   metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TelemetryExportType = "article" | "daily_summary" | "anomaly";
+export type TelemetryExportStatus = "pending" | "exported" | "failed";
+
+export interface TelemetryExportStatusDocument {
+  id: string;
+  organisationId?: string;
+  exportType: TelemetryExportType;
+  projectId?: string | null;
+  articleId?: string | null;
+  exportKey: string;
+  targetSheet: string;
+  status: TelemetryExportStatus;
+  attempts: number;
+  lastError?: string | null;
+  exportedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -401,6 +476,7 @@ export interface ArticleGenerationInput {
   research: ResearchPack;
   controls: ContentControls;
   plan?: import("@/lib/generation/plan").ArticleGenerationPlan;
+  profileSnapshot?: ProjectProfileSnapshot | null;
 }
 
 export interface EditorInput {
@@ -415,4 +491,5 @@ export interface ValidationInput {
   research: ResearchPack;
   controls?: ContentControls;
   targetWords?: number;
+  profileSnapshot?: ProjectProfileSnapshot | null;
 }

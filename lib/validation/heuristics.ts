@@ -1,14 +1,15 @@
 import { buildArticleGenerationPlan } from "@/lib/generation/plan";
+import { calculateProfileRelevanceScore } from "@/lib/project/profile";
 import type { ValidationInput, ValidationResult } from "@/lib/types";
 
-export function heuristicValidation({ markdown, research, controls, targetWords }: ValidationInput): ValidationResult {
+export function heuristicValidation({ markdown, research, controls, targetWords, profileSnapshot }: ValidationInput): ValidationResult {
   const warnings: string[] = [];
   const needsReviewReasons: string[] = [];
   const h2Count = (markdown.match(/^## /gm) ?? []).length;
   const hasFaq = /faq|frequently asked/i.test(markdown);
   const hasLeakage = /according to (the|this) source|research process|sources say/i.test(markdown);
   const wordCount = markdown.trim().split(/\s+/).filter(Boolean).length;
-  const plan = controls ? buildArticleGenerationPlan(controls) : null;
+  const plan = controls ? buildArticleGenerationPlan(controls, profileSnapshot) : null;
   const effectiveTargetWords = targetWords ?? plan?.targetWords ?? null;
   const minimumWords = effectiveTargetWords ? Math.round(effectiveTargetWords * 0.8) : 650;
   const expectedH2Count = plan?.h2SectionCount ?? 4;
@@ -37,6 +38,7 @@ export function heuristicValidation({ markdown, research, controls, targetWords 
   const qualityScore = Math.max(35, 100 - warnings.length * 10 - (research.confidence < 60 ? 15 : 0));
   const faqScore = hasFaq ? 80 : 45;
   const seoScore = h2Count >= 4 ? 82 : 55;
+  const profileRelevanceScore = calculateProfileRelevanceScore({ snapshot: profileSnapshot, research, markdown });
 
   return {
     pass: warnings.length === 0,
@@ -47,8 +49,10 @@ export function heuristicValidation({ markdown, research, controls, targetWords 
       research: research.confidence,
       intent: 75,
       headings: h2Count >= expectedH2Count ? 82 : 50,
-      readability: wordCount >= minimumWords ? 78 : 55
+      readability: wordCount >= minimumWords ? 78 : 55,
+      ...(profileRelevanceScore === null ? {} : { profileRelevance: profileRelevanceScore })
     },
+    profileRelevanceScore,
     faqScore,
     seoScore
   };

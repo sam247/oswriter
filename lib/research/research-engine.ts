@@ -1,4 +1,5 @@
-import type { ResearchFactSource, ResearchPack, SearchAdapter, SearchResult } from "@/lib/types";
+import { calculateProfileRelevanceScore } from "@/lib/project/profile";
+import type { ProjectProfileSnapshot, ResearchFactSource, ResearchPack, SearchAdapter, SearchResult } from "@/lib/types";
 import { buildQueryVariants, average, toResearchSource } from "@/lib/research/scoring";
 import { nowIso } from "@/lib/defaults";
 import { estimateResearchCostUsd } from "@/lib/telemetry/costs";
@@ -12,9 +13,9 @@ const EXCLUDE_DOMAINS = [
   "definitions.net"
 ];
 
-export async function runResearch(title: string, articleId: string, search: SearchAdapter): Promise<ResearchPack> {
+export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null): Promise<ResearchPack> {
   const started = Date.now();
-  const queries = buildQueryVariants(title);
+  const queries = buildQueryVariants(title, profileSnapshot);
   const seen = new Set<string>();
   const raw: SearchResult[] = [];
   const requestIds: string[] = [];
@@ -45,7 +46,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
     throw new Error(`Research/search completely unavailable: ${message}`);
   }
 
-  const scored = raw.slice(0, 30).map((result, index) => toResearchSource(result, title, index + 1));
+  const scored = raw.slice(0, 30).map((result, index) => toResearchSource(result, title, index + 1, profileSnapshot));
   const accepted = scored
     .filter((source) => source.accepted)
     .sort((a, b) => (b.authorityScore + b.relevanceScore) - (a.authorityScore + a.relevanceScore))
@@ -67,6 +68,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const relevanceScore = average(accepted.map((source) => source.relevanceScore));
   const confidence = Math.round((authorityScore * 0.45) + (relevanceScore * 0.35) + (Math.min(accepted.length, 8) / 8 * 20));
   const warnings: string[] = [];
+  const profileRelevanceScore = calculateProfileRelevanceScore({ snapshot: profileSnapshot, research: { sources: accepted, usefulFacts } });
 
   if (accepted.length < 2) warnings.push("Research found fewer than 2 usable sources.");
   else if (accepted.length < 4) warnings.push("Research source coverage is below the preferred 4+ usable sources.");
@@ -93,6 +95,8 @@ export async function runResearch(title: string, articleId: string, search: Sear
     exaSearchCalls: queries.length,
     exaContentCalls: successfulResponses,
     estimatedResearchCostUsd: estimateResearchCostUsd(queries.length, successfulResponses),
+    profileSnapshot,
+    profileRelevanceScore,
     createdAt: nowIso()
   };
 }

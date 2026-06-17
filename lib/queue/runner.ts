@@ -6,6 +6,8 @@ import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline"
 import { runResearch } from "@/lib/research/research-engine";
 import { statusFromReviewReasons } from "@/lib/status";
 import { roundUsd } from "@/lib/telemetry/costs";
+import { exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
+import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/project/profile";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 
@@ -281,14 +283,16 @@ export class QueueRunner {
     log({ stage: "queue", level: "info", message: "Job claimed for processing.", data: { attempt: job.attempts } });
 
     try {
-      const settings = await this.store.getSettings(job.projectId);
-      const plan = buildArticleGenerationPlan(settings.controls);
+      const { project, settings } = await this.store.ensureProject(job.projectId);
+      const projectProfile = projectProfileFromControls(project.profile, settings.controls);
+      const profileSnapshot = snapshotProjectProfile(projectProfile);
+      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot);
 
       if (!stageDone(job, "research")) {
         job = { ...job, timings: markTiming(job.timings, "research_started_at"), pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
         await this.store.saveJob(job);
         log({ stage: "research", level: "info", message: "Research started." });
-        const research = await runResearch(job.title, job.articleId, this.search);
+        const research = await runResearch(job.title, job.articleId, this.search, profileSnapshot);
         await this.store.saveResearch(research, job.projectId);
         job = { ...job, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", { sourceCount: research.sources.length, confidence: research.confidence }), updatedAt: nowIso() };
         await this.store.saveJob(job);
@@ -321,7 +325,7 @@ export class QueueRunner {
 
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan }));
+      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot }));
       const markdown = generation.markdown;
       job = {
         ...job,
@@ -340,7 +344,7 @@ export class QueueRunner {
       job = { ...job, timings: markTiming(job.timings, "save_started_at"), pipeline: startStage(job.pipeline, "save", "Saving generated article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
       const needsReview = [...research.warnings];
-      const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords });
+      const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords, profileSnapshot });
       needsReview.push(...validation.needsReviewReasons);
       const uniqueReasons = [...new Set(needsReview)];
       const finalStatus = statusFromReviewReasons(uniqueReasons);
@@ -365,9 +369,9 @@ export class QueueRunner {
         updatedAt: completedAt
       };
 
-      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords);
+      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot);
       await this.store.saveArticle(article);
-      await this.saveGenerationTelemetry(job, research, generation, log);
+      await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
       await this.store.saveJob(job);
       await this.store.saveDebug(debug, job.projectId);
@@ -400,20 +404,49 @@ export class QueueRunner {
 
   private async saveGenerationTelemetry(
     job: QueueJob,
+    article: ArticleDocument,
     research: Parameters<typeof heuristicValidation>[0]["research"],
     generation: ModelGenerationResult,
+    plan: ReturnType<typeof buildArticleGenerationPlan>,
     log: (event: Omit<DebugEvent, "at">) => void
   ) {
     const now = nowIso();
     const aiCost = generation.estimatedAiCostUsd ?? 0;
     const researchCost = research.estimatedResearchCostUsd ?? 0;
+    const inputTokens = generation.inputTokens ?? 0;
+    const outputTokens = generation.outputTokens ?? 0;
+    const findingsExtracted = research.usefulFacts.length + research.rejectedFacts.length + research.questionsFound.length + research.headingsFound.length;
     const telemetry: GenerationTelemetryDocument = {
       projectId: job.projectId,
       articleId: job.articleId,
       jobId: job.id,
+      createdByUserId: job.createdByUserId ?? article.createdByUserId ?? null,
       model: generation.model ?? process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
-      inputTokens: generation.inputTokens ?? 0,
-      outputTokens: generation.outputTokens ?? 0,
+      targetWords: plan.targetWords,
+      actualWords: article.wordCount,
+      plannedSections: plan.h2SectionCount,
+      actualSections: countMarkdownSections(article.markdown),
+      finishReason: generation.finishReason ?? null,
+      reviewStatus: article.status,
+      profileVersion: article.profileSnapshot?.profileVersion ?? 0,
+      region: article.profileSnapshot?.region ?? null,
+      industry: article.profileSnapshot?.industry ?? null,
+      audience: article.profileSnapshot?.audience ?? null,
+      profileRelevanceScore: article.profileRelevanceScore ?? null,
+      regionAwarenessActive: article.profileSnapshot?.regionAwarenessActive ?? false,
+      industryAwarenessActive: article.profileSnapshot?.industryAwarenessActive ?? false,
+      audienceAwarenessActive: article.profileSnapshot?.audienceAwarenessActive ?? false,
+      researchDurationMs: durationMs(job.timings?.research_started_at, job.timings?.research_completed_at),
+      sourcesDiscovered: research.sources.length + research.rejectedSources.length,
+      sourcesAccepted: research.sources.length,
+      sourcesRejected: research.rejectedSources.length,
+      findingsExtracted,
+      usefulFactsExtracted: research.usefulFacts.length,
+      citationsGenerated: research.usefulFactSources?.length ?? 0,
+      inputTokens,
+      outputTokens,
+      researchTokens: estimateResearchTokens(research),
+      generationTokens: inputTokens + outputTokens,
       estimatedAiCostUsd: aiCost,
       exaSearchCalls: research.exaSearchCalls ?? research.queries.length,
       exaContentCalls: research.exaContentCalls ?? research.requestIds.length,
@@ -425,7 +458,14 @@ export class QueueRunner {
         finishReason: generation.finishReason ?? null,
         researchRunId: research.id ?? null,
         researchRequestIds: research.requestIds,
-        sourceCount: research.sources.length
+        sourceCount: research.sources.length,
+        targetWords: plan.targetWords,
+        actualWords: article.wordCount,
+        plannedSections: plan.h2SectionCount,
+        actualSections: countMarkdownSections(article.markdown),
+        findingsExtracted,
+        profileSnapshot: article.profileSnapshot ?? null,
+        profileRelevanceScore: article.profileRelevanceScore ?? null
       },
       createdAt: now,
       updatedAt: now
@@ -434,6 +474,8 @@ export class QueueRunner {
     try {
       await this.store.saveGenerationTelemetry(telemetry);
       log({ stage: "generation", level: "info", message: "Generation telemetry recorded.", data: { totalCostUsd: telemetry.totalCostUsd } });
+      await exportArticleTelemetry(this.store, telemetry);
+      log({ stage: "export", level: "info", message: "Article telemetry export attempted.", data: { articleId: telemetry.articleId } });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log({ stage: "generation", level: "warn", message: "Generation telemetry failed without blocking article save.", data: message });
@@ -468,6 +510,23 @@ export class QueueRunner {
       updatedAt: now
     });
   }
+}
+
+function countMarkdownSections(markdown: string) {
+  return (markdown.match(/^##\s+/gm) ?? []).length;
+}
+
+function estimateResearchTokens(research: Parameters<typeof heuristicValidation>[0]["research"]) {
+  const text = [
+    ...research.queries,
+    ...research.usefulFacts,
+    ...research.rejectedFacts,
+    ...research.questionsFound,
+    ...research.headingsFound,
+    ...research.sources.flatMap((source) => [source.title, source.summary ?? "", ...source.highlights]),
+    ...research.rejectedSources.flatMap((source) => [source.title, source.summary ?? "", ...source.highlights])
+  ].join(" ");
+  return Math.ceil(text.length / 4);
 }
 
 function normaliseGenerationResult(result: string | ModelGenerationResult): ModelGenerationResult {
@@ -514,7 +573,8 @@ function createArticle(
   needsReviewReasons: string[],
   validation: ArticleDocument["validation"],
   research: Parameters<typeof heuristicValidation>[0]["research"],
-  targetWords?: number
+  targetWords?: number,
+  profileSnapshot?: ArticleDocument["profileSnapshot"]
 ): ArticleDocument {
   const now = nowIso();
   const sources = research.sources;
@@ -529,6 +589,8 @@ function createArticle(
     updatedAt: now,
     wordCount: countWords(markdown),
     targetWords,
+    profileSnapshot,
+    profileRelevanceScore: validation.profileRelevanceScore ?? null,
     qualityScore: validation.qualityScore,
     researchSummary: research.usefulFacts.slice(0, 5).join(" "),
     validation,

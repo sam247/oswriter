@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, ValidationInput, ValidationResult } from "@/lib/types";
 import { buildArticleGenerationPlan } from "@/lib/generation/plan";
+import { profileContextLines } from "@/lib/project/profile";
 import { cleanJsonText } from "@/lib/text";
 import { estimateAiCostUsd } from "@/lib/telemetry/costs";
 import { heuristicValidation } from "@/lib/validation/heuristics";
@@ -16,7 +17,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
     const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
-    const plan = input.plan ?? buildArticleGenerationPlan(input.controls);
+    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot);
     const response = await this.client.chat.completions.create({
       model,
       messages: promptToMessages(
@@ -79,6 +80,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
         needsReviewReasons: Array.isArray(parsed.needsReviewReasons) ? parsed.needsReviewReasons : [],
         qualityScore: clamp(parsed.qualityScore ?? 60),
         sectionScores: parsed.sectionScores ?? {},
+        profileRelevanceScore: parsed.profileRelevanceScore ?? heuristicValidation(input).profileRelevanceScore ?? null,
         faqScore: clamp(parsed.faqScore ?? 60),
         seoScore: clamp(parsed.seoScore ?? 60)
       };
@@ -108,7 +110,8 @@ function normaliseBaseUrl(value: string | undefined) {
     .replace(/\/v1$/i, "");
 }
 
-function buildGenerationPrompt({ title, research, controls, plan = buildArticleGenerationPlan(controls) }: ArticleGenerationInput) {
+function buildGenerationPrompt({ title, research, controls, profileSnapshot, plan = buildArticleGenerationPlan(controls, profileSnapshot) }: ArticleGenerationInput) {
+  const projectContext = profileContextLines(profileSnapshot);
   return `Write a practical Markdown article.
 
 Non-negotiable:
@@ -120,6 +123,7 @@ Non-negotiable:
 - Write a complete article. Do not stop mid-sentence.
 
 Title: ${title}
+${projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : ""}
 Style profile: ${controls.styleProfile}
 Tone: ${controls.targetTone}
 Target length: about ${plan.targetWords} words (${plan.minimumWords}-${plan.maximumWords} acceptable)
@@ -162,7 +166,8 @@ ${markdown}
 Return only the improved Markdown.`;
 }
 
-function buildValidationPrompt({ title, markdown, research }: ValidationInput) {
+function buildValidationPrompt({ title, markdown, research, profileSnapshot }: ValidationInput) {
+  const projectContext = profileContextLines(profileSnapshot);
   return `Validate this article. Validation is advisory and must never block saving.
 
 Return strict JSON with:
@@ -172,13 +177,16 @@ Return strict JSON with:
   "needsReviewReasons": string[],
   "qualityScore": number,
   "sectionScores": { "research": number, "intent": number, "headings": number, "readability": number },
+  "profileRelevanceScore": number,
   "faqScore": number,
   "seoScore": number
 }
 
 Check research quality, intent match, heading quality, FAQ quality, duplicate sections, duplicate FAQs, source leakage, research-process language, repetition, readability, completeness, and SEO basics.
+Use project context to judge relevance and expected complexity without contaminating the core quality score.
 
 Title: ${title}
+${projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : ""}
 Research confidence: ${research.confidence}
 Article:
 ${markdown}`;

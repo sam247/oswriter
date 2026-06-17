@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const migration = readFileSync("db/migrations/0004_generation_telemetry.sql", "utf8");
+const expansion = readFileSync("db/migrations/0005_telemetry_expansion.sql", "utf8");
+const profileMigration = readFileSync("db/migrations/0006_project_identity_profile.sql", "utf8");
 
 test("generation telemetry migration creates article-level cost table", () => {
   const body = tableBody("generation_telemetry");
@@ -25,6 +27,66 @@ test("generation telemetry migration creates article-level cost table", () => {
   }
 });
 
+test("project identity migration adds profile telemetry and project backfill", () => {
+  for (const column of [
+    "profile_version integer not null default 0",
+    "region text",
+    "industry text",
+    "audience text",
+    "profile_relevance_score integer",
+    "region_awareness_active boolean not null default false",
+    "industry_awareness_active boolean not null default false",
+    "audience_awareness_active boolean not null default false"
+  ]) {
+    assert.match(profileMigration, new RegExp(escapeRegExp(column)));
+  }
+  assert.match(profileMigration, /generation_telemetry_profile_idx/);
+  assert.match(profileMigration, /jsonb_set\(\s*projects\.document,\s*'\{profile\}'/);
+});
+
+test("generation telemetry expansion captures usage quality and cost inputs", () => {
+  for (const column of [
+    "created_by_user_id text",
+    "target_words integer not null default 0",
+    "actual_words integer not null default 0",
+    "planned_sections integer not null default 0",
+    "actual_sections integer not null default 0",
+    "finish_reason text",
+    "review_status text not null default 'generated'",
+    "research_duration_ms integer",
+    "sources_discovered integer not null default 0",
+    "sources_accepted integer not null default 0",
+    "sources_rejected integer not null default 0",
+    "findings_extracted integer not null default 0",
+    "useful_facts_extracted integer not null default 0",
+    "citations_generated integer not null default 0",
+    "research_tokens integer not null default 0",
+    "generation_tokens integer not null default 0"
+  ]) {
+    assert.match(expansion, new RegExp(escapeRegExp(column)));
+  }
+});
+
+test("telemetry export status tracks Google Sheets delivery separately", () => {
+  const body = tableBodyFrom(expansion, "telemetry_export_status");
+
+  for (const column of [
+    "id text primary key",
+    "organisation_id text not null references organisations(id) on delete cascade",
+    "export_type text not null",
+    "export_key text not null",
+    "target_sheet text not null",
+    "status text not null default 'pending'",
+    "attempts integer not null default 0",
+    "last_error text",
+    "exported_at timestamptz"
+  ]) {
+    assert.match(body, new RegExp(escapeRegExp(column)));
+  }
+  assert.match(expansion, /unique \(organisation_id, export_type, export_key, target_sheet\)/);
+  assert.match(expansion, /telemetry_export_status_pending_idx/);
+});
+
 test("generation telemetry is tenant scoped and idempotent by article", () => {
   const body = tableBody("generation_telemetry");
 
@@ -37,7 +99,11 @@ test("generation telemetry is tenant scoped and idempotent by article", () => {
 });
 
 function tableBody(table: string) {
-  const match = migration.match(new RegExp(`create table if not exists ${table} \\(([^;]+)\\);`, "s"));
+  return tableBodyFrom(migration, table);
+}
+
+function tableBodyFrom(sql: string, table: string) {
+  const match = sql.match(new RegExp(`create table if not exists ${table} \\(([^;]+)\\);`, "s"));
   assert.ok(match, `Expected table ${table} to exist.`);
   return match[1];
 }

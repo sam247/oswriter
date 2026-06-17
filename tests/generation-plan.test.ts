@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DEFAULT_CONTROLS } from "@/lib/defaults";
 import { buildArticleGenerationPlan } from "@/lib/generation/plan";
+import { normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { ResearchPack } from "@/lib/types";
 
@@ -14,6 +15,17 @@ describe("article generation planning", () => {
     assert.equal(plan.maximumWords, 3600);
     assert.equal(plan.h2SectionCount, 9);
     assert.equal(plan.maxOutputTokens, 6000);
+  });
+
+  it("uses project profile target words and lightly adapts sections for procurement audiences", () => {
+    const profileSnapshot = snapshotProjectProfile(normalizeProjectProfile({
+      audienceKey: "procurement_teams",
+      defaultTargetWords: 2400
+    }));
+    const plan = buildArticleGenerationPlan({ ...DEFAULT_CONTROLS, lengthTargetWords: 1200 }, profileSnapshot);
+
+    assert.equal(plan.targetWords, 2400);
+    assert.ok(plan.h2SectionCount >= 7);
   });
 
   it("flags outputs that are materially under the requested target", () => {

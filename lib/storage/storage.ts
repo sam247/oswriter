@@ -1,6 +1,7 @@
-import type { ArticleDocument, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { normalizeProjectProfile } from "@/lib/project/profile";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
@@ -48,6 +49,11 @@ export class WorkspaceStore {
         : { ...createDefaultSettings(), projectId: resolvedProjectId };
       await this.storage.putJson(settingsPath(resolvedProjectId), settings);
     }
+    const profile = normalizeProjectProfile(project.profile, settings.controls.lengthTargetWords);
+    if (JSON.stringify(project.profile) !== JSON.stringify(profile)) {
+      project = { ...project, profile, updatedAt: project.updatedAt };
+      await this.storage.putJson(workspacePath(resolvedProjectId), project);
+    }
 
     let queueControl = await this.storage.getJson<QueueControlDocument>(queueControlPath(resolvedProjectId));
     if (!queueControl) {
@@ -80,7 +86,10 @@ export class WorkspaceStore {
   }
 
   async saveProject(project: ProjectDocument) {
-    await this.storage.putJson(workspacePath(project.id), project);
+    await this.storage.putJson(workspacePath(project.id), {
+      ...project,
+      profile: normalizeProjectProfile(project.profile)
+    });
   }
 
   async getProject(projectId: string) {
@@ -101,7 +110,7 @@ export class WorkspaceStore {
       .filter((project): project is ProjectDocument => Boolean(project));
     const { project } = await this.ensureProject(DEFAULT_PROJECT_ID);
     if (!projects.some((item) => item.id === project.id)) projects.push(project);
-    return projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return projects.map((item) => ({ ...item, profile: normalizeProjectProfile(item.profile) })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   async clearProjectData(projectId?: string) {
@@ -177,6 +186,11 @@ export class WorkspaceStore {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
+  async getArticle(articleId: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    return this.storage.getJson<ArticleDocument>(articlePath(articleId, resolvedProjectId));
+  }
+
   async saveArticle(article: ArticleDocument) {
     await this.storage.putJson(articlePath(article.id, article.projectId), article);
     await this.storage.putText(articleMarkdownPath(article.id, article.projectId), article.markdown);
@@ -212,6 +226,23 @@ export class WorkspaceStore {
   async getGenerationTelemetry(articleId: string, projectId?: string) {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
     return this.storage.getJson<GenerationTelemetryDocument>(generationTelemetryPath(articleId, resolvedProjectId));
+  }
+
+  async listGenerationTelemetry(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    return this.storage.listJson<GenerationTelemetryDocument>(generationTelemetryPrefix(resolvedProjectId));
+  }
+
+  async saveTelemetryExportStatus(status: TelemetryExportStatusDocument) {
+    await this.storage.putJson(telemetryExportStatusPath(status.id), status);
+  }
+
+  async getTelemetryExportStatus(id: string) {
+    return this.storage.getJson<TelemetryExportStatusDocument>(telemetryExportStatusPath(id));
+  }
+
+  async listTelemetryExportStatuses() {
+    return this.storage.listJson<TelemetryExportStatusDocument>(telemetryExportStatusPrefix());
   }
 
   async getWorkerLease(projectId?: string) {

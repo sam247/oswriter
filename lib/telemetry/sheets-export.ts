@@ -1,0 +1,355 @@
+import { createSign } from "node:crypto";
+import type { WorkspaceStore } from "@/lib/storage/storage";
+import type { ArticleDocument, GenerationTelemetryDocument, ProjectDocument, TelemetryExportStatusDocument } from "@/lib/types";
+
+export const TELEMETRY_SPREADSHEET_ID = "1G0wbTt7xPoobZZncWZ1K-Y9EP2CjvmOrKP3WZvtAC3o";
+
+export const TELEMETRY_SHEETS = {
+  dailySummary: "Daily Summary",
+  articleTelemetry: "Article Telemetry",
+  anomalies: "Anomalies"
+} as const;
+
+export interface SheetsAppendClient {
+  appendRow(sheetName: string, row: TelemetryCell[]): Promise<void>;
+}
+
+export type TelemetryCell = string | number;
+
+interface ArticleTelemetryContext {
+  telemetry: GenerationTelemetryDocument;
+  article: ArticleDocument | null;
+  project: ProjectDocument | null;
+}
+
+export async function exportArticleTelemetry(store: WorkspaceStore, telemetry: GenerationTelemetryDocument, client = createGoogleSheetsAppendClient()) {
+  const [article, project, history] = await Promise.all([
+    store.getArticle(telemetry.articleId, telemetry.projectId),
+    store.getProject(telemetry.projectId),
+    store.listGenerationTelemetry(telemetry.projectId)
+  ]);
+  const context = { telemetry, article, project };
+
+  await exportOnce(store, client, {
+    id: exportId("article", telemetry.projectId, telemetry.articleId),
+    exportType: "article",
+    projectId: telemetry.projectId,
+    articleId: telemetry.articleId,
+    exportKey: `${telemetry.projectId}:${telemetry.articleId}`,
+    targetSheet: TELEMETRY_SHEETS.articleTelemetry,
+    row: buildArticleTelemetryRow(context)
+  });
+
+  for (const anomaly of evaluateAnomalies(context, history)) {
+    await exportOnce(store, client, {
+      id: exportId("anomaly", telemetry.projectId, telemetry.articleId, anomaly.issueType),
+      exportType: "anomaly",
+      projectId: telemetry.projectId,
+      articleId: telemetry.articleId,
+      exportKey: `${telemetry.projectId}:${telemetry.articleId}:${slug(anomaly.issueType)}`,
+      targetSheet: TELEMETRY_SHEETS.anomalies,
+      row: [
+        dateOnly(telemetry.updatedAt),
+        telemetry.articleId,
+        article?.title ?? telemetry.articleId,
+        project?.name ?? telemetry.projectId,
+        anomaly.issueType,
+        anomaly.expectedValue,
+        anomaly.actualValue
+      ]
+    });
+  }
+}
+
+export async function exportDailyTelemetrySummary(store: WorkspaceStore, date = previousUtcDate(), client = createGoogleSheetsAppendClient()) {
+  const projects = await store.listProjects();
+  const recordsByProject = await Promise.all(projects.map(async (project) => ({
+    project,
+    telemetry: await store.listGenerationTelemetry(project.id)
+  })));
+  const records = recordsByProject.flatMap(({ telemetry }) => telemetry).filter((item) => dateOnly(item.updatedAt) === date);
+  const articles = await Promise.all(records.map((item) => store.getArticle(item.articleId, item.projectId)));
+  const row = buildDailySummaryRow(date, records, articles);
+  await exportOnce(store, client, {
+    id: exportId("daily_summary", date),
+    exportType: "daily_summary",
+    projectId: null,
+    articleId: null,
+    exportKey: date,
+    targetSheet: TELEMETRY_SHEETS.dailySummary,
+    row
+  });
+}
+
+export function buildArticleTelemetryRow({ telemetry, article, project }: ArticleTelemetryContext): TelemetryCell[] {
+  return [
+    dateOnly(telemetry.updatedAt),
+    project?.name ?? telemetry.projectId,
+    telemetry.articleId,
+    article?.title ?? telemetry.articleId,
+    telemetry.profileVersion ?? article?.profileSnapshot?.profileVersion ?? 0,
+    telemetry.region ?? article?.profileSnapshot?.region ?? "",
+    telemetry.industry ?? article?.profileSnapshot?.industry ?? "",
+    telemetry.audience ?? article?.profileSnapshot?.audience ?? "",
+    telemetry.targetWords,
+    telemetry.actualWords,
+    telemetry.plannedSections,
+    telemetry.actualSections,
+    article?.qualityScore ?? "",
+    researchScore(article),
+    telemetry.profileRelevanceScore ?? article?.profileRelevanceScore ?? article?.validation.profileRelevanceScore ?? "",
+    telemetry.sourcesAccepted,
+    telemetry.sourcesRejected,
+    telemetry.findingsExtracted,
+    telemetry.usefulFactsExtracted,
+    telemetry.generationDurationMs ?? "",
+    telemetry.finishReason ?? "",
+    telemetry.reviewStatus,
+    money(telemetry.estimatedResearchCostUsd),
+    money(telemetry.estimatedAiCostUsd),
+    money(telemetry.totalCostUsd)
+  ];
+}
+
+export function buildDailySummaryRow(date: string, records: GenerationTelemetryDocument[], articles: Array<ArticleDocument | null>): TelemetryCell[] {
+  const articlesGenerated = records.length;
+  const wordsGenerated = sum(records.map((item) => item.actualWords));
+  const qualityScores = articles.map((article) => article?.qualityScore).filter(isNumber);
+  const researchScores = articles.map(researchScore).filter(isNumber);
+  const totalCost = sum(records.map((item) => item.totalCostUsd));
+  const averageWordsPerArticle = articlesGenerated ? wordsGenerated / articlesGenerated : 0;
+  return [
+    date,
+    articlesGenerated,
+    wordsGenerated,
+    rounded(averageWordsPerArticle),
+    rounded(average(qualityScores)),
+    rounded(average(researchScores)),
+    sum(records.map((item) => item.sourcesDiscovered)),
+    sum(records.map((item) => item.findingsExtracted)),
+    money(totalCost),
+    money(articlesGenerated ? totalCost / articlesGenerated : 0),
+    money(wordsGenerated ? totalCost / (wordsGenerated / 1000) : 0),
+    rounded(average(records.map((item) => item.generationDurationMs).filter(isNumber)))
+  ];
+}
+
+export function evaluateAnomalies(
+  { telemetry, article }: ArticleTelemetryContext,
+  projectHistory: GenerationTelemetryDocument[]
+) {
+  const anomalies: Array<{ issueType: string; expectedValue: string; actualValue: string }> = [];
+  if (telemetry.targetWords > 0 && telemetry.actualWords < telemetry.targetWords * 0.8) {
+    anomalies.push({
+      issueType: "Under Target Output",
+      expectedValue: `>= ${Math.round(telemetry.targetWords * 0.8)} words`,
+      actualValue: `${telemetry.actualWords} words`
+    });
+  }
+
+  const currentResearchScore = researchScore(article);
+  if (isNumber(currentResearchScore) && currentResearchScore < 70) {
+    anomalies.push({ issueType: "Low Research Score", expectedValue: ">= 70", actualValue: String(currentResearchScore) });
+  }
+
+  if (isNumber(article?.qualityScore) && article.qualityScore < 70) {
+    anomalies.push({ issueType: "Low Quality Score", expectedValue: ">= 70", actualValue: String(article.qualityScore) });
+  }
+
+  const costBaseline = rollingAverage(projectHistory, telemetry.articleId, (item) => item.totalCostUsd);
+  if (costBaseline > 0 && telemetry.totalCostUsd > costBaseline * 2) {
+    anomalies.push({
+      issueType: "High Cost",
+      expectedValue: `<= ${money(costBaseline * 2)}`,
+      actualValue: String(money(telemetry.totalCostUsd))
+    });
+  }
+
+  const durationBaseline = rollingAverage(projectHistory, telemetry.articleId, (item) => item.generationDurationMs ?? null);
+  if (durationBaseline > 0 && (telemetry.generationDurationMs ?? 0) > durationBaseline * 2) {
+    anomalies.push({
+      issueType: "Excessive Duration",
+      expectedValue: `<= ${Math.round(durationBaseline * 2)} ms`,
+      actualValue: `${telemetry.generationDurationMs} ms`
+    });
+  }
+
+  if (telemetry.reviewStatus === "failed") {
+    anomalies.push({ issueType: "Failed Generation", expectedValue: "generated or needs_review", actualValue: "failed" });
+  }
+
+  return anomalies;
+}
+
+export function createGoogleSheetsAppendClient(): SheetsAppendClient {
+  return {
+    async appendRow(sheetName, row) {
+      const spreadsheetId = process.env.WRITER_OS_TELEMETRY_SHEET_ID ?? process.env.GOOGLE_TELEMETRY_SHEET_ID ?? TELEMETRY_SPREADSHEET_ID;
+      const token = await getGoogleAccessToken();
+      const range = encodeURIComponent(`${sheetName}!A:Z`);
+      const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ values: [row] })
+      });
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Google Sheets append failed (${response.status}): ${body.slice(0, 500)}`);
+      }
+    }
+  };
+}
+
+async function exportOnce(
+  store: WorkspaceStore,
+  client: SheetsAppendClient,
+  input: {
+    id: string;
+    exportType: TelemetryExportStatusDocument["exportType"];
+    projectId: string | null;
+    articleId: string | null;
+    exportKey: string;
+    targetSheet: string;
+    row: TelemetryCell[];
+  }
+) {
+  const existing = await store.getTelemetryExportStatus(input.id);
+  if (existing?.status === "exported") return existing;
+  const now = new Date().toISOString();
+  const attempts = (existing?.attempts ?? 0) + 1;
+  const base: TelemetryExportStatusDocument = {
+    id: input.id,
+    organisationId: existing?.organisationId,
+    exportType: input.exportType,
+    projectId: input.projectId,
+    articleId: input.articleId,
+    exportKey: input.exportKey,
+    targetSheet: input.targetSheet,
+    status: "pending",
+    attempts,
+    lastError: null,
+    exportedAt: null,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now
+  };
+  await store.saveTelemetryExportStatus(base);
+
+  try {
+    await client.appendRow(input.targetSheet, input.row);
+    const exported: TelemetryExportStatusDocument = {
+      ...base,
+      status: "exported",
+      exportedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await store.saveTelemetryExportStatus(exported);
+    return exported;
+  } catch (error) {
+    const failed: TelemetryExportStatusDocument = {
+      ...base,
+      status: "failed",
+      lastError: error instanceof Error ? error.message : String(error),
+      updatedAt: new Date().toISOString()
+    };
+    await store.saveTelemetryExportStatus(failed);
+    return failed;
+  }
+}
+
+async function getGoogleAccessToken() {
+  const directToken = process.env.GOOGLE_SHEETS_ACCESS_TOKEN;
+  if (directToken) return directToken;
+
+  const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!clientEmail || !privateKey) {
+    throw new Error("Google Sheets credentials are not configured. Set GOOGLE_SHEETS_ACCESS_TOKEN or GOOGLE_SERVICE_ACCOUNT_EMAIL plus GOOGLE_PRIVATE_KEY.");
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const assertion = [
+    base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" })),
+    base64Url(JSON.stringify({
+      iss: clientEmail,
+      scope: "https://www.googleapis.com/auth/spreadsheets",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: nowSeconds,
+      exp: nowSeconds + 3600
+    }))
+  ].join(".");
+  const signature = createSign("RSA-SHA256").update(assertion).sign(privateKey);
+  const jwt = `${assertion}.${base64Url(signature)}`;
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt
+    })
+  });
+  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string; error?: string };
+  if (!response.ok || !body.access_token) {
+    throw new Error(body.error_description ?? body.error ?? `Google OAuth token request failed (${response.status})`);
+  }
+  return body.access_token;
+}
+
+function base64Url(value: string | Buffer) {
+  return Buffer.from(value).toString("base64url");
+}
+
+function researchScore(article: ArticleDocument | null) {
+  const score = article?.validation.sectionScores.research;
+  return isNumber(score) ? score : "";
+}
+
+function rollingAverage(records: GenerationTelemetryDocument[], articleId: string, select: (record: GenerationTelemetryDocument) => number | null) {
+  const values = records
+    .filter((record) => record.articleId !== articleId)
+    .map(select)
+    .filter(isNumber)
+    .filter((value) => value > 0)
+    .slice(0, 20);
+  return average(values);
+}
+
+function previousUtcDate() {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function dateOnly(value: string) {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function sum(values: number[]) {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function average(values: number[]) {
+  return values.length ? sum(values) / values.length : 0;
+}
+
+function money(value: number) {
+  return Number(value.toFixed(6));
+}
+
+function rounded(value: number) {
+  return Number(value.toFixed(2));
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function exportId(...parts: string[]) {
+  return parts.map(slug).join(":");
+}
+
+function slug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "item";
+}

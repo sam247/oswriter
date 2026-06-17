@@ -1,4 +1,5 @@
-import type { ResearchSource, SearchResult } from "@/lib/types";
+import { profileSourcePreference } from "@/lib/project/profile";
+import type { ProjectProfileSnapshot, ResearchSource, SearchResult } from "@/lib/types";
 import { domainFromUrl } from "@/lib/text";
 
 const AUTHORITY_DOMAINS = [
@@ -29,7 +30,7 @@ const BAD_URL_PATTERNS = [
   /glossary/i
 ];
 
-export function buildQueryVariants(title: string) {
+export function buildQueryVariants(title: string, profileSnapshot?: ProjectProfileSnapshot | null) {
   const cleaned = title
     .replace(/\b(explained|guide|complete guide|ultimate guide)\b/gi, "")
     .replace(/\s+/g, " ")
@@ -37,16 +38,18 @@ export function buildQueryVariants(title: string) {
   const variants = [
     title,
     cleaned,
-    `${cleaned} UK`,
     `${cleaned} guidance`,
     `${cleaned} requirements`,
     `${cleaned} standard`,
     `${cleaned} legislation`
   ];
+  if (profileSnapshot?.region === "united_kingdom") variants.push(`${cleaned} UK`);
+  if (profileSnapshot?.region === "united_states") variants.push(`${cleaned} US`);
+  if (profileSnapshot?.region === "europe") variants.push(`${cleaned} EU`);
   return [...new Set(variants.filter(Boolean))];
 }
 
-export function toResearchSource(result: SearchResult, title: string, index: number): ResearchSource {
+export function toResearchSource(result: SearchResult, title: string, index: number, profileSnapshot?: ProjectProfileSnapshot | null): ResearchSource {
   const domain = domainFromUrl(result.url);
   const text = [result.title, result.summary, result.text, ...(result.highlights ?? [])].join(" ").toLowerCase();
   const titleTokens = title.toLowerCase().split(/\W+/).filter((t) => t.length > 3);
@@ -54,7 +57,7 @@ export function toResearchSource(result: SearchResult, title: string, index: num
   const relevanceScore = Math.min(100, Math.round((overlap / Math.max(titleTokens.length, 1)) * 80 + (result.summary || result.text ? 20 : 0)));
   const authorityScore = authorityForDomain(domain);
   const rejectionReason = rejectionReasonFor(result.url, domain, title);
-  return {
+  const source: ResearchSource = {
     id: `src_${index}`,
     title: result.title || result.url,
     url: result.url,
@@ -66,6 +69,12 @@ export function toResearchSource(result: SearchResult, title: string, index: num
     relevanceScore,
     accepted: !rejectionReason && relevanceScore >= 25,
     rejectionReason
+  };
+  const preference = profileSourcePreference(source, profileSnapshot);
+  return {
+    ...source,
+    authorityScore: Math.min(100, authorityScore + Math.round(preference * 0.6)),
+    relevanceScore: Math.min(100, relevanceScore + Math.round(preference * 0.4))
   };
 }
 

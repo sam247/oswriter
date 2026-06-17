@@ -3,13 +3,15 @@ import { createDefaultProject, createDefaultSettings, nowIso } from "@/lib/defau
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
 import { slugId } from "@/lib/text";
-import { getQueueMutationBlocker } from "@/lib/queue/safety";
+import { getQueueMutationBlocker, getSettingsMutationBlocker } from "@/lib/queue/safety";
+import { normalizeProjectProfile } from "@/lib/project/profile";
+import type { ProjectProfile } from "@/lib/types";
 
 export async function PATCH(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; name?: string };
+  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; name?: string; profile?: Partial<ProjectProfile> };
   const { store } = createRuntime();
 
   const activeProjectId = body.activeProjectId?.trim();
@@ -22,10 +24,20 @@ export async function PATCH(req: Request) {
   }
 
   const name = body.name?.trim();
-  if (!name) return NextResponse.json({ error: "Project name is required." }, { status: 400 });
+  if (!name && !body.profile) return NextResponse.json({ error: "Project name or profile is required." }, { status: 400 });
+  if (body.profile) {
+    const blocker = await getSettingsMutationBlocker(store);
+    if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
+  }
 
   const { project } = await store.ensureProject();
-  const updated = { ...project, name, updatedAt: nowIso() };
+  const settings = await store.getSettings(project.id);
+  const updated = {
+    ...project,
+    ...(name ? { name } : {}),
+    ...(body.profile ? { profile: normalizeProjectProfile({ ...project.profile, ...body.profile }, settings.controls.lengthTargetWords) } : {}),
+    updatedAt: nowIso()
+  };
   await store.saveProject(updated);
   const state = await store.getState(updated.id);
   return NextResponse.json({ project: updated, state });
@@ -35,12 +47,19 @@ export async function POST(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as { name?: string };
+  const body = await req.json().catch(() => ({})) as { name?: string; profile?: Partial<ProjectProfile> };
   const name = body.name?.trim() || "Untitled Project";
   const { store } = createRuntime();
   const now = nowIso();
   const projectId = slugId("project");
-  const project = { ...createDefaultProject(), id: projectId, name, createdAt: now, updatedAt: now };
+  const project = {
+    ...createDefaultProject(),
+    id: projectId,
+    name,
+    profile: normalizeProjectProfile(body.profile),
+    createdAt: now,
+    updatedAt: now
+  };
   await store.saveProject(project);
   await store.saveSettings({ ...createDefaultSettings(), projectId });
   await store.setActiveProjectId(projectId);

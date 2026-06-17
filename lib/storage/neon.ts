@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
+import { normalizeProjectProfile } from "@/lib/project/profile";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
-import type { ArticleDocument, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -46,6 +47,7 @@ export class NeonStorageProvider implements StorageProvider {
       if (isResearchPath(path)) return this.getDocument<T>("research_packs", researchId(pathProjectId(path), pathId(path)));
       if (isDebugPath(path)) return this.getDebug(pathProjectId(path), pathId(path)) as Promise<T | null>;
       if (isGenerationTelemetryPath(path)) return this.getGenerationTelemetry(pathProjectId(path), pathId(path)) as Promise<T | null>;
+      if (isTelemetryExportStatusPath(path)) return this.getTelemetryExportStatus(decodeURIComponent(pathId(path))) as Promise<T | null>;
       if (isWorkerLeasePath(path)) return this.getWorkerLease(pathProjectId(path)) as Promise<T | null>;
       return null;
     });
@@ -63,6 +65,7 @@ export class NeonStorageProvider implements StorageProvider {
       if (isResearchPath(path)) return this.saveResearch(value as ResearchPack, pathProjectId(path));
       if (isDebugPath(path)) return this.saveDebug(value as DebugDocument, pathProjectId(path));
       if (isGenerationTelemetryPath(path)) return this.saveGenerationTelemetry(value as GenerationTelemetryDocument, pathProjectId(path));
+      if (isTelemetryExportStatusPath(path)) return this.saveTelemetryExportStatus(value as TelemetryExportStatusDocument);
       if (isWorkerLeasePath(path)) return this.upsertWorkerLease(value as WorkerLeaseDocument, pathProjectId(path));
     });
   }
@@ -83,6 +86,28 @@ export class NeonStorageProvider implements StorageProvider {
     return this.withFailureLogging("listJson", prefix, async () => {
       if (prefix.endsWith("/jobs/")) return this.listDocuments<T>("jobs", pathProjectId(prefix), "created_at asc");
       if (prefix.endsWith("/articles/")) return this.listDocuments<T>("articles", pathProjectId(prefix), "updated_at desc");
+      if (prefix.endsWith("/telemetry/generations/")) {
+        const tenant = await this.ensureTenant();
+        const projectId = pathProjectId(prefix);
+        const found = rows(await this.sql`
+          select *
+          from generation_telemetry
+          where organisation_id = ${tenant.organisationId}
+            and project_id = ${projectId}
+          order by updated_at desc
+        `);
+        return found.map(generationTelemetryFromRow) as T[];
+      }
+      if (prefix === telemetryExportStatusPrefix()) {
+        const tenant = await this.ensureTenant();
+        const found = rows(await this.sql`
+          select *
+          from telemetry_export_status
+          where organisation_id = ${tenant.organisationId}
+          order by updated_at desc
+        `);
+        return found.map(telemetryExportStatusFromRow) as T[];
+      }
       return [];
     });
   }
@@ -94,13 +119,16 @@ export class NeonStorageProvider implements StorageProvider {
   async listProjects() {
     return this.withFailureLogging("listProjects", "projects/", async () => {
       const tenant = await this.ensureTenant();
-      const found = rows(await this.sql`
+    const found = rows(await this.sql`
         select document
         from projects
         where organisation_id = ${tenant.organisationId}
         order by updated_at desc
       `);
-      return found.map((row) => row.document as ProjectDocument);
+      return found.map((row) => {
+        const project = row.document as ProjectDocument;
+        return { ...project, profile: normalizeProjectProfile(project.profile) };
+      });
     });
   }
 
@@ -128,6 +156,9 @@ export class NeonStorageProvider implements StorageProvider {
         await this.sql`delete from debug_events where project_id = ${pathProjectId(path)} and article_id = ${pathId(path)}`;
       } else if (isGenerationTelemetryPath(path)) {
         await this.sql`delete from generation_telemetry where project_id = ${pathProjectId(path)} and article_id = ${pathId(path)}`;
+      } else if (isTelemetryExportStatusPath(path)) {
+        const tenant = await this.ensureTenant();
+        await this.sql`delete from telemetry_export_status where organisation_id = ${tenant.organisationId} and id = ${decodeURIComponent(pathId(path))}`;
       } else if (isExportPath(path)) {
         await this.sql`delete from exports where project_id = ${pathProjectId(path)} and blob_path = ${path}`;
       } else if (isWorkerLeasePath(path)) {
@@ -511,6 +542,16 @@ export class NeonStorageProvider implements StorageProvider {
       const found = rows(await this.sql`select article_id from generation_telemetry where project_id = ${projectId} order by updated_at desc`);
       return found.map((row) => generationTelemetryPath(String(row.article_id), projectId));
     }
+    if (prefix === telemetryExportStatusPrefix()) {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select id
+        from telemetry_export_status
+        where organisation_id = ${tenant.organisationId}
+        order by updated_at desc
+      `);
+      return found.map((row) => telemetryExportStatusPath(String(row.id)));
+    }
     if (prefix.endsWith("/queue/")) {
       const tenant = await this.ensureTenant();
       const found = rows(await this.sql`select project_id from queue_controls where organisation_id = ${tenant.organisationId} and project_id = ${projectId}`);
@@ -525,7 +566,8 @@ export class NeonStorageProvider implements StorageProvider {
 
   private async getProject(projectId: string) {
     const found = rows(await this.sql`select document from projects where id = ${projectId}`);
-    return found[0]?.document as ProjectDocument | null ?? null;
+    const project = found[0]?.document as ProjectDocument | null ?? null;
+    return project ? { ...project, profile: normalizeProjectProfile(project.profile) } : null;
   }
 
   private async getActiveProject() {
@@ -966,22 +1008,56 @@ export class NeonStorageProvider implements StorageProvider {
     const next = withGenerationTelemetryDefaults(telemetry, tenant, projectId);
     await this.sql`
       insert into generation_telemetry (
-        id, organisation_id, project_id, article_id, job_id, model, input_tokens, output_tokens,
+        id, organisation_id, project_id, article_id, job_id, created_by_user_id, model,
+        target_words, actual_words, planned_sections, actual_sections, finish_reason, review_status,
+        profile_version, region, industry, audience, profile_relevance_score, region_awareness_active,
+        industry_awareness_active, audience_awareness_active, research_duration_ms, sources_discovered, sources_accepted, sources_rejected, findings_extracted,
+        useful_facts_extracted, citations_generated, input_tokens, output_tokens, research_tokens, generation_tokens,
         estimated_ai_cost_usd, exa_search_calls, exa_content_calls, estimated_research_cost_usd,
         total_cost_usd, generation_duration_ms, metadata, created_at, updated_at
       )
       values (
-        ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.jobId ?? null},
-        ${next.model ?? null}, ${next.inputTokens}, ${next.outputTokens}, ${next.estimatedAiCostUsd},
+        ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.jobId ?? null}, ${next.createdByUserId ?? null},
+        ${next.model ?? null}, ${next.targetWords}, ${next.actualWords}, ${next.plannedSections}, ${next.actualSections},
+        ${next.finishReason ?? null}, ${next.reviewStatus}, ${next.profileVersion ?? 0}, ${next.region ?? null},
+        ${next.industry ?? null}, ${next.audience ?? null}, ${next.profileRelevanceScore ?? null},
+        ${Boolean(next.regionAwarenessActive)}, ${Boolean(next.industryAwarenessActive)}, ${Boolean(next.audienceAwarenessActive)},
+        ${next.researchDurationMs ?? null}, ${next.sourcesDiscovered},
+        ${next.sourcesAccepted}, ${next.sourcesRejected}, ${next.findingsExtracted}, ${next.usefulFactsExtracted},
+        ${next.citationsGenerated}, ${next.inputTokens}, ${next.outputTokens}, ${next.researchTokens}, ${next.generationTokens}, ${next.estimatedAiCostUsd},
         ${next.exaSearchCalls}, ${next.exaContentCalls}, ${next.estimatedResearchCostUsd}, ${next.totalCostUsd},
         ${next.generationDurationMs ?? null}, ${JSON.stringify(next.metadata)}::jsonb,
         ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
       )
       on conflict (organisation_id, project_id, article_id) do update set
         job_id = excluded.job_id,
+        created_by_user_id = excluded.created_by_user_id,
         model = excluded.model,
+        target_words = excluded.target_words,
+        actual_words = excluded.actual_words,
+        planned_sections = excluded.planned_sections,
+        actual_sections = excluded.actual_sections,
+        finish_reason = excluded.finish_reason,
+        review_status = excluded.review_status,
+        profile_version = excluded.profile_version,
+        region = excluded.region,
+        industry = excluded.industry,
+        audience = excluded.audience,
+        profile_relevance_score = excluded.profile_relevance_score,
+        region_awareness_active = excluded.region_awareness_active,
+        industry_awareness_active = excluded.industry_awareness_active,
+        audience_awareness_active = excluded.audience_awareness_active,
+        research_duration_ms = excluded.research_duration_ms,
+        sources_discovered = excluded.sources_discovered,
+        sources_accepted = excluded.sources_accepted,
+        sources_rejected = excluded.sources_rejected,
+        findings_extracted = excluded.findings_extracted,
+        useful_facts_extracted = excluded.useful_facts_extracted,
+        citations_generated = excluded.citations_generated,
         input_tokens = excluded.input_tokens,
         output_tokens = excluded.output_tokens,
+        research_tokens = excluded.research_tokens,
+        generation_tokens = excluded.generation_tokens,
         estimated_ai_cost_usd = excluded.estimated_ai_cost_usd,
         exa_search_calls = excluded.exa_search_calls,
         exa_content_calls = excluded.exa_content_calls,
@@ -989,6 +1065,54 @@ export class NeonStorageProvider implements StorageProvider {
         total_cost_usd = excluded.total_cost_usd,
         generation_duration_ms = excluded.generation_duration_ms,
         metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `;
+  }
+
+  private async getTelemetryExportStatus(id: string) {
+    const tenant = await this.ensureTenant();
+    const found = rows(await this.sql`
+      select *
+      from telemetry_export_status
+      where organisation_id = ${tenant.organisationId}
+        and id = ${id}
+      limit 1
+    `);
+    return found[0] ? telemetryExportStatusFromRow(found[0]) : null;
+  }
+
+  private async saveTelemetryExportStatus(status: TelemetryExportStatusDocument) {
+    const tenant = await this.ensureTenant();
+    const now = new Date().toISOString();
+    const next: TelemetryExportStatusDocument = {
+      ...status,
+      organisationId: status.organisationId ?? tenant.organisationId,
+      projectId: status.projectId ?? null,
+      articleId: status.articleId ?? null,
+      lastError: status.lastError ?? null,
+      exportedAt: status.exportedAt ?? null,
+      attempts: status.attempts ?? 0,
+      createdAt: status.createdAt ?? now,
+      updatedAt: status.updatedAt ?? now
+    };
+    await this.sql`
+      insert into telemetry_export_status (
+        id, organisation_id, export_type, project_id, article_id, export_key, target_sheet,
+        status, attempts, last_error, exported_at, created_at, updated_at
+      )
+      values (
+        ${next.id}, ${next.organisationId}, ${next.exportType}, ${next.projectId ?? null}, ${next.articleId ?? null},
+        ${next.exportKey}, ${next.targetSheet}, ${next.status}, ${next.attempts}, ${next.lastError ?? null},
+        ${next.exportedAt ?? null}::timestamptz, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+      )
+      on conflict (organisation_id, export_type, export_key, target_sheet) do update set
+        id = excluded.id,
+        project_id = excluded.project_id,
+        article_id = excluded.article_id,
+        status = excluded.status,
+        attempts = excluded.attempts,
+        last_error = excluded.last_error,
+        exported_at = excluded.exported_at,
         updated_at = excluded.updated_at
     `;
   }
@@ -1119,7 +1243,8 @@ function withProjectDefaults(project: ProjectDocument, tenant: TenantSeed): Proj
     ...project,
     organisationId: project.organisationId ?? tenant.organisationId,
     slug: project.slug ?? slugify(project.name || project.id),
-    createdByUserId: project.createdByUserId ?? tenant.userId
+    createdByUserId: project.createdByUserId ?? tenant.userId,
+    profile: normalizeProjectProfile(project.profile)
   };
 }
 
@@ -1208,6 +1333,30 @@ function withGenerationTelemetryDefaults(telemetry: GenerationTelemetryDocument,
     projectId: telemetry.projectId ?? projectId,
     model: telemetry.model ?? null,
     jobId: telemetry.jobId,
+    createdByUserId: telemetry.createdByUserId ?? null,
+    targetWords: telemetry.targetWords ?? 0,
+    actualWords: telemetry.actualWords ?? 0,
+    plannedSections: telemetry.plannedSections ?? 0,
+    actualSections: telemetry.actualSections ?? 0,
+    finishReason: telemetry.finishReason ?? null,
+    reviewStatus: telemetry.reviewStatus ?? "generated",
+    profileVersion: telemetry.profileVersion ?? 0,
+    region: telemetry.region ?? null,
+    industry: telemetry.industry ?? null,
+    audience: telemetry.audience ?? null,
+    profileRelevanceScore: telemetry.profileRelevanceScore ?? null,
+    regionAwarenessActive: telemetry.regionAwarenessActive ?? false,
+    industryAwarenessActive: telemetry.industryAwarenessActive ?? false,
+    audienceAwarenessActive: telemetry.audienceAwarenessActive ?? false,
+    researchDurationMs: telemetry.researchDurationMs ?? null,
+    sourcesDiscovered: telemetry.sourcesDiscovered ?? 0,
+    sourcesAccepted: telemetry.sourcesAccepted ?? 0,
+    sourcesRejected: telemetry.sourcesRejected ?? 0,
+    findingsExtracted: telemetry.findingsExtracted ?? 0,
+    usefulFactsExtracted: telemetry.usefulFactsExtracted ?? 0,
+    citationsGenerated: telemetry.citationsGenerated ?? 0,
+    researchTokens: telemetry.researchTokens ?? 0,
+    generationTokens: telemetry.generationTokens ?? (telemetry.inputTokens ?? 0) + (telemetry.outputTokens ?? 0),
     generationDurationMs: telemetry.generationDurationMs ?? null,
     createdAt: telemetry.createdAt ?? now,
     updatedAt: telemetry.updatedAt ?? now
@@ -1339,6 +1488,10 @@ function isGenerationTelemetryPath(path: string) {
   return /\/telemetry\/generations\/[^/]+\.json$/.test(path);
 }
 
+function isTelemetryExportStatusPath(path: string) {
+  return path.startsWith(telemetryExportStatusPrefix()) && path.endsWith(".json");
+}
+
 function isWorkerLeasePath(path: string) {
   return path.endsWith("/worker/lease.json");
 }
@@ -1461,9 +1614,33 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
     projectId: String(row.project_id),
     articleId: String(row.article_id),
     jobId: nullableString(row.job_id) ?? undefined,
+    createdByUserId: nullableString(row.created_by_user_id),
     model: nullableString(row.model),
+    targetWords: Number(row.target_words ?? 0),
+    actualWords: Number(row.actual_words ?? 0),
+    plannedSections: Number(row.planned_sections ?? 0),
+    actualSections: Number(row.actual_sections ?? 0),
+    finishReason: nullableString(row.finish_reason),
+    reviewStatus: String(row.review_status ?? "generated") as GenerationTelemetryDocument["reviewStatus"],
+    profileVersion: Number(row.profile_version ?? 0),
+    region: nullableString(row.region),
+    industry: nullableString(row.industry),
+    audience: nullableString(row.audience),
+    profileRelevanceScore: nullableNumber(row.profile_relevance_score),
+    regionAwarenessActive: Boolean(row.region_awareness_active),
+    industryAwarenessActive: Boolean(row.industry_awareness_active),
+    audienceAwarenessActive: Boolean(row.audience_awareness_active),
+    researchDurationMs: nullableNumber(row.research_duration_ms),
+    sourcesDiscovered: Number(row.sources_discovered ?? 0),
+    sourcesAccepted: Number(row.sources_accepted ?? 0),
+    sourcesRejected: Number(row.sources_rejected ?? 0),
+    findingsExtracted: Number(row.findings_extracted ?? 0),
+    usefulFactsExtracted: Number(row.useful_facts_extracted ?? 0),
+    citationsGenerated: Number(row.citations_generated ?? 0),
     inputTokens: Number(row.input_tokens),
     outputTokens: Number(row.output_tokens),
+    researchTokens: Number(row.research_tokens ?? 0),
+    generationTokens: Number(row.generation_tokens ?? Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0)),
     estimatedAiCostUsd: Number(row.estimated_ai_cost_usd),
     exaSearchCalls: Number(row.exa_search_calls),
     exaContentCalls: Number(row.exa_content_calls),
@@ -1471,6 +1648,24 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
     totalCostUsd: Number(row.total_cost_usd),
     generationDurationMs: nullableNumber(row.generation_duration_ms),
     metadata: isRecord(row.metadata) ? row.metadata : {},
+    createdAt: dateIso(row.created_at),
+    updatedAt: dateIso(row.updated_at)
+  };
+}
+
+function telemetryExportStatusFromRow(row: Record<string, unknown>): TelemetryExportStatusDocument {
+  return {
+    id: String(row.id),
+    organisationId: String(row.organisation_id),
+    exportType: String(row.export_type) as TelemetryExportStatusDocument["exportType"],
+    projectId: nullableString(row.project_id),
+    articleId: nullableString(row.article_id),
+    exportKey: String(row.export_key),
+    targetSheet: String(row.target_sheet),
+    status: String(row.status) as TelemetryExportStatusDocument["status"],
+    attempts: Number(row.attempts ?? 0),
+    lastError: nullableString(row.last_error),
+    exportedAt: nullableDate(row.exported_at),
     createdAt: dateIso(row.created_at),
     updatedAt: dateIso(row.updated_at)
   };

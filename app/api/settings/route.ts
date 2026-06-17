@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
 import { nowIso } from "@/lib/defaults";
-import type { AiProviderPreference, ContentControls, WorkspacePreferencesDocument } from "@/lib/types";
-import { getSettingsMutationBlocker } from "@/lib/queue/safety";
+import type { AiProviderPreference, WorkspacePreferencesDocument } from "@/lib/types";
 
-type SettingsPatch = Partial<ContentControls> & {
+type SettingsPatch = {
   preferences?: Partial<{
     account: Partial<WorkspacePreferencesDocument["account"]>;
     notifications: Partial<WorkspacePreferencesDocument["notifications"]>;
@@ -34,31 +33,15 @@ export async function PATCH(req: Request) {
     store.getSettings(),
     store.getWorkspacePreferences()
   ]);
-  const requestedTargetWords = patch.preferences?.operational?.defaultTargetWordCount ?? patch.lengthTargetWords;
-  if (requestedTargetWords !== undefined) {
-    const blocker = await getSettingsMutationBlocker(store);
-    if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
-  }
-  const lengthTargetWords = Number(requestedTargetWords ?? settings.controls.lengthTargetWords);
-  const defaultTargetWordCount = Number.isFinite(lengthTargetWords)
-    ? Math.max(300, Math.min(5000, Math.round(lengthTargetWords)))
-    : settings.controls.lengthTargetWords;
-  const nextPreferences = mergePreferences(preferences, patch, defaultTargetWordCount);
-  const next = {
-    ...settings,
-    controls: {
-      ...settings.controls,
-      lengthTargetWords: defaultTargetWordCount
-    }
-  };
+  const nextPreferences = mergePreferences(preferences, patch);
   await Promise.all([
-    store.saveSettings(next),
+    store.saveSettings(settings),
     store.saveWorkspacePreferences(nextPreferences)
   ]);
-  return NextResponse.json({ settings: next, preferences: nextPreferences });
+  return NextResponse.json({ settings, preferences: nextPreferences });
 }
 
-function mergePreferences(preferences: WorkspacePreferencesDocument, patch: SettingsPatch, defaultTargetWordCount: number): WorkspacePreferencesDocument {
+function mergePreferences(preferences: WorkspacePreferencesDocument, patch: SettingsPatch): WorkspacePreferencesDocument {
   const account = patch.preferences?.account ?? {};
   const notifications = patch.preferences?.notifications ?? {};
   const aiProvider = patch.preferences?.aiProvider ?? {};
@@ -89,7 +72,7 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
       autoStartQueueOnAdd: bool(operational.autoStartQueueOnAdd, preferences.operational.autoStartQueueOnAdd),
       confirmBeforeDeletingArticles: bool(operational.confirmBeforeDeletingArticles, preferences.operational.confirmBeforeDeletingArticles),
       confirmBeforeDeletingProjects: bool(operational.confirmBeforeDeletingProjects, preferences.operational.confirmBeforeDeletingProjects),
-      defaultTargetWordCount,
+      defaultTargetWordCount: preferences.operational.defaultTargetWordCount,
       reuseProjectResearch: false,
       reuseTitleResearch: false
     },

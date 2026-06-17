@@ -1,4 +1,5 @@
 import type { ContentControls, PipelineStep, ProjectDocument, QueueControlDocument, SettingsDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import { createDefaultProjectProfile } from "@/lib/project/profile";
 
 export const DEFAULT_PROJECT_ID = "default";
 
@@ -20,6 +21,7 @@ export function createDefaultProject(): ProjectDocument {
   return {
     id: DEFAULT_PROJECT_ID,
     name: "Default Project",
+    profile: createDefaultProjectProfile(DEFAULT_CONTROLS.lengthTargetWords),
     createdAt: now,
     updatedAt: now
   };

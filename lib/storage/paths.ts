@@ -14,4 +14,7 @@ export const articlesPrefix = (projectId = DEFAULT_PROJECT_ID) => `${root(projec
 export const researchPath = (articleId: string, projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/research/${articleId}.json`;
 export const debugPath = (articleId: string, projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/debug/${articleId}.json`;
 export const generationTelemetryPath = (articleId: string, projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/telemetry/generations/${articleId}.json`;
+export const generationTelemetryPrefix = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/telemetry/generations/`;
+export const telemetryExportStatusPath = (id: string) => `workspace/telemetry/export-status/${encodeURIComponent(id)}.json`;
+export const telemetryExportStatusPrefix = () => "workspace/telemetry/export-status/";
 export const workerLeasePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/worker/lease.json`;

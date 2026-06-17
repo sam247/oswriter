@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
 import { extractFacts, runResearch } from "@/lib/research/research-engine";
 import type { ResearchSource, SearchAdapter } from "@/lib/types";
 
@@ -30,6 +31,44 @@ test("extractFacts decomposes long summaries into attributed useful facts", () =
   assert.equal(facts[0].sourceId, "src_1");
   assert.ok(facts.every((fact) => fact.fact.length >= 45));
   assert.ok(facts.some((fact) => /licensing, insurance and bonding/i.test(fact.fact)));
+});
+
+test("runResearch applies lightweight profile source bias without stuffing queries", async () => {
+  const queries: string[] = [];
+  const profileSnapshot = snapshotProjectProfile(normalizeProjectProfile({
+    regionKey: "united_kingdom",
+    industryKey: "construction",
+    audienceKey: "technical_professionals"
+  }));
+  const search: SearchAdapter = {
+    async search(query) {
+      queries.push(query);
+      return {
+        requestId: `req_${query}`,
+        results: [
+          {
+            title: "UK construction guidance",
+            url: `https://www.gov.uk/guidance/${encodeURIComponent(query)}`,
+            summary: "Foundation contractors should follow British construction standards and engineering guidance for technical professionals.",
+            highlights: ["UK construction projects should follow relevant standards and regulations."]
+          },
+          {
+            title: "Generic blog",
+            url: `https://example.com/${encodeURIComponent(query)}`,
+            summary: "A generic overview for readers.",
+            highlights: ["Simple overview."]
+          }
+        ]
+      };
+    }
+  };
+
+  const research = await runResearch("Foundation Contractors Guide", "article_test", search, profileSnapshot);
+
+  assert.ok(research.sources.some((source) => /gov\.uk/.test(source.domain)));
+  assert.ok(queries.every((query) => !/technical professionals/i.test(query)));
+  assert.ok(queries.every((query) => !/technical professionals|construction technical/i.test(query)));
+  assert.ok((research.profileRelevanceScore ?? 0) > 60);
 });
 
 test("runResearch preserves accepted and rejected source status while populating useful facts", async () => {

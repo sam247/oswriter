@@ -3,8 +3,9 @@
 import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Settings, SkipForward, Trash2, Unlink, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
+import { AUDIENCE_OPTIONS, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 
@@ -20,6 +21,7 @@ type WorkspacePreferencePatch = {
   aiProvider?: Partial<WorkspacePreferencesDocument["aiProvider"]>;
   operational?: Partial<WorkspacePreferencesDocument["operational"]>;
 };
+type ProjectProfilePatch = Partial<ProjectProfile>;
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -473,27 +475,34 @@ function Workbench() {
   }
 
   async function updateLengthTarget(lengthTargetWords: number) {
+    await updateProjectProfile({ defaultTargetWords: lengthTargetWords });
+  }
+
+  async function updateProjectProfile(profilePatch: ProjectProfilePatch) {
+    if (!state) return;
     if (settingsBlockedReason) {
       setMessage(settingsBlockedReason);
       return;
     }
+    const nextProfile = normalizeProjectProfile({ ...state.project.profile, ...profilePatch }, state.settings.controls.lengthTargetWords);
     setState((current) => current ? {
       ...current,
-      settings: {
-        ...current.settings,
-        controls: { ...current.settings.controls, lengthTargetWords }
-      },
-      preferences: {
-        ...current.preferences,
-        operational: { ...current.preferences.operational, defaultTargetWordCount: clampTargetWords(lengthTargetWords) }
-      }
+      project: { ...current.project, profile: nextProfile, updatedAt: new Date().toISOString() },
+      projects: (current.projects ?? []).map((project) => project.id === current.project.id ? { ...project, profile: nextProfile } : project)
     } : current);
-    const res = await fetch("/api/settings", {
+    const res = await fetch("/api/project", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ preferences: { operational: { defaultTargetWordCount: lengthTargetWords } } })
+      body: JSON.stringify({ profile: profilePatch })
     });
-    if (!res.ok) void refresh();
+    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
+    if (res.ok && data.state) {
+      setMessage("Project settings saved.");
+      applyServerState(data.state, "project-profile");
+    } else {
+      setMessage(data.error ?? "Project settings save failed.");
+      await refresh();
+    }
   }
 
   async function renameProject() {
@@ -768,18 +777,7 @@ function Workbench() {
   async function updatePreferences(patch: WorkspacePreferencePatch) {
     if (!state) return;
     const nextPreferences = mergeWorkspacePreferences(state.preferences, patch);
-    const targetWords = patch.operational?.defaultTargetWordCount;
-    setState((current) => current ? {
-      ...current,
-      preferences: nextPreferences,
-      settings: targetWords === undefined ? current.settings : {
-        ...current.settings,
-        controls: {
-          ...current.settings.controls,
-          lengthTargetWords: clampTargetWords(targetWords)
-        }
-      }
-    } : current);
+    setState((current) => current ? { ...current, preferences: nextPreferences } : current);
     const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1024,7 +1022,7 @@ function Workbench() {
                 min={300}
                 max={5000}
                 step={100}
-                value={controls?.lengthTargetWords ?? 1400}
+                value={state?.project.profile?.defaultTargetWords ?? controls?.lengthTargetWords ?? 1400}
                 onChange={(event) => updateLengthTarget(Number(event.target.value))}
                 disabled={Boolean(settingsBlockedReason)}
                 title={settingsBlockedReason ?? "Target article length"}
@@ -1041,6 +1039,7 @@ function Workbench() {
               settingsBlockedReason={settingsBlockedReason}
               onClose={() => setSettingsOpen(false)}
               onUpdatePreferences={updatePreferences}
+              onUpdateProjectProfile={updateProjectProfile}
             />
           ) : selectedArticle || selectedJob ? (
             <>
@@ -1308,14 +1307,17 @@ function SettingsPanel({
   state,
   settingsBlockedReason,
   onClose,
-  onUpdatePreferences
+  onUpdatePreferences,
+  onUpdateProjectProfile
 }: {
   state: AppState;
   settingsBlockedReason: string | null;
   onClose: () => void;
   onUpdatePreferences: (patch: WorkspacePreferencePatch) => void;
+  onUpdateProjectProfile: (patch: ProjectProfilePatch) => void;
 }) {
   const preferences = state.preferences;
+  const profile = normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords);
   const providerLabel = preferences.aiProvider.preference === "bring_your_own_key" ? "Using Personal API Key" : "Using Platform AI";
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1332,6 +1334,34 @@ function SettingsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-2">
+          <SettingsSection title="Project Settings">
+            <div className="rounded-md border border-line bg-surface-2 p-3">
+              <div className="text-[13px] font-medium text-ink">Project Identity</div>
+              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · v{profile.profileVersion}</div>
+            </div>
+            <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => onUpdateProjectProfile({ regionKey })} />
+            <SettingsSelect label="Industry" value={profile.industryKey} options={INDUSTRY_OPTIONS} onChange={(industryKey) => onUpdateProjectProfile({ industryKey })} />
+            {profile.industryKey === "custom" && (
+              <SettingsTextInput label="Custom industry" value={profile.customIndustryLabel ?? ""} onSave={(customIndustryLabel) => onUpdateProjectProfile({ industryKey: "custom", customIndustryLabel })} />
+            )}
+            <SettingsSelect label="Audience" value={profile.audienceKey} options={AUDIENCE_OPTIONS} onChange={(audienceKey) => onUpdateProjectProfile({ audienceKey })} />
+            <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
+              <span className="text-ink-muted">Default target words</span>
+              <input
+                type="number"
+                min={300}
+                max={5000}
+                step={100}
+                defaultValue={profile.defaultTargetWords}
+                disabled={Boolean(settingsBlockedReason)}
+                title={settingsBlockedReason ?? "Project default target words"}
+                onBlur={(event) => onUpdateProjectProfile({ defaultTargetWords: Number(event.currentTarget.value) })}
+                className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
+              />
+            </label>
+            {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
+          </SettingsSection>
+
           <SettingsSection title="Account">
             <SettingsTextInput label="Name" value={preferences.account.name} onSave={(name) => onUpdatePreferences({ account: { name } })} />
             <SettingsTextInput label="Email address" value={preferences.account.email} type="email" onSave={(email) => onUpdatePreferences({ account: { email } })} />
@@ -1373,21 +1403,6 @@ function SettingsPanel({
             <SettingsToggle label="Auto-start queue when articles are added" checked={preferences.operational.autoStartQueueOnAdd} onChange={(autoStartQueueOnAdd) => onUpdatePreferences({ operational: { autoStartQueueOnAdd } })} />
             <SettingsToggle label="Require confirmation before deleting articles" checked={preferences.operational.confirmBeforeDeletingArticles} onChange={(confirmBeforeDeletingArticles) => onUpdatePreferences({ operational: { confirmBeforeDeletingArticles } })} />
             <SettingsToggle label="Require confirmation before deleting projects" checked={preferences.operational.confirmBeforeDeletingProjects} onChange={(confirmBeforeDeletingProjects) => onUpdatePreferences({ operational: { confirmBeforeDeletingProjects } })} />
-            <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
-              <span className="text-ink-muted">Default target word count</span>
-              <input
-                type="number"
-                min={300}
-                max={5000}
-                step={100}
-                defaultValue={preferences.operational.defaultTargetWordCount}
-                disabled={Boolean(settingsBlockedReason)}
-                title={settingsBlockedReason ?? "Default target word count"}
-                onBlur={(event) => onUpdatePreferences({ operational: { defaultTargetWordCount: Number(event.currentTarget.value) } })}
-                className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
-              />
-            </label>
-            {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
             <SettingsToggle label="Reuse project research" checked={false} disabled note="Future option. Existing research reuse is not active yet." onChange={() => undefined} />
             <SettingsToggle label="Reuse title research" checked={false} disabled note="Future option. Title-level research reuse is not active yet." onChange={() => undefined} />
           </SettingsSection>
@@ -1416,6 +1431,26 @@ function SettingsTextInput({ label, value, onSave, type = "text" }: { label: str
         onBlur={(event) => onSave(event.currentTarget.value)}
         className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
       />
+    </label>
+  );
+}
+
+function SettingsSelect({ label, value, options, onChange }: {
+  label: string;
+  value: string;
+  options: readonly { key: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block text-[12px] text-ink-muted">
+      <span>{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+      >
+        {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+      </select>
     </label>
   );
 }
@@ -1540,7 +1575,7 @@ function ProjectInsights({
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
               <MetricLine label="Style" value={state?.settings.controls.styleProfile ?? "-"} />
               <MetricLine label="Tone" value={state?.settings.controls.targetTone || "-"} />
-              <MetricLine label="Target words" value={state?.settings.controls.lengthTargetWords ?? "-"} />
+              <MetricLine label="Target words" value={state?.project.profile?.defaultTargetWords ?? state?.settings.controls.lengthTargetWords ?? "-"} />
               <MetricLine label="Stale recovery" value={state?.settings.staleProcessingMinutes ? `${state.settings.staleProcessingMinutes}m` : "-"} />
             </div>
           </div>
@@ -2810,6 +2845,7 @@ function ProjectContextPanel({
   const queueWaitMs = analytics?.performance.average_queue_wait_ms ?? null;
   const queuedCount = jobs.filter((job) => job.status === "queued").length;
   const status = projectStatus(metrics, jobs);
+  const profile = state ? normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords) : null;
   return (
     <div className="space-y-5">
       {state && summary ? (
@@ -2819,6 +2855,18 @@ function ProjectContextPanel({
               <div className="truncate text-[13px] font-semibold text-ink">{state.project.name}</div>
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{status}</div>
             </div>
+            {profile && (
+              <div className="rounded-md border border-line bg-surface-2 p-3">
+                <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">Active Project Profile</div>
+                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <MetricLine label="Region" value={profile.regionLabel} />
+                  <MetricLine label="Industry" value={profile.industryLabel} />
+                  <MetricLine label="Audience" value={profile.audienceLabel} />
+                  <MetricLine label="Target Words" value={formatNumber(profile.defaultTargetWords)} />
+                  <MetricLine label="Profile Version" value={`v${profile.profileVersion}`} />
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <ProjectStatCard label="Articles" value={formatNumber(summary.articleCount)} />
               <ProjectStatCard label="Generated" value={summary.generatedCount} tone="success" />
@@ -3152,14 +3200,28 @@ function ValidationPanel({
   highlightWarnings: boolean;
 }) {
   const reviewItems = [...article.needsReviewReasons, ...article.validation.warnings];
+  const snapshot = article.profileSnapshot;
   return (
     <div className="space-y-4">
       <MetricGrid items={[
         ["Quality", article.validation.qualityScore],
         ["FAQ", article.validation.faqScore],
         ["SEO", article.validation.seoScore],
+        ["Profile relevance", article.profileRelevanceScore ?? article.validation.profileRelevanceScore ?? "-"],
         ["Warnings", article.validation.warnings.length]
       ]} />
+      {snapshot && (
+        <div className="rounded-md border border-line bg-surface-1 p-3">
+          <PanelTitle title="Article profile snapshot" />
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <MetricLine label="Region" value={snapshot.regionLabel} />
+            <MetricLine label="Industry" value={snapshot.industryLabel} />
+            <MetricLine label="Audience" value={snapshot.audienceLabel} />
+            <MetricLine label="Target words" value={formatNumber(snapshot.targetWords)} />
+            <MetricLine label="Version" value={`v${snapshot.profileVersion}`} />
+          </div>
+        </div>
+      )}
       <div
         ref={warningsRef}
         className={cn(

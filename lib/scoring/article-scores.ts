@@ -150,7 +150,8 @@ function calculateQualityScore(article: ArticleDocument, researchScore: number, 
       { label: "Structure", value: structureQuality },
       { label: "Readability", value: readabilityCompleteness },
       { label: "Warnings", value: warningCount },
-      { label: "Review status", value: article.status === "needs_review" ? "Needs review" : "Clear" }
+      { label: "Review status", value: article.status === "needs_review" ? "Needs review" : "Clear" },
+      ...(article.profileRelevanceScore == null ? [] : [{ label: "Profile relevance", value: article.profileRelevanceScore }])
     ]
   };
 }
