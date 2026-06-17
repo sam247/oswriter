@@ -202,7 +202,7 @@ export function createGoogleSheetsAppendClient(): SheetsAppendClient {
     async appendRow(sheetName, row) {
       const spreadsheetId = process.env.WRITER_OS_TELEMETRY_SHEET_ID ?? process.env.GOOGLE_TELEMETRY_SHEET_ID ?? TELEMETRY_SPREADSHEET_ID;
       const token = await getGoogleAccessToken();
-      const range = encodeURIComponent(`${sheetName}!A:Z`);
+      const range = encodeURIComponent(`${sheetName}!A:AO`);
       const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
         method: "POST",
         headers: {

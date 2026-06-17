@@ -131,6 +131,7 @@ function Workbench() {
   const visibleRecordedRef = useRef<Set<string>>(new Set());
   const visibilityBaselineRef = useRef<Set<string> | null>(null);
   const traceJobIdRef = useRef<string | null>(null);
+  const optimisticClaimsRef = useRef<Map<string, QueueJob>>(new Map());
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -182,14 +183,15 @@ function Workbench() {
   const generateButton = describeGenerateButton(stats, queueMetrics, generateBlocked, state?.queueControl.mode ?? "stopped", Boolean(resumableQueuedJob));
 
   function applyServerState(next: AppState, source: string) {
-    recordStateTrace(next, traceJobIdRef.current, source);
-    setState(next);
+    const merged = mergeOptimisticProcessingClaims(next, optimisticClaimsRef.current);
+    recordStateTrace(merged, traceJobIdRef.current, source);
+    setState(merged);
     const selectedExists = selectedArticleId && (
-      next.jobs.some((job) => job.articleId === selectedArticleId) ||
-      next.articles.some((article) => article.id === selectedArticleId)
+      merged.jobs.some((job) => job.articleId === selectedArticleId) ||
+      merged.articles.some((article) => article.id === selectedArticleId)
     );
     if (!selectedExists) {
-      const active = next.jobs.find((job) => job.status === "processing");
+      const active = merged.jobs.find((job) => job.status === "processing");
       setSelectedArticleId(active?.articleId ?? null);
     }
   }
@@ -365,6 +367,7 @@ function Workbench() {
     }
     const optimisticJob = markNextJobGenerating();
     if (optimisticJob) {
+      optimisticClaimsRef.current.set(optimisticJob.id, optimisticJob);
       if (!traceJobIdRef.current) {
         traceJobIdRef.current = optimisticJob.id;
         resetTransitionTrace();
@@ -380,6 +383,7 @@ function Workbench() {
     });
     activeRequest.current = null;
     if (!res) {
+      optimisticClaimsRef.current.clear();
       setBusy(false);
       setMessage("Run stopped locally. Current server job may finish or recover on next refresh.");
       void refresh();
@@ -388,14 +392,18 @@ function Workbench() {
     const data = await res.json().catch(() => ({})) as { processed?: boolean; job?: QueueJob; error?: string };
     setBusy(false);
     if (!res.ok) {
+      optimisticClaimsRef.current.clear();
       setMessage(data.error ? String(data.error) : "Processing failed.");
       void refresh();
       return res.status === 504;
     }
     if (data.job) {
+      optimisticClaimsRef.current.delete(data.job.id);
       if (traceJobIdRef.current === data.job.id) recordTransitionTrace("process-next-response", data.job);
       upsertJob(data.job);
       if (data.job.status !== "failed") setSelectedArticleId(data.job.articleId);
+    } else {
+      optimisticClaimsRef.current.clear();
     }
     setMessage(data.processed ? `Processed: ${data.job?.title}` : "No queued jobs.");
     void refresh();
@@ -423,6 +431,7 @@ function Workbench() {
     setMessage("Emergency stop requested...");
     stopRequested.current = true;
     activeRequest.current?.abort();
+    optimisticClaimsRef.current.clear();
     setRunning(false);
     setBusy(true);
     const res = await fetch("/api/queue/cancel-current", { method: "POST" });
@@ -911,7 +920,7 @@ function Workbench() {
           {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
             <button
               onClick={emergencyStopRun}
-              className="h-7 rounded-md bg-danger/80 px-2.5 text-[12px] font-medium text-white shadow-sm hover:bg-danger"
+              className="h-7 rounded-md border border-danger/20 bg-danger/10 px-2.5 text-[12px] font-medium text-danger/80 shadow-sm hover:border-danger/30 hover:bg-danger/20 hover:text-danger"
               title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried."
             >
               Emergency stop
@@ -4105,6 +4114,28 @@ function displayStatusLabel(job: QueueJob, article?: ArticleDocument | null) {
 
 function isQueueJobVisible(job: QueueJob) {
   return job.status === "queued" || job.status === "processing" || job.status === "failed" || job.status === "skipped";
+}
+
+function mergeOptimisticProcessingClaims(state: AppState, claims: Map<string, QueueJob>): AppState {
+  if (!claims.size) return state;
+  let changed = false;
+  const jobs = state.jobs.map((job) => {
+    const claimed = claims.get(job.id);
+    if (!claimed) return job;
+    const article = state.articles.find((item) => item.jobId === job.id || item.id === job.articleId);
+    if (article || job.status !== "queued" || claimed.status !== "processing") {
+      claims.delete(job.id);
+      return job;
+    }
+    changed = true;
+    return {
+      ...job,
+      status: "processing" as const,
+      attempts: Math.max(job.attempts, claimed.attempts),
+      updatedAt: claimed.updatedAt
+    };
+  });
+  return changed ? { ...state, jobs } : state;
 }
 
 function isInventoryArticle(article: ArticleDocument) {
