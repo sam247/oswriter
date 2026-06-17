@@ -276,6 +276,16 @@ describe("QueueRunner", () => {
     assert.equal(state.jobs.find((job) => job.id === second.id)?.status, "queued");
   });
 
+  it("does not lock queue reset when stop-after-current has no processing job", async () => {
+    const { store, runner } = setup();
+    const [job] = await runner.addTitles(["Skipped after stop request"]);
+    await runner.stopAfterCurrent();
+    await runner.skipJob(job.id);
+
+    const blocker = await getQueueMutationBlocker(store);
+    assert.equal(blocker, null);
+  });
+
   it("protects queue ownership while a job is processing", async () => {
     const { store, runner } = setup();
     await runner.addTitles(["Owned processing job"]);

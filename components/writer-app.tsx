@@ -4074,6 +4074,7 @@ function describeQueueState(mode: QueueControlMode, jobs: QueueJob[]): QueueStat
   const queued = jobs.filter((job) => job.status === "queued").length;
   const failed = jobs.filter((job) => job.status === "failed").length;
   if (mode === "stop_after_current") {
+    if (!processing && queued === 0) return { mode: "stopped", label: "Stopped", detail: "No active article is processing." };
     return {
       mode,
       label: "Stop After Current",
@@ -4098,7 +4099,6 @@ function queueStateTone(mode: QueueStateDescription["mode"]) {
 function queueMutationBlockReason(state: AppState | null, jobs: QueueJob[]) {
   const processing = jobs.find((job) => job.status === "processing");
   if (processing) return `Queue is processing "${processing.title}". Stop after current or wait before changing queue-critical state.`;
-  if (state?.queueControl.mode === "stop_after_current") return "Queue is stopping after the current article.";
   return null;
 }
 
