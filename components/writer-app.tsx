@@ -110,6 +110,7 @@ function Workbench() {
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
   const [showLeftPane, setShowLeftPane] = useState(true);
   const [showRightPane, setShowRightPane] = useState(true);
   const [articleViewMode, setArticleViewMode] = useState<ArticleViewMode>("rich");
@@ -136,6 +137,9 @@ function Workbench() {
   const projects = state?.projects ?? (state?.project ? [state.project] : []);
   const controls = state?.settings.controls;
   const preferences = state?.preferences;
+  const projectSettingsProject = projectSettingsProjectId
+    ? projects.find((project) => project.id === projectSettingsProjectId) ?? null
+    : null;
   const selectedArticle = useMemo(
     () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : null,
     [articles, selectedArticleId]
@@ -221,7 +225,8 @@ function Workbench() {
 
   useEffect(() => {
     if (selectedArticleId && settingsOpen) setSettingsOpen(false);
-  }, [selectedArticleId, settingsOpen]);
+    if (selectedArticleId && projectSettingsProjectId) setProjectSettingsProjectId(null);
+  }, [selectedArticleId, settingsOpen, projectSettingsProjectId]);
 
   useEffect(() => {
     if (tab !== "project") return;
@@ -478,27 +483,34 @@ function Workbench() {
     await updateProjectProfile({ defaultTargetWords: lengthTargetWords });
   }
 
-  async function updateProjectProfile(profilePatch: ProjectProfilePatch) {
+  async function updateProjectProfile(profilePatch: ProjectProfilePatch, projectId = state?.project.id) {
     if (!state) return;
-    if (settingsBlockedReason) {
+    const targetProjectId = projectId ?? state.project.id;
+    const targetProject = projects.find((project) => project.id === targetProjectId) ?? state.project;
+    const isActiveProject = targetProjectId === state.project.id;
+    if (isActiveProject && settingsBlockedReason) {
       setMessage(settingsBlockedReason);
       return;
     }
-    const nextProfile = normalizeProjectProfile({ ...state.project.profile, ...profilePatch }, state.settings.controls.lengthTargetWords);
+    const nextProfile = normalizeProjectProfile({ ...targetProject.profile, ...profilePatch }, state.settings.controls.lengthTargetWords);
     setState((current) => current ? {
       ...current,
-      project: { ...current.project, profile: nextProfile, updatedAt: new Date().toISOString() },
-      projects: (current.projects ?? []).map((project) => project.id === current.project.id ? { ...project, profile: nextProfile } : project)
+      project: current.project.id === targetProjectId ? { ...current.project, profile: nextProfile, updatedAt: new Date().toISOString() } : current.project,
+      projects: (current.projects ?? []).map((project) => project.id === targetProjectId ? { ...project, profile: nextProfile, updatedAt: new Date().toISOString() } : project)
     } : current);
     const res = await fetch("/api/project", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile: profilePatch })
+      body: JSON.stringify({ projectId: targetProjectId, profile: profilePatch })
     });
-    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
+    const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string };
     if (res.ok && data.state) {
       setMessage("Project settings saved.");
-      applyServerState(data.state, "project-profile");
+      applyServerState({
+        ...data.state,
+        projects: (data.state.projects ?? []).map((project) => data.project && project.id === data.project.id ? data.project : project),
+        project: data.project && data.state.project.id === data.project.id ? data.project : data.state.project
+      }, "project-profile");
     } else {
       setMessage(data.error ?? "Project settings save failed.");
       await refresh();
@@ -911,11 +923,19 @@ function Workbench() {
                     onOverview={() => {
                       setSelectedArticleId(null);
                       setSettingsOpen(false);
+                      setProjectSettingsProjectId(null);
                       setProjectMenuOpen(false);
                     }}
                     onSettings={() => {
                       setSelectedArticleId(null);
                       setSettingsOpen(true);
+                      setProjectSettingsProjectId(null);
+                      setProjectMenuOpen(false);
+                    }}
+                    onProjectSettings={(projectId) => {
+                      setSelectedArticleId(null);
+                      setSettingsOpen(false);
+                      setProjectSettingsProjectId(projectId);
                       setProjectMenuOpen(false);
                     }}
                     onNew={createProject}
@@ -1033,13 +1053,19 @@ function Workbench() {
         </aside>}
 
         <section className="flex min-h-0 flex-col bg-background">
-          {settingsOpen && state ? (
+          {projectSettingsProject && state ? (
+            <ProjectSettingsPanel
+              project={projectSettingsProject}
+              fallbackTargetWords={state.settings.controls.lengthTargetWords}
+              settingsBlockedReason={projectSettingsProject.id === state.project.id ? settingsBlockedReason : null}
+              onClose={() => setProjectSettingsProjectId(null)}
+              onUpdateProjectProfile={(patch) => updateProjectProfile(patch, projectSettingsProject.id)}
+            />
+          ) : settingsOpen && state ? (
             <SettingsPanel
               state={state}
-              settingsBlockedReason={settingsBlockedReason}
               onClose={() => setSettingsOpen(false)}
               onUpdatePreferences={updatePreferences}
-              onUpdateProjectProfile={updateProjectProfile}
             />
           ) : selectedArticle || selectedJob ? (
             <>
@@ -1305,19 +1331,14 @@ function ProjectDashboard({
 
 function SettingsPanel({
   state,
-  settingsBlockedReason,
   onClose,
-  onUpdatePreferences,
-  onUpdateProjectProfile
+  onUpdatePreferences
 }: {
   state: AppState;
-  settingsBlockedReason: string | null;
   onClose: () => void;
   onUpdatePreferences: (patch: WorkspacePreferencePatch) => void;
-  onUpdateProjectProfile: (patch: ProjectProfilePatch) => void;
 }) {
   const preferences = state.preferences;
-  const profile = normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords);
   const providerLabel = preferences.aiProvider.preference === "bring_your_own_key" ? "Using Personal API Key" : "Using Platform AI";
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1334,34 +1355,6 @@ function SettingsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-2">
-          <SettingsSection title="Project Settings">
-            <div className="rounded-md border border-line bg-surface-2 p-3">
-              <div className="text-[13px] font-medium text-ink">Project Identity</div>
-              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · v{profile.profileVersion}</div>
-            </div>
-            <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => onUpdateProjectProfile({ regionKey })} />
-            <SettingsSelect label="Industry" value={profile.industryKey} options={INDUSTRY_OPTIONS} onChange={(industryKey) => onUpdateProjectProfile({ industryKey })} />
-            {profile.industryKey === "custom" && (
-              <SettingsTextInput label="Custom industry" value={profile.customIndustryLabel ?? ""} onSave={(customIndustryLabel) => onUpdateProjectProfile({ industryKey: "custom", customIndustryLabel })} />
-            )}
-            <SettingsSelect label="Audience" value={profile.audienceKey} options={AUDIENCE_OPTIONS} onChange={(audienceKey) => onUpdateProjectProfile({ audienceKey })} />
-            <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
-              <span className="text-ink-muted">Default target words</span>
-              <input
-                type="number"
-                min={300}
-                max={5000}
-                step={100}
-                defaultValue={profile.defaultTargetWords}
-                disabled={Boolean(settingsBlockedReason)}
-                title={settingsBlockedReason ?? "Project default target words"}
-                onBlur={(event) => onUpdateProjectProfile({ defaultTargetWords: Number(event.currentTarget.value) })}
-                className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
-              />
-            </label>
-            {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
-          </SettingsSection>
-
           <SettingsSection title="Account">
             <SettingsTextInput label="Name" value={preferences.account.name} onSave={(name) => onUpdatePreferences({ account: { name } })} />
             <SettingsTextInput label="Email address" value={preferences.account.email} type="email" onSave={(email) => onUpdatePreferences({ account: { email } })} />
@@ -1405,6 +1398,74 @@ function SettingsPanel({
             <SettingsToggle label="Require confirmation before deleting projects" checked={preferences.operational.confirmBeforeDeletingProjects} onChange={(confirmBeforeDeletingProjects) => onUpdatePreferences({ operational: { confirmBeforeDeletingProjects } })} />
             <SettingsToggle label="Reuse project research" checked={false} disabled note="Future option. Existing research reuse is not active yet." onChange={() => undefined} />
             <SettingsToggle label="Reuse title research" checked={false} disabled note="Future option. Title-level research reuse is not active yet." onChange={() => undefined} />
+          </SettingsSection>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectSettingsPanel({
+  project,
+  fallbackTargetWords,
+  settingsBlockedReason,
+  onClose,
+  onUpdateProjectProfile
+}: {
+  project: ProjectDocument;
+  fallbackTargetWords: number;
+  settingsBlockedReason: string | null;
+  onClose: () => void;
+  onUpdateProjectProfile: (patch: ProjectProfilePatch) => void;
+}) {
+  const profile = normalizeProjectProfile(project.profile, fallbackTargetWords);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Project settings</div>
+        <div className="mt-1 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{project.name}</h1>
+            <div className="mono mt-2 text-[11px] text-ink-muted">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · v{profile.profileVersion}</div>
+          </div>
+          <button onClick={onClose} className="h-8 rounded-md px-3 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">Close</button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-2xl">
+          <SettingsSection title="Project Identity">
+            <div className="rounded-md border border-line bg-surface-2 p-3">
+              <div className="text-[13px] font-medium text-ink">Generation context</div>
+              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
+            </div>
+            <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => onUpdateProjectProfile({ regionKey })} />
+            <SettingsSelect label="Industry" value={profile.industryKey} options={INDUSTRY_OPTIONS} onChange={(industryKey) => onUpdateProjectProfile({ industryKey })} />
+            {profile.industryKey === "custom" && (
+              <SettingsTextInput label="Custom industry" value={profile.customIndustryLabel ?? ""} onSave={(customIndustryLabel) => onUpdateProjectProfile({ industryKey: "custom", customIndustryLabel })} />
+            )}
+            <SettingsSelect label="Audience" value={profile.audienceKey} options={AUDIENCE_OPTIONS} onChange={(audienceKey) => onUpdateProjectProfile({ audienceKey })} />
+            <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
+              <span className="text-ink-muted">Default target words</span>
+              <input
+                type="number"
+                min={300}
+                max={5000}
+                step={100}
+                defaultValue={profile.defaultTargetWords}
+                disabled={Boolean(settingsBlockedReason)}
+                title={settingsBlockedReason ?? "Project default target words"}
+                onBlur={(event) => onUpdateProjectProfile({ defaultTargetWords: Number(event.currentTarget.value) })}
+                className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border border-line bg-background p-3 text-xs">
+              <MetricLine label="Region" value={profile.regionLabel} />
+              <MetricLine label="Industry" value={profile.industryLabel} />
+              <MetricLine label="Audience" value={profile.audienceLabel} />
+              <MetricLine label="Profile Version" value={`v${profile.profileVersion}`} />
+            </div>
+            {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
           </SettingsSection>
         </div>
       </div>
@@ -1906,6 +1967,7 @@ function ProjectMenu({
   onSwitch,
   onOverview,
   onSettings,
+  onProjectSettings,
   onNew,
   onRename,
   onDelete,
@@ -1917,6 +1979,7 @@ function ProjectMenu({
   onSwitch: (projectId: string) => void;
   onOverview: () => void;
   onSettings: () => void;
+  onProjectSettings: (projectId: string) => void;
   onNew: () => void;
   onRename: () => void;
   onDelete: (projectId?: string) => void;
@@ -1933,7 +1996,7 @@ function ProjectMenu({
         <span className="mono text-[10.5px] text-ink-subtle">Open</span>
       </button>
       <button onClick={onSettings} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
-        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Settings</span>
+        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Workspace settings</span>
         <span className="mono text-[10.5px] text-ink-subtle">Workspace</span>
       </button>
       {projects.length > 0 && (
@@ -1950,6 +2013,17 @@ function ProjectMenu({
               >
                 <span className="truncate">{project.name}</span>
                 <span className="mono shrink-0 text-[10px] text-ink-subtle">{project.id === currentProjectId ? "Current" : relativeDate(project.updatedAt)}</span>
+              </button>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onProjectSettings(project.id);
+                }}
+                className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-surface-3 hover:text-ink group-hover:opacity-100"
+                title={`Edit ${project.name} project settings`}
+                aria-label={`Edit ${project.name} project settings`}
+              >
+                <Settings className="size-3" />
               </button>
               {project.id !== "default" && (
                 <button

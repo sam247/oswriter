@@ -11,7 +11,7 @@ export async function PATCH(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; name?: string; profile?: Partial<ProjectProfile> };
+  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; projectId?: string; name?: string; profile?: Partial<ProjectProfile> };
   const { store } = createRuntime();
 
   const activeProjectId = body.activeProjectId?.trim();
@@ -25,12 +25,13 @@ export async function PATCH(req: Request) {
 
   const name = body.name?.trim();
   if (!name && !body.profile) return NextResponse.json({ error: "Project name or profile is required." }, { status: 400 });
+  const targetProjectId = body.projectId?.trim();
   if (body.profile) {
-    const blocker = await getSettingsMutationBlocker(store);
+    const blocker = await getSettingsMutationBlocker(store, targetProjectId);
     if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
   }
 
-  const { project } = await store.ensureProject();
+  const { project } = await store.ensureProject(targetProjectId);
   const settings = await store.getSettings(project.id);
   const updated = {
     ...project,
@@ -39,7 +40,7 @@ export async function PATCH(req: Request) {
     updatedAt: nowIso()
   };
   await store.saveProject(updated);
-  const state = await store.getState(updated.id);
+  const state = await store.getState();
   return NextResponse.json({ project: updated, state });
 }
 
