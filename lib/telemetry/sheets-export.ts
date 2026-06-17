@@ -81,6 +81,44 @@ export async function exportDailyTelemetrySummary(store: WorkspaceStore, date = 
   });
 }
 
+export async function retryFailedTelemetryExports(store: WorkspaceStore, client = createGoogleSheetsAppendClient()) {
+  const statuses = await store.listTelemetryExportStatuses();
+  const retryable = statuses.filter((status) => status.status === "failed" || status.status === "pending");
+  const articleKeys = new Map<string, { projectId: string; articleId: string }>();
+  const dailySummaryDates = new Set<string>();
+
+  for (const status of retryable) {
+    if ((status.exportType === "article" || status.exportType === "anomaly") && status.projectId && status.articleId) {
+      articleKeys.set(`${status.projectId}:${status.articleId}`, { projectId: status.projectId, articleId: status.articleId });
+    }
+    if (status.exportType === "daily_summary") {
+      dailySummaryDates.add(status.exportKey);
+    }
+  }
+
+  let attempted = 0;
+  for (const item of articleKeys.values()) {
+    const telemetry = await store.getGenerationTelemetry(item.articleId, item.projectId);
+    if (!telemetry) continue;
+    attempted += 1;
+    await exportArticleTelemetry(store, telemetry, client);
+  }
+
+  for (const date of dailySummaryDates) {
+    attempted += 1;
+    await exportDailyTelemetrySummary(store, date, client);
+  }
+
+  const nextStatuses = await store.listTelemetryExportStatuses();
+  return {
+    candidates: retryable.length,
+    attempted,
+    exported: nextStatuses.filter((status) => status.status === "exported").length,
+    failed: nextStatuses.filter((status) => status.status === "failed").length,
+    pending: nextStatuses.filter((status) => status.status === "pending").length
+  };
+}
+
 export function buildArticleTelemetryRow({ telemetry, article, project }: ArticleTelemetryContext): TelemetryCell[] {
   return [
     dateOnly(telemetry.updatedAt),
