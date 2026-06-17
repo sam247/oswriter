@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { QueueRunner } from "@/lib/queue/runner";
+import { createDefaultProject } from "@/lib/defaults";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
-import { acquireWorkerLease, drainQueueWithLease, isWorkerRequestAuthorized } from "@/lib/worker/drain";
+import { acquireWorkerLease, drainActiveProjectsWithLeases, drainQueueWithLease, isWorkerRequestAuthorized } from "@/lib/worker/drain";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, SearchAdapter, ValidationInput, ValidationResult } from "@/lib/types";
 
 class FakeSearch implements SearchAdapter {
@@ -142,6 +143,25 @@ describe("autonomous worker drain", () => {
     assert.equal(state.jobs.length, 3);
     assert.equal(state.articles.length, 3);
     assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
+  });
+
+  it("drains active queue work across projects", async () => {
+    const { store, runner } = setup();
+    await store.saveProject({ ...createDefaultProject(), id: "project-a", name: "Project A" });
+    await store.saveProject({ ...createDefaultProject(), id: "project-b", name: "Project B" });
+    await runner.addTitles(["Project A title"], "project-a");
+    await runner.addTitles(["Project B title"], "project-b");
+    await runner.resumeQueue("project-a");
+    await runner.resumeQueue("project-b");
+
+    const result = await drainActiveProjectsWithLeases({ store, runner });
+    const projectA = await store.getState("project-a");
+    const projectB = await store.getState("project-b");
+
+    assert.equal(result.projectsWithWork, 2);
+    assert.equal(result.remaining, 0);
+    assert.equal(projectA.articles.length, 1);
+    assert.equal(projectB.articles.length, 1);
   });
 
   it("does not start a heavy generation step late in the drain window", async () => {

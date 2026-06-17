@@ -215,6 +215,25 @@ describe("QueueRunner", () => {
     assert.ok(search.calls > 0);
   });
 
+  it("lets the worker continue a manual job after a completed stage handoff", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Manual handoff after research"]);
+    await runner.resumeQueue();
+
+    const researched = await runner.processNext(undefined, { source: "manual" });
+    assert.equal(researched.job?.status, "processing");
+    assert.equal(researched.job?.timings?.started_by, "manual");
+    assert.equal(researched.job?.pipeline.find((step) => step.stage === "research")?.status, "done");
+
+    const workerOutline = await runner.processNext(undefined, { source: "worker" });
+    assert.equal(workerOutline.processed, true);
+    assert.equal(workerOutline.job?.pipeline.find((step) => step.stage === "outline")?.status, "done");
+
+    await drainQueue(runner);
+    const state = await store.getState();
+    assert.equal(state.articles.length, 1);
+  });
+
   it("stops gracefully after the current article completes", async () => {
     const { store, runner } = setup();
     const [first, second] = await runner.addTitles(["Finish me first", "Do not start yet"]);
@@ -350,6 +369,15 @@ describe("QueueRunner", () => {
       assert.ok(telemetry.actualWords > 0);
       assert.ok(telemetry.plannedSections > 0);
       assert.ok(telemetry.actualSections > 0);
+      assert.equal(telemetry.plannedH2Count, telemetry.plannedSections);
+      assert.ok((telemetry.plannedH3Count ?? 0) >= 0);
+      assert.ok(telemetry.expectedDepth);
+      assert.equal(telemetry.actualH2Count, telemetry.actualSections);
+      assert.equal(telemetry.actualH3Count, 1);
+      assert.ok((telemetry.h2AchievementPercent ?? 0) > 0);
+      assert.ok((telemetry.h3AchievementPercent ?? 0) >= 0);
+      assert.ok((telemetry.targetAchievementPercent ?? 0) > 0);
+      assert.ok(telemetry.plannerOutcome);
       assert.equal(telemetry.finishReason, "stop");
       assert.ok(["generated", "needs_review"].includes(telemetry.reviewStatus));
       assert.equal(telemetry.sourcesDiscovered, telemetry.sourcesAccepted + telemetry.sourcesRejected);
@@ -363,7 +391,11 @@ describe("QueueRunner", () => {
       assert.equal(telemetry.estimatedResearchCostUsd, 0.015);
       assert.equal(telemetry.totalCostUsd, 0.019);
       assert.equal(telemetry.metadata.finishReason, "stop");
+      assert.ok(telemetry.metadata.planningDiagnostics);
       assert.ok((telemetry.generationDurationMs ?? -1) >= 0);
+      const article = await store.getArticle(job.articleId);
+      assert.ok(article?.planningDiagnostics);
+      assert.equal(article.planningDiagnostics.actualH3Count, 1);
     } finally {
       restoreEnv("EXA_SEARCH_COST_USD", previousSearchCost);
       restoreEnv("EXA_CONTENT_COST_USD", previousContentCost);

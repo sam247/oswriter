@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DEFAULT_CONTROLS } from "@/lib/defaults";
-import { buildArticleGenerationPlan } from "@/lib/generation/plan";
+import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
 import { normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { ResearchPack } from "@/lib/types";
@@ -26,6 +26,29 @@ describe("article generation planning", () => {
 
     assert.equal(plan.targetWords, 2400);
     assert.ok(plan.h2SectionCount >= 7);
+    assert.equal(plan.expectedDepth, "deep");
+    assert.equal(plan.h3SectionCount, plan.h2SectionCount * 2);
+  });
+
+  it("records H2 and H3 achievement without changing generation behaviour", () => {
+    const plan = buildArticleGenerationPlan({ ...DEFAULT_CONTROLS, lengthTargetWords: 2000 });
+    const diagnostics = buildPlanningDiagnostics(plan, `# Guide
+
+## One
+Useful section.
+
+## Two
+Useful section.
+
+### Detail
+Useful detail.`);
+
+    assert.equal(diagnostics.plannedH2Count, plan.h2SectionCount);
+    assert.equal(diagnostics.plannedH3Count, plan.h3SectionCount);
+    assert.equal(diagnostics.actualH2Count, 2);
+    assert.equal(diagnostics.actualH3Count, 1);
+    assert.ok(diagnostics.targetAchievementPercent < 80);
+    assert.ok(["under_depth", "under_target"].includes(diagnostics.plannerOutcome));
   });
 
   it("flags outputs that are materially under the requested target", () => {

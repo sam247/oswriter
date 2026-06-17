@@ -3,27 +3,70 @@ import type { ContentControls, ProjectProfileSnapshot } from "@/lib/types";
 
 const MIN_OUTPUT_TOKENS = 3200;
 const MAX_OUTPUT_TOKENS = 8000;
+export type ExpectedDepth = "light" | "standard" | "deep" | "reference";
+export type PlannerOutcome = "matched_plan" | "under_depth" | "over_depth" | "under_target" | "over_target";
 
 export interface ArticleGenerationPlan {
   targetWords: number;
   minimumWords: number;
   maximumWords: number;
   h2SectionCount: number;
+  h3SectionCount: number;
+  expectedDepth: ExpectedDepth;
   wordsPerSection: number;
   maxOutputTokens: number;
+}
+
+export interface PlanningDiagnostics {
+  plannedH2Count: number;
+  plannedH3Count: number;
+  expectedDepth: ExpectedDepth;
+  actualH2Count: number;
+  actualH3Count: number;
+  actualDepth: ExpectedDepth;
+  h2AchievementPercent: number;
+  h3AchievementPercent: number;
+  targetAchievementPercent: number;
+  plannerOutcome: PlannerOutcome;
 }
 
 export function buildArticleGenerationPlan(controls: ContentControls, profileSnapshot?: ProjectProfileSnapshot | null): ArticleGenerationPlan {
   const targetWords = clampTargetWords(profileSnapshot?.targetWords ?? controls.lengthTargetWords);
   const density = sectionDensityForAudience(profileSnapshot?.audience);
   const h2SectionCount = clamp(Math.round(targetWords / density), 4, 12);
+  const expectedDepth = expectedDepthForProfile(profileSnapshot, targetWords);
+  const h3SectionCount = plannedH3CountForDepth(h2SectionCount, expectedDepth);
   return {
     targetWords,
     minimumWords: Math.round(targetWords * 0.8),
     maximumWords: Math.round(targetWords * 1.2),
     h2SectionCount,
+    h3SectionCount,
+    expectedDepth,
     wordsPerSection: Math.max(120, Math.round(targetWords / h2SectionCount)),
     maxOutputTokens: clamp(Math.ceil(targetWords * 2), MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS)
+  };
+}
+
+export function buildPlanningDiagnostics(plan: ArticleGenerationPlan, markdown: string): PlanningDiagnostics {
+  const actualH2Count = countMatches(markdown, /^##\s+/gm);
+  const actualH3Count = countMatches(markdown, /^###\s+/gm);
+  const actualWords = countWords(markdown);
+  const h2AchievementPercent = percent(actualH2Count, plan.h2SectionCount);
+  const h3AchievementPercent = plan.h3SectionCount === 0 ? (actualH3Count === 0 ? 100 : 200) : percent(actualH3Count, plan.h3SectionCount);
+  const targetAchievementPercent = percent(actualWords, plan.targetWords);
+  const actualDepth = actualDepthFromStructure(actualH2Count, actualH3Count);
+  return {
+    plannedH2Count: plan.h2SectionCount,
+    plannedH3Count: plan.h3SectionCount,
+    expectedDepth: plan.expectedDepth,
+    actualH2Count,
+    actualH3Count,
+    actualDepth,
+    h2AchievementPercent,
+    h3AchievementPercent,
+    targetAchievementPercent,
+    plannerOutcome: plannerOutcome({ h2AchievementPercent, h3AchievementPercent, targetAchievementPercent })
   };
 }
 
@@ -32,6 +75,63 @@ function sectionDensityForAudience(audience?: string | null) {
   if (audience === "consumers" || audience === "general_audience") return 420;
   if (audience === "executives" || audience === "business_owners") return 390;
   return 350;
+}
+
+function expectedDepthForProfile(profileSnapshot: ProjectProfileSnapshot | null | undefined, targetWords: number): ExpectedDepth {
+  const audience = profileSnapshot?.audience;
+  const industry = profileSnapshot?.industry;
+  if (targetWords >= 4000) return "reference";
+  if (audience === "technical_professionals" || audience === "developers") return targetWords >= 3000 ? "reference" : "deep";
+  if (audience === "procurement_teams") return "deep";
+  if (industry === "compliance" || industry === "legal" || industry === "utilities" || industry === "healthcare" || industry === "finance") return "deep";
+  if (audience === "executives" || audience === "business_owners") return "standard";
+  if (audience === "consumers" || audience === "general_audience") return targetWords <= 1200 ? "light" : "standard";
+  return targetWords <= 1000 ? "light" : "standard";
+}
+
+function plannedH3CountForDepth(h2Count: number, depth: ExpectedDepth) {
+  if (depth === "light") return 0;
+  if (depth === "standard") return Math.round(h2Count * 0.75);
+  if (depth === "deep") return h2Count * 2;
+  return h2Count * 3;
+}
+
+function actualDepthFromStructure(h2Count: number, h3Count: number): ExpectedDepth {
+  if (h2Count <= 0) return "light";
+  const h3PerH2 = h3Count / h2Count;
+  if (h3PerH2 >= 2.5) return "reference";
+  if (h3PerH2 >= 1.5) return "deep";
+  if (h3PerH2 >= 0.35) return "standard";
+  return "light";
+}
+
+function plannerOutcome({
+  h2AchievementPercent,
+  h3AchievementPercent,
+  targetAchievementPercent
+}: {
+  h2AchievementPercent: number;
+  h3AchievementPercent: number;
+  targetAchievementPercent: number;
+}): PlannerOutcome {
+  if (h2AchievementPercent < 80 || h3AchievementPercent < 80) return "under_depth";
+  if (h2AchievementPercent > 125 || h3AchievementPercent > 125) return "over_depth";
+  if (targetAchievementPercent < 80) return "under_target";
+  if (targetAchievementPercent > 110) return "over_target";
+  return "matched_plan";
+}
+
+function countWords(markdown: string) {
+  return markdown.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function countMatches(text: string, pattern: RegExp) {
+  return (text.match(pattern) ?? []).length;
+}
+
+function percent(actual: number, planned: number) {
+  if (planned <= 0) return actual > 0 ? 200 : 100;
+  return Math.round((actual / planned) * 1000) / 10;
 }
 
 function clamp(value: number, min: number, max: number) {

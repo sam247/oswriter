@@ -313,6 +313,7 @@ export interface ArticleDocument {
   targetWords?: number;
   profileSnapshot?: ProjectProfileSnapshot | null;
   profileRelevanceScore?: number | null;
+  planningDiagnostics?: import("@/lib/generation/plan").PlanningDiagnostics | null;
   qualityScore: number;
   researchSummary: string;
   validation: ValidationResult;
@@ -343,6 +344,16 @@ export interface GenerationTelemetryDocument {
   actualWords: number;
   plannedSections: number;
   actualSections: number;
+  plannedH2Count?: number;
+  plannedH3Count?: number;
+  expectedDepth?: import("@/lib/generation/plan").ExpectedDepth | string | null;
+  actualH2Count?: number;
+  actualH3Count?: number;
+  actualDepth?: import("@/lib/generation/plan").ExpectedDepth | string | null;
+  h2AchievementPercent?: number;
+  h3AchievementPercent?: number;
+  targetAchievementPercent?: number;
+  plannerOutcome?: import("@/lib/generation/plan").PlannerOutcome | string | null;
   finishReason?: string | null;
   reviewStatus: JobStatus;
   profileVersion?: number | null;

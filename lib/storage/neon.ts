@@ -1010,6 +1010,8 @@ export class NeonStorageProvider implements StorageProvider {
       insert into generation_telemetry (
         id, organisation_id, project_id, article_id, job_id, created_by_user_id, model,
         target_words, actual_words, planned_sections, actual_sections, finish_reason, review_status,
+        planned_h2_count, planned_h3_count, expected_depth, actual_h2_count, actual_h3_count, actual_depth,
+        h2_achievement_percent, h3_achievement_percent, target_achievement_percent, planner_outcome,
         profile_version, region, industry, audience, profile_relevance_score, region_awareness_active,
         industry_awareness_active, audience_awareness_active, research_duration_ms, sources_discovered, sources_accepted, sources_rejected, findings_extracted,
         useful_facts_extracted, citations_generated, input_tokens, output_tokens, research_tokens, generation_tokens,
@@ -1019,7 +1021,10 @@ export class NeonStorageProvider implements StorageProvider {
       values (
         ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.jobId ?? null}, ${next.createdByUserId ?? null},
         ${next.model ?? null}, ${next.targetWords}, ${next.actualWords}, ${next.plannedSections}, ${next.actualSections},
-        ${next.finishReason ?? null}, ${next.reviewStatus}, ${next.profileVersion ?? 0}, ${next.region ?? null},
+        ${next.finishReason ?? null}, ${next.reviewStatus}, ${next.plannedH2Count ?? 0}, ${next.plannedH3Count ?? 0},
+        ${next.expectedDepth ?? null}, ${next.actualH2Count ?? 0}, ${next.actualH3Count ?? 0}, ${next.actualDepth ?? null},
+        ${next.h2AchievementPercent ?? null}, ${next.h3AchievementPercent ?? null}, ${next.targetAchievementPercent ?? null},
+        ${next.plannerOutcome ?? null}, ${next.profileVersion ?? 0}, ${next.region ?? null},
         ${next.industry ?? null}, ${next.audience ?? null}, ${next.profileRelevanceScore ?? null},
         ${Boolean(next.regionAwarenessActive)}, ${Boolean(next.industryAwarenessActive)}, ${Boolean(next.audienceAwarenessActive)},
         ${next.researchDurationMs ?? null}, ${next.sourcesDiscovered},
@@ -1037,6 +1042,16 @@ export class NeonStorageProvider implements StorageProvider {
         actual_words = excluded.actual_words,
         planned_sections = excluded.planned_sections,
         actual_sections = excluded.actual_sections,
+        planned_h2_count = excluded.planned_h2_count,
+        planned_h3_count = excluded.planned_h3_count,
+        expected_depth = excluded.expected_depth,
+        actual_h2_count = excluded.actual_h2_count,
+        actual_h3_count = excluded.actual_h3_count,
+        actual_depth = excluded.actual_depth,
+        h2_achievement_percent = excluded.h2_achievement_percent,
+        h3_achievement_percent = excluded.h3_achievement_percent,
+        target_achievement_percent = excluded.target_achievement_percent,
+        planner_outcome = excluded.planner_outcome,
         finish_reason = excluded.finish_reason,
         review_status = excluded.review_status,
         profile_version = excluded.profile_version,
@@ -1326,6 +1341,14 @@ function withResearchDefaults(research: ResearchPack, tenant: TenantSeed, projec
 
 function withGenerationTelemetryDefaults(telemetry: GenerationTelemetryDocument, tenant: TenantSeed, projectId: string): GenerationTelemetryDocument {
   const now = new Date().toISOString();
+  const targetWords = telemetry.targetWords ?? 0;
+  const actualWords = telemetry.actualWords ?? 0;
+  const plannedSections = telemetry.plannedSections ?? telemetry.plannedH2Count ?? 0;
+  const actualSections = telemetry.actualSections ?? telemetry.actualH2Count ?? 0;
+  const plannedH2Count = telemetry.plannedH2Count ?? plannedSections;
+  const actualH2Count = telemetry.actualH2Count ?? actualSections;
+  const plannedH3Count = telemetry.plannedH3Count ?? 0;
+  const actualH3Count = telemetry.actualH3Count ?? 0;
   return {
     ...telemetry,
     id: telemetry.id ?? `${projectId}:${telemetry.articleId}:generation`,
@@ -1334,10 +1357,20 @@ function withGenerationTelemetryDefaults(telemetry: GenerationTelemetryDocument,
     model: telemetry.model ?? null,
     jobId: telemetry.jobId,
     createdByUserId: telemetry.createdByUserId ?? null,
-    targetWords: telemetry.targetWords ?? 0,
-    actualWords: telemetry.actualWords ?? 0,
-    plannedSections: telemetry.plannedSections ?? 0,
-    actualSections: telemetry.actualSections ?? 0,
+    targetWords,
+    actualWords,
+    plannedSections,
+    actualSections,
+    plannedH2Count,
+    plannedH3Count,
+    expectedDepth: telemetry.expectedDepth ?? "standard",
+    actualH2Count,
+    actualH3Count,
+    actualDepth: telemetry.actualDepth ?? "light",
+    h2AchievementPercent: telemetry.h2AchievementPercent ?? percentage(actualH2Count, plannedH2Count),
+    h3AchievementPercent: telemetry.h3AchievementPercent ?? percentage(actualH3Count, plannedH3Count),
+    targetAchievementPercent: telemetry.targetAchievementPercent ?? percentage(actualWords, targetWords),
+    plannerOutcome: telemetry.plannerOutcome ?? "matched_plan",
     finishReason: telemetry.finishReason ?? null,
     reviewStatus: telemetry.reviewStatus ?? "generated",
     profileVersion: telemetry.profileVersion ?? 0,
@@ -1620,6 +1653,16 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
     actualWords: Number(row.actual_words ?? 0),
     plannedSections: Number(row.planned_sections ?? 0),
     actualSections: Number(row.actual_sections ?? 0),
+    plannedH2Count: Number(row.planned_h2_count ?? row.planned_sections ?? 0),
+    plannedH3Count: Number(row.planned_h3_count ?? 0),
+    expectedDepth: nullableString(row.expected_depth),
+    actualH2Count: Number(row.actual_h2_count ?? row.actual_sections ?? 0),
+    actualH3Count: Number(row.actual_h3_count ?? 0),
+    actualDepth: nullableString(row.actual_depth),
+    h2AchievementPercent: nullableNumber(row.h2_achievement_percent) ?? undefined,
+    h3AchievementPercent: nullableNumber(row.h3_achievement_percent) ?? undefined,
+    targetAchievementPercent: nullableNumber(row.target_achievement_percent) ?? undefined,
+    plannerOutcome: nullableString(row.planner_outcome),
     finishReason: nullableString(row.finish_reason),
     reviewStatus: String(row.review_status ?? "generated") as GenerationTelemetryDocument["reviewStatus"],
     profileVersion: Number(row.profile_version ?? 0),
@@ -1677,6 +1720,11 @@ function nullableString(value: unknown) {
 
 function nullableNumber(value: unknown) {
   return value == null ? null : Number(value);
+}
+
+function percentage(actual: number, planned: number) {
+  if (planned <= 0) return actual > 0 ? 200 : 100;
+  return Math.round((actual / planned) * 1000) / 10;
 }
 
 function dateIso(value: unknown) {

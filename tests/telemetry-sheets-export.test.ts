@@ -36,7 +36,12 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(articleRow?.[5], "united_kingdom");
     assert.equal(articleRow?.[6], "utilities");
     assert.equal(articleRow?.[7], "procurement_teams");
-    assert.equal(articleRow?.[14], 74);
+    assert.equal(articleRow?.[10], 70);
+    assert.equal(articleRow?.[11], 6);
+    assert.equal(articleRow?.[14], 8);
+    assert.equal(articleRow?.[17], "deep");
+    assert.equal(articleRow?.[19], "under_depth");
+    assert.equal(articleRow?.[24], 74);
     assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 5);
     assert.equal((await store.getTelemetryExportStatus("article:default-project:article-telemetry"))?.status, "exported");
     assert.equal((await store.getTelemetryExportStatus("anomaly:default-project:article-telemetry:under-target-output"))?.status, "exported");
@@ -98,6 +103,16 @@ function sampleTelemetry(overrides: Partial<GenerationTelemetryDocument> = {}): 
     actualWords: 700,
     plannedSections: 6,
     actualSections: 4,
+    plannedH2Count: 6,
+    plannedH3Count: 8,
+    expectedDepth: "deep",
+    actualH2Count: 4,
+    actualH3Count: 3,
+    actualDepth: "standard",
+    h2AchievementPercent: 66.7,
+    h3AchievementPercent: 37.5,
+    targetAchievementPercent: 70,
+    plannerOutcome: "under_depth",
     finishReason: "stop",
     reviewStatus: "generated",
     profileVersion: 1,

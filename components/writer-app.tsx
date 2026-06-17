@@ -3277,6 +3277,7 @@ function ValidationPanel({
 }) {
   const reviewItems = [...article.needsReviewReasons, ...article.validation.warnings];
   const snapshot = article.profileSnapshot;
+  const planning = article.planningDiagnostics;
   return (
     <div className="space-y-4">
       <MetricGrid items={[
@@ -3295,6 +3296,21 @@ function ValidationPanel({
             <MetricLine label="Audience" value={snapshot.audienceLabel} />
             <MetricLine label="Target words" value={formatNumber(snapshot.targetWords)} />
             <MetricLine label="Version" value={`v${snapshot.profileVersion}`} />
+          </div>
+        </div>
+      )}
+      {planning && (
+        <div className="rounded-md border border-line bg-surface-1 p-3">
+          <PanelTitle title="Planning" />
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <MetricLine label="Planned H2" value={formatNumber(planning.plannedH2Count)} />
+            <MetricLine label="Actual H2" value={formatNumber(planning.actualH2Count)} />
+            <MetricLine label="Planned H3" value={formatNumber(planning.plannedH3Count)} />
+            <MetricLine label="Actual H3" value={formatNumber(planning.actualH3Count)} />
+            <MetricLine label="Expected depth" value={titleCase(planning.expectedDepth)} />
+            <MetricLine label="Actual depth" value={titleCase(planning.actualDepth)} />
+            <MetricLine label="Target achieved" value={`${formatNumber(planning.targetAchievementPercent)}%`} />
+            <MetricLine label="Outcome" value={titleCase(planning.plannerOutcome)} />
           </div>
         </div>
       )}
@@ -4573,6 +4589,10 @@ function relativeDate(value?: string | null) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-GB").format(value);
+}
+
+function titleCase(value: string) {
+  return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function safeDomain(value: string) {

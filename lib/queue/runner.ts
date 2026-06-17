@@ -1,6 +1,6 @@
 import type { ArticleDocument, DebugDocument, DebugEvent, GenerationTelemetryDocument, ModelAdapter, ModelGenerationResult, QueueJob, SearchAdapter } from "@/lib/types";
 import { createPipeline, nowIso } from "@/lib/defaults";
-import { buildArticleGenerationPlan } from "@/lib/generation/plan";
+import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
 import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
 import { runResearch } from "@/lib/research/research-engine";
@@ -340,6 +340,8 @@ export class QueueRunner {
             strategy: "target-guided",
             targetWords: plan.targetWords,
             h2SectionCount: plan.h2SectionCount,
+            h3SectionCount: plan.h3SectionCount,
+            expectedDepth: plan.expectedDepth,
             wordsPerSection: plan.wordsPerSection
           }),
           updatedAt: nowIso()
@@ -377,6 +379,7 @@ export class QueueRunner {
       await this.store.saveJob(job);
       const needsReview = [...research.warnings];
       const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords, profileSnapshot });
+      const planningDiagnostics = buildPlanningDiagnostics(plan, markdown);
       needsReview.push(...validation.needsReviewReasons);
       const uniqueReasons = [...new Set(needsReview)];
       const finalStatus = statusFromReviewReasons(uniqueReasons);
@@ -386,7 +389,12 @@ export class QueueRunner {
       job = { ...job, timings: markTiming(job.timings, "validation_started_at") };
       pipeline = startStage(pipeline, "validation", "Running fast advisory validation.");
       job = { ...job, timings: markTiming(job.timings, "validation_completed_at") };
-      pipeline = completeStage(pipeline, "validation", { warnings: validation.warnings.length, qualityScore: validation.qualityScore, mode: "heuristic" });
+      pipeline = completeStage(pipeline, "validation", {
+        warnings: validation.warnings.length,
+        qualityScore: validation.qualityScore,
+        mode: "heuristic",
+        planningDiagnostics
+      });
       const completedAt = nowIso();
       job = {
         ...job,
@@ -401,7 +409,7 @@ export class QueueRunner {
         updatedAt: completedAt
       };
 
-      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot);
+      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics);
       await this.store.saveArticle(article);
       await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
@@ -448,6 +456,7 @@ export class QueueRunner {
     const inputTokens = generation.inputTokens ?? 0;
     const outputTokens = generation.outputTokens ?? 0;
     const findingsExtracted = research.usefulFacts.length + research.rejectedFacts.length + research.questionsFound.length + research.headingsFound.length;
+    const planningDiagnostics = article.planningDiagnostics ?? buildPlanningDiagnostics(plan, article.markdown);
     const telemetry: GenerationTelemetryDocument = {
       projectId: job.projectId,
       articleId: job.articleId,
@@ -457,7 +466,17 @@ export class QueueRunner {
       targetWords: plan.targetWords,
       actualWords: article.wordCount,
       plannedSections: plan.h2SectionCount,
-      actualSections: countMarkdownSections(article.markdown),
+      actualSections: planningDiagnostics.actualH2Count,
+      plannedH2Count: planningDiagnostics.plannedH2Count,
+      plannedH3Count: planningDiagnostics.plannedH3Count,
+      expectedDepth: planningDiagnostics.expectedDepth,
+      actualH2Count: planningDiagnostics.actualH2Count,
+      actualH3Count: planningDiagnostics.actualH3Count,
+      actualDepth: planningDiagnostics.actualDepth,
+      h2AchievementPercent: planningDiagnostics.h2AchievementPercent,
+      h3AchievementPercent: planningDiagnostics.h3AchievementPercent,
+      targetAchievementPercent: planningDiagnostics.targetAchievementPercent,
+      plannerOutcome: planningDiagnostics.plannerOutcome,
       finishReason: generation.finishReason ?? null,
       reviewStatus: article.status,
       profileVersion: article.profileSnapshot?.profileVersion ?? 0,
@@ -494,7 +513,8 @@ export class QueueRunner {
         targetWords: plan.targetWords,
         actualWords: article.wordCount,
         plannedSections: plan.h2SectionCount,
-        actualSections: countMarkdownSections(article.markdown),
+        actualSections: planningDiagnostics.actualH2Count,
+        planningDiagnostics,
         findingsExtracted,
         profileSnapshot: article.profileSnapshot ?? null,
         profileRelevanceScore: article.profileRelevanceScore ?? null
@@ -551,10 +571,6 @@ export class QueueRunner {
   }
 }
 
-function countMarkdownSections(markdown: string) {
-  return (markdown.match(/^##\s+/gm) ?? []).length;
-}
-
 function estimateResearchTokens(research: Parameters<typeof heuristicValidation>[0]["research"]) {
   const text = [
     ...research.queries,
@@ -603,6 +619,7 @@ function canContinueProcessing(job: QueueJob, source: "manual" | "worker" | unde
   if (job.status !== "processing") return true;
   const owner = job.timings?.started_by;
   if (!owner || owner === "unknown" || !source) return true;
+  if (source === "worker" && owner === "manual" && isBetweenCompletedStages(job)) return true;
   return owner === source;
 }
 
@@ -613,6 +630,11 @@ function isResumableQueuedJob(job: QueueJob) {
   );
 }
 
+function isBetweenCompletedStages(job: QueueJob) {
+  return job.pipeline.some((step) => step.status === "done")
+    && !job.pipeline.some((step) => step.status === "running");
+}
+
 function createArticle(
   job: QueueJob,
   markdown: string,
@@ -620,7 +642,8 @@ function createArticle(
   validation: ArticleDocument["validation"],
   research: Parameters<typeof heuristicValidation>[0]["research"],
   targetWords?: number,
-  profileSnapshot?: ArticleDocument["profileSnapshot"]
+  profileSnapshot?: ArticleDocument["profileSnapshot"],
+  planningDiagnostics?: ArticleDocument["planningDiagnostics"]
 ): ArticleDocument {
   const now = nowIso();
   const sources = research.sources;
@@ -637,6 +660,7 @@ function createArticle(
     targetWords,
     profileSnapshot,
     profileRelevanceScore: validation.profileRelevanceScore ?? null,
+    planningDiagnostics: planningDiagnostics ?? null,
     qualityScore: validation.qualityScore,
     researchSummary: research.usefulFacts.slice(0, 5).join(" "),
     validation,

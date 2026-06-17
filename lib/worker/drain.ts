@@ -17,6 +17,19 @@ export interface WorkerDrainResult {
   lease?: WorkerQueueSnapshot["lease"];
 }
 
+export interface WorkerProjectDrainResult extends WorkerDrainResult {
+  projectId: string;
+}
+
+export interface WorkerDrainAllResult {
+  projectsChecked: number;
+  projectsWithWork: number;
+  processed: number;
+  remaining: number;
+  durationMs: number;
+  results: WorkerProjectDrainResult[];
+}
+
 export function isWorkerRequestAuthorized(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -90,6 +103,37 @@ export async function drainQueueWithLease({
   } finally {
     await releaseWorkerLease(store, lease, resolvedProjectId);
   }
+}
+
+export async function drainActiveProjectsWithLeases({
+  store,
+  runner,
+  now = () => Date.now()
+}: {
+  store: WorkspaceStore;
+  runner: QueueRunner;
+  now?: () => number;
+}): Promise<WorkerDrainAllResult> {
+  const startedAt = now();
+  const projects = await store.listProjects();
+  const results: WorkerProjectDrainResult[] = [];
+
+  for (const project of projects) {
+    const jobs = await store.listJobs(project.id);
+    const hasActiveWork = jobs.some((job) => job.status === "queued" || job.status === "processing");
+    if (!hasActiveWork) continue;
+    const result = await drainQueueWithLease({ store, runner, projectId: project.id, now });
+    results.push({ ...result, projectId: project.id });
+  }
+
+  return {
+    projectsChecked: projects.length,
+    projectsWithWork: results.length,
+    processed: results.reduce((total, result) => total + result.processed, 0),
+    remaining: results.reduce((total, result) => total + result.remaining, 0),
+    durationMs: now() - startedAt,
+    results
+  };
 }
 
 export async function acquireWorkerLease(

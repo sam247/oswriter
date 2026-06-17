@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createRuntime } from "@/lib/server/runtime";
-import { drainQueueWithLease, isWorkerRequestAuthorized } from "@/lib/worker/drain";
+import { drainActiveProjectsWithLeases, isWorkerRequestAuthorized } from "@/lib/worker/drain";
 
 export const maxDuration = 300;
 
@@ -10,7 +10,7 @@ export async function GET(req: Request) {
   }
 
   const { store, runner } = createRuntime();
-  const result = await drainQueueWithLease({ store, runner });
+  const result = await drainActiveProjectsWithLeases({ store, runner });
   console.info("worker.drain", JSON.stringify(result));
   return NextResponse.json(result);
 }

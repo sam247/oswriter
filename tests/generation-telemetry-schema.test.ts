@@ -5,6 +5,7 @@ import { test } from "node:test";
 const migration = readFileSync("db/migrations/0004_generation_telemetry.sql", "utf8");
 const expansion = readFileSync("db/migrations/0005_telemetry_expansion.sql", "utf8");
 const profileMigration = readFileSync("db/migrations/0006_project_identity_profile.sql", "utf8");
+const planningMigration = readFileSync("db/migrations/0007_planning_diagnostics.sql", "utf8");
 
 test("generation telemetry migration creates article-level cost table", () => {
   const body = tableBody("generation_telemetry");
@@ -65,6 +66,25 @@ test("generation telemetry expansion captures usage quality and cost inputs", ()
   ]) {
     assert.match(expansion, new RegExp(escapeRegExp(column)));
   }
+});
+
+test("planning diagnostics migration adds planner observability columns", () => {
+  for (const column of [
+    "planned_h2_count integer not null default 0",
+    "planned_h3_count integer not null default 0",
+    "expected_depth text",
+    "actual_h2_count integer not null default 0",
+    "actual_h3_count integer not null default 0",
+    "actual_depth text",
+    "h2_achievement_percent numeric(6,2)",
+    "h3_achievement_percent numeric(6,2)",
+    "target_achievement_percent numeric(6,2)",
+    "planner_outcome text"
+  ]) {
+    assert.match(planningMigration, new RegExp(escapeRegExp(column)));
+  }
+  assert.match(planningMigration, /generation_telemetry_planning_idx/);
+  assert.match(planningMigration, /metadata #>> '\{planningDiagnostics,expectedDepth\}'/);
 });
 
 test("telemetry export status tracks Google Sheets delivery separately", () => {
