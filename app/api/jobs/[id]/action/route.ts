@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
 
-type JobAction = "skip" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom";
+type JobAction = "skip" | "remove" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom";
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const unauth = await requireAuth();
@@ -14,6 +14,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
 
   try {
     if (body.action === "skip") return NextResponse.json({ job: await runner.skipJob(id) });
+    if (body.action === "remove") return NextResponse.json({ removedJobId: await runner.removeQueuedJob(id) });
     if (body.action === "regenerate_later") return NextResponse.json({ job: await runner.regenerateLater(id) });
     if (body.action === "move_up") return NextResponse.json({ job: await runner.moveJob(id, "up") });
     if (body.action === "move_down") return NextResponse.json({ job: await runner.moveJob(id, "down") });

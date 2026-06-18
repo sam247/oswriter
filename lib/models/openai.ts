@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, ValidationInput, ValidationResult } from "@/lib/types";
+import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, SimilarTitleGenerationInput, ValidationInput, ValidationResult } from "@/lib/types";
 import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import { profileContextLines } from "@/lib/project/profile";
 import { cleanJsonText } from "@/lib/text";
@@ -93,6 +93,25 @@ export class OpenAIModelAdapter implements ModelAdapter {
     } catch {
       return heuristicValidation(input);
     }
+  }
+
+  async generateSimilarTitles(input: SimilarTitleGenerationInput) {
+    this.ensureKey();
+    const count = Math.max(5, Math.min(10, input.count ?? 10));
+    const response = await this.client.chat.completions.create({
+      model: process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash",
+      messages: promptToMessages(
+        "You plan closely related, non-duplicative article titles and return strict JSON only.",
+        buildSimilarTitlesPrompt(input, count)
+      ),
+      temperature: 0.7,
+      max_tokens: 900,
+      response_format: { type: "json_object" }
+    });
+    const text = response.choices[0]?.message.content?.trim();
+    if (!text) throw new Error("Similar title generation returned no ideas.");
+    const parsed = JSON.parse(cleanJsonText(text)) as { titles?: unknown };
+    return Array.isArray(parsed.titles) ? parsed.titles.filter((title): title is string => typeof title === "string") : [];
   }
 
   private ensureKey() {
@@ -197,6 +216,26 @@ ${projectContext.length ? `\nProject context:\n${projectContext.map((line) => `-
 Research confidence: ${research.confidence}
 Article:
 ${markdown}`;
+}
+
+function buildSimilarTitlesPrompt(input: SimilarTitleGenerationInput, count: number) {
+  const context = profileContextLines(input.profileSnapshot);
+  return `Generate ${count} closely related article titles based on the source article.
+
+Requirements:
+- Match the project region, industry and audience.
+- Stay close to the source topic while covering distinct useful angles.
+- Do not repeat or lightly rephrase any blocked title.
+- Return JSON only in this shape: {"titles":["Title one","Title two"]}.
+
+Source title: ${input.title}
+${context.join("\n")}
+
+Blocked titles:
+${input.existingTitles.map((title) => `- ${title}`).join("\n")}
+
+Source article excerpt:
+${input.markdown.slice(0, 12000)}`;
 }
 
 function normaliseMarkdown(markdown: string, title: string) {

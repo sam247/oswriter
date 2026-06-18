@@ -1358,7 +1358,8 @@ function withArticleDefaults(article: ArticleDocument, tenant: TenantSeed): Arti
     currentVersionNumber: article.currentVersionNumber ?? 1,
     versionedAt: article.versionedAt ?? null,
     markdownBlobPath: article.markdownBlobPath ?? null,
-    statusReason: article.statusReason ?? null
+    statusReason: article.statusReason ?? null,
+    isPinned: article.isPinned ?? false
   };
 }
 

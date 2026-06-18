@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Settings, SkipForward, Trash2, Unlink, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Pin, Play, RotateCw, Search, Settings, SkipForward, Sparkles, Trash2, Unlink, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
+import type { QueueCostProjection } from "@/lib/queue/projection";
 import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
 import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,8 @@ type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" |
 type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
+type InventorySortKey = "quality" | "research" | "evidence" | "words" | "updated";
+type SortDirection = "asc" | "desc";
 type WorkspacePreferencePatch = {
   account?: Partial<WorkspacePreferencesDocument["account"]>;
   notifications?: Partial<WorkspacePreferencesDocument["notifications"]>;
@@ -104,6 +107,7 @@ function Workbench() {
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalytics | null>(null);
+  const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
@@ -118,6 +122,12 @@ function Workbench() {
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResponse | null>(null);
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const [regenerateCandidate, setRegenerateCandidate] = useState<ArticleDocument | null>(null);
+  const [similarCandidate, setSimilarCandidate] = useState<ArticleDocument | null>(null);
+  const [similarTitles, setSimilarTitles] = useState<string[]>([]);
+  const [selectedSimilarTitles, setSelectedSimilarTitles] = useState<Set<string>>(new Set());
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState<string | null>(null);
   const [selectedStage, setSelectedStage] = useState<string>("research");
   const [highlightWarnings, setHighlightWarnings] = useState(false);
   const [tick, setTick] = useState(Date.now());
@@ -161,6 +171,8 @@ function Workbench() {
   const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter);
   const queueJobs = visibleJobs.filter(isQueueJobVisible);
   const libraryArticles = inventoryArticles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
+  const pinnedLibraryArticles = libraryArticles.filter((article) => article.isPinned);
+  const regularLibraryArticles = libraryArticles.filter((article) => !article.isPinned);
   const stats = useMemo(() => ({
     queued: displayJobs.filter((job) => job.status === "queued").length,
     processing: displayJobs.filter((job) => job.status === "processing").length,
@@ -181,6 +193,16 @@ function Workbench() {
   const resumableQueuedJob = useMemo(() => displayJobs.find(isResumableQueuedJob), [displayJobs]);
   const generateBlocked = busy || running || (state?.queueControl.mode === "stop_after_current" && !resumableQueuedJob);
   const generateButton = describeGenerateButton(stats, queueMetrics, generateBlocked, state?.queueControl.mode ?? "stopped", Boolean(resumableQueuedJob));
+  const queueProjectionKey = state ? [
+    state.project.id,
+    ...displayJobs.filter((job) => job.status === "queued").map((job) => job.id).sort(),
+    state.project.profile?.profileVersion,
+    state.project.profile?.regionKey,
+    state.project.profile?.industryKey,
+    state.project.profile?.audienceKey,
+    state.project.profile?.defaultTargetWords,
+    state.settings.controls.lengthTargetWords
+  ].join(":") : "";
 
   function applyServerState(next: AppState, source: string) {
     const merged = mergeOptimisticProcessingClaims(next, optimisticClaimsRef.current);
@@ -207,6 +229,24 @@ function Workbench() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (!state || stats.queued === 0) {
+      setQueueProjection(null);
+      return;
+    }
+    setQueueProjection(null);
+    const controller = new AbortController();
+    void fetch("/api/queue/projection", { cache: "no-store", signal: controller.signal })
+      .then((res) => res.ok ? res.json() : null)
+      .then((projection: QueueCostProjection | null) => {
+        if (projection?.articleCount) setQueueProjection(projection);
+      })
+      .catch(() => {
+        // Projection is advisory and must never interfere with queue generation.
+      });
+    return () => controller.abort();
+  }, [queueProjectionKey]);
 
   useEffect(() => {
     return () => {
@@ -710,6 +750,83 @@ function Workbench() {
     await refresh();
   }
 
+  async function toggleArticlePin(article: ArticleDocument) {
+    const res = await fetch(`/api/articles/${article.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isPinned: !article.isPinned })
+    });
+    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; error?: string };
+    if (!res.ok || !data.article) {
+      setMessage(data.error ?? "Could not update pinned state.");
+      return;
+    }
+    setState((current) => current ? {
+      ...current,
+      articles: current.articles.map((item) => item.id === data.article!.id ? data.article! : item)
+    } : current);
+    setMessage(data.article.isPinned ? "Article pinned." : "Article unpinned.");
+  }
+
+  async function confirmRegenerateArticle() {
+    if (!regenerateCandidate) return;
+    setBusy(true);
+    const res = await fetch(`/api/articles/${regenerateCandidate.id}/regenerate`, { method: "POST" });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
+    setBusy(false);
+    if (!res.ok) {
+      setMessage(data.error ?? "Article regeneration could not be queued.");
+      return;
+    }
+    setRegenerateCandidate(null);
+    setSidebarTab("queue");
+    setMessage("Original moved to Review; regeneration queued.");
+    if (data.state) applyServerState(data.state, "article-regenerate");
+    else await refresh();
+  }
+
+  async function openSimilarTitles(article: ArticleDocument) {
+    setSimilarCandidate(article);
+    setSimilarTitles([]);
+    setSelectedSimilarTitles(new Set());
+    setSimilarError(null);
+    setSimilarLoading(true);
+    const res = await fetch(`/api/articles/${article.id}/similar`, { method: "POST" });
+    const data = await res.json().catch(() => ({})) as { titles?: string[]; error?: string };
+    setSimilarLoading(false);
+    if (!res.ok || !data.titles) {
+      setSimilarError(data.error ?? "Could not generate related article ideas.");
+      return;
+    }
+    setSimilarTitles(data.titles);
+    setSelectedSimilarTitles(new Set(data.titles));
+  }
+
+  async function addSimilarTitlesToQueue() {
+    const selected = similarTitles.filter((title) => selectedSimilarTitles.has(title));
+    if (!selected.length) return;
+    setBusy(true);
+    const res = await fetch("/api/jobs/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ titles: selected, avoidDuplicates: true })
+    });
+    const data = await res.json().catch(() => ({})) as { jobs?: QueueJob[]; state?: AppState; error?: string };
+    setBusy(false);
+    if (!res.ok) {
+      setMessage(data.error ?? "Could not add related titles.");
+      return;
+    }
+    setSimilarCandidate(null);
+    setSidebarTab("queue");
+    const queuedCount = data.jobs?.length ?? selected.length;
+    setMessage(queuedCount
+      ? `${queuedCount} related title${queuedCount === 1 ? "" : "s"} queued.`
+      : "Those titles already exist in this project or queue.");
+    if (data.state) applyServerState(data.state, "similar-titles");
+    else await refresh();
+  }
+
   function updateArticleDraft(articleId: string, patch: { title?: string; markdown?: string }) {
     let nextTitle = patch.title;
     let nextMarkdown = patch.markdown;
@@ -797,13 +914,14 @@ function Workbench() {
     void refresh();
   }
 
-  async function actOnJob(jobId: string, action: "skip" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") {
+  async function actOnJob(jobId: string, action: "skip" | "remove" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") {
+    if (action === "remove" && !confirm("Remove this title from the queue?")) return;
     const res = await fetch(`/api/jobs/${jobId}/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action })
     });
-    const data = await res.json().catch(() => ({})) as { job?: QueueJob; error?: string };
+    const data = await res.json().catch(() => ({})) as { job?: QueueJob; removedJobId?: string; error?: string };
     setMessage(res.ok ? jobActionMessage(action) : data.error ?? "Queue item action failed.");
     if (data.job) upsertJob(data.job);
     await refresh();
@@ -1039,17 +1157,43 @@ function Workbench() {
                 );
               }) : <Empty text="No active queue work." />
             ) : (
-              libraryArticles.length ? libraryArticles.map((article) => (
+              libraryArticles.length ? <>
+                {pinnedLibraryArticles.length > 0 && (
+                  <div className="border-b border-line/70 pb-1">
+                    <div className="mono flex items-center gap-1 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle"><Pin className="size-3" /> Pinned Articles</div>
+                    {pinnedLibraryArticles.map((article) => (
+                      <ArticleLibraryItem
+                        key={article.id}
+                        article={article}
+                        active={selectedArticleId === article.id}
+                        onOpen={() => setSelectedArticleId(article.id)}
+                        onPin={() => void toggleArticlePin(article)}
+                        onRegenerate={() => setRegenerateCandidate(article)}
+                        onGenerateSimilar={() => void openSimilarTitles(article)}
+                        onDelete={() => deleteArticle(article.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {regularLibraryArticles.map((article) => (
                   <ArticleLibraryItem
                     key={article.id}
                     article={article}
                     active={selectedArticleId === article.id}
                     onOpen={() => setSelectedArticleId(article.id)}
+                    onPin={() => void toggleArticlePin(article)}
+                    onRegenerate={() => setRegenerateCandidate(article)}
+                    onGenerateSimilar={() => void openSimilarTitles(article)}
                     onDelete={() => deleteArticle(article.id)}
                   />
-                )) : <Empty text="Completed articles will appear here." />
+                ))}
+              </> : <Empty text="Completed articles will appear here." />
             )}
           </div>
+
+          {sidebarTab === "queue" && stats.queued > 0 && queueProjection && (
+            <QueueProjectionSummary projection={queueProjection} />
+          )}
 
           <div className="hairline-t px-3 pb-3 pt-2">
             <div className="mb-1 flex items-center justify-between px-1">
@@ -1183,6 +1327,33 @@ function Workbench() {
           onOpenResult={openSearchResult}
         />
       )}
+      {regenerateCandidate && (
+        <RegenerateArticleModal
+          article={regenerateCandidate}
+          loading={busy}
+          onClose={() => setRegenerateCandidate(null)}
+          onConfirm={() => void confirmRegenerateArticle()}
+        />
+      )}
+      {similarCandidate && (
+        <SimilarTitlesModal
+          article={similarCandidate}
+          titles={similarTitles}
+          selected={selectedSimilarTitles}
+          loading={similarLoading}
+          submitting={busy}
+          error={similarError}
+          onClose={() => setSimilarCandidate(null)}
+          onToggle={(title) => setSelectedSimilarTitles((current) => {
+            const next = new Set(current);
+            if (next.has(title)) next.delete(title);
+            else next.add(title);
+            return next;
+          })}
+          onSelectAll={() => setSelectedSimilarTitles((current) => current.size === similarTitles.length ? new Set() : new Set(similarTitles))}
+          onSubmit={() => void addSimilarTitlesToQueue()}
+        />
+      )}
     </main>
   );
 }
@@ -1226,6 +1397,79 @@ function QueueStateBanner({
         <span>{metrics.completed} of {metrics.total || 0}</span>
         <span>{metrics.remaining} remaining</span>
         <span className="truncate">{owner ? `Owner ${owner}` : "Owner local"}</span>
+      </div>
+    </div>
+  );
+}
+
+function RegenerateArticleModal({ article, loading, onClose, onConfirm }: {
+  article: ArticleDocument;
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="w-full max-w-md rounded-lg border border-line bg-surface-1 p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="text-[15px] font-semibold text-ink">Regenerate article</div>
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-muted">Regenerate this article using the current project settings?</p>
+        <p className="mt-2 text-[12px] leading-relaxed text-ink-subtle">The current article will be moved to Review and a new version will be added to the queue.</p>
+        <div className="mono mt-3 truncate rounded bg-surface-2 px-3 py-2 text-[11px] text-ink-muted">{article.title}</div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} disabled={loading} className="h-8 rounded px-3 text-[12px] text-ink-muted hover:bg-surface-3 disabled:opacity-50">Cancel</button>
+          <button onClick={onConfirm} disabled={loading} className="flex h-8 items-center gap-1.5 rounded bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-50">
+            {loading && <Loader2 className="size-3.5 animate-spin" />} Regenerate
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SimilarTitlesModal({ article, titles, selected, loading, submitting, error, onClose, onToggle, onSelectAll, onSubmit }: {
+  article: ArticleDocument;
+  titles: string[];
+  selected: Set<string>;
+  loading: boolean;
+  submitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onToggle: (title: string) => void;
+  onSelectAll: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/20 px-4 pt-[8vh] backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="hairline-b px-4 py-3">
+          <div className="flex items-center gap-2 text-[15px] font-semibold text-ink"><Sparkles className="size-4" /> Generate related article ideas</div>
+          <div className="mono mt-1 truncate text-[10.5px] text-ink-subtle">From {article.title}</div>
+        </div>
+        <div className="max-h-[62vh] overflow-y-auto p-3">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-[12px] text-ink-muted"><Loader2 className="size-4 animate-spin" /> Generating related titles...</div>
+          ) : error ? (
+            <div className="rounded border border-danger/20 bg-danger/5 px-3 py-3 text-[12px] text-danger">{error}</div>
+          ) : (
+            <div className="divide-y divide-line/70 overflow-hidden rounded-md border border-line">
+              {titles.map((title) => (
+                <label key={title} className="flex cursor-pointer items-start gap-3 px-3 py-2.5 hover:bg-surface-2">
+                  <input type="checkbox" checked={selected.has(title)} onChange={() => onToggle(title)} className="mt-0.5" />
+                  <span className="text-[13px] text-ink">{title}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="hairline-t flex items-center justify-between gap-3 px-4 py-3">
+          <button onClick={onSelectAll} disabled={loading || !titles.length} className="text-[11.5px] text-ink-muted hover:text-ink disabled:opacity-40">{selected.size === titles.length && titles.length ? "Clear all" : "Select all"}</button>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} disabled={submitting} className="h-8 rounded px-3 text-[12px] text-ink-muted hover:bg-surface-3 disabled:opacity-50">Cancel</button>
+            <button onClick={onSubmit} disabled={loading || submitting || selected.size === 0} className="flex h-8 items-center gap-1.5 rounded bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
+              {submitting && <Loader2 className="size-3.5 animate-spin" />} Add {selected.size || ""} to queue
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1311,14 +1555,25 @@ function ProjectDashboard({
   summary: ProjectSummary | null;
   onSelectArticle: (id: string) => void;
 }) {
-  const inventoryRows = articles
-    .map((article) => ({ article, job: jobs.find((job) => job.id === article.jobId || job.articleId === article.id) ?? null }))
-    .sort((a, b) => b.article.updatedAt.localeCompare(a.article.updatedAt));
+  const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const inventoryRows = sortInventoryRows(
+    articles.map((article) => ({ article, job: jobs.find((job) => job.id === article.jobId || job.articleId === article.id) ?? null })),
+    sortKey,
+    sortDirection
+  );
   const contentInventory = inventoryRows;
   const attentionRows = inventoryRows
     .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "processing")
     .slice(0, 8);
   const profile = state?.project.profile;
+  function changeSort(nextKey: InventorySortKey) {
+    if (nextKey === sortKey) setSortDirection((current) => current === "desc" ? "asc" : "desc");
+    else {
+      setSortKey(nextKey);
+      setSortDirection("desc");
+    }
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1342,7 +1597,7 @@ function ProjectDashboard({
         <div className="space-y-5">
           <ProjectSection title="Needs attention">
             {attentionRows.length ? (
-              <InventoryTable rows={attentionRows} onSelectArticle={onSelectArticle} compact />
+              <InventoryTable rows={attentionRows} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} compact />
             ) : (
               <Empty text="No articles currently need attention." />
             )}
@@ -1350,7 +1605,7 @@ function ProjectDashboard({
 
           <ProjectSection title="Content inventory">
             {contentInventory.length ? (
-              <InventoryTable rows={contentInventory} onSelectArticle={onSelectArticle} />
+              <InventoryTable rows={contentInventory} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} />
             ) : (
               <Empty text="Saved articles will appear here." />
             )}
@@ -1828,29 +2083,38 @@ function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | nu
 function InventoryTable({
   rows,
   onSelectArticle,
+  sortKey,
+  sortDirection,
+  onSort,
   compact = false
 }: {
   rows: Array<{ article: ArticleDocument; job: QueueJob | null }>;
   onSelectArticle: (id: string) => void;
+  sortKey: InventorySortKey;
+  sortDirection: SortDirection;
+  onSort: (key: InventorySortKey) => void;
   compact?: boolean;
 }) {
   return (
     <div className="overflow-hidden">
-      <div className="grid grid-cols-[minmax(0,1fr)_86px_64px_56px_56px_64px] gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+      <div className="grid grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
         <span>Title</span>
         <span>Status</span>
-        <span className="text-right">Words</span>
+        <InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} />
         <span className="text-right">Src</span>
-        <span className="text-right">Q</span>
-        <span className="text-right">Updated</span>
+        <InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} />
+        <InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} />
+        <InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} />
+        <InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} />
       </div>
       <div className="divide-y divide-line/70">
         {rows.map(({ article, job }) => {
+          const scores = calculateArticleScores(article);
           return (
             <button
               key={article.id}
               onClick={() => onSelectArticle(article.id)}
-              className="grid w-full grid-cols-[minmax(0,1fr)_86px_64px_56px_56px_64px] gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2"
+              className="grid w-full grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2"
             >
               <span className="min-w-0">
                 <span className="block truncate font-medium text-ink">{article.title}</span>
@@ -1859,7 +2123,9 @@ function InventoryTable({
               <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{article.sources.length}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{scores.quality.score}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{scores.research.score}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{scores.evidence.score}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</span>
             </button>
           );
@@ -1867,6 +2133,35 @@ function InventoryTable({
       </div>
     </div>
   );
+}
+
+function InventorySortHeader({ label, metric, active, direction, onSort }: {
+  label: string;
+  metric: InventorySortKey;
+  active: InventorySortKey;
+  direction: SortDirection;
+  onSort: (metric: InventorySortKey) => void;
+}) {
+  return <button onClick={() => onSort(metric)} className={cn("text-right hover:text-ink", active === metric && "text-ink")} title={`Sort by ${label}`}>{label}{active === metric ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
+}
+
+function sortInventoryRows(rows: Array<{ article: ArticleDocument; job: QueueJob | null }>, key: InventorySortKey, direction: SortDirection) {
+  const multiplier = direction === "desc" ? -1 : 1;
+  return [...rows].sort((left, right) => {
+    const leftValue = inventorySortValue(left.article, key);
+    const rightValue = inventorySortValue(right.article, key);
+    const difference = typeof leftValue === "string" && typeof rightValue === "string"
+      ? leftValue.localeCompare(rightValue)
+      : Number(leftValue) - Number(rightValue);
+    return difference * multiplier || right.article.updatedAt.localeCompare(left.article.updatedAt);
+  });
+}
+
+function inventorySortValue(article: ArticleDocument, key: InventorySortKey) {
+  if (key === "words") return article.wordCount;
+  if (key === "updated") return article.updatedAt;
+  const scores = calculateArticleScores(article);
+  return scores[key].score;
 }
 
 function StatusDistribution({ jobs }: { jobs: QueueJob[] }) {
@@ -2173,6 +2468,38 @@ function MetricPill({
   );
 }
 
+function QueueProjectionSummary({ projection }: { projection: QueueCostProjection }) {
+  return (
+    <div className="hairline-t px-3 py-2.5">
+      <div className="rounded-md border border-line/80 bg-surface-1 px-2.5 py-2">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[11.5px] font-medium text-ink">{projection.articleCount} {projection.articleCount === 1 ? "article" : "articles"} queued</span>
+          <span className="mono rounded bg-surface-3 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-ink-subtle">Estimate</span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10.5px]">
+          <ProjectionMetric label="Words" value={formatNumber(projection.estimatedWords)} />
+          <ProjectionMetric label="Runtime" value={formatEstimatedRuntime(projection.estimatedRuntimeMs)} />
+          <ProjectionMetric label="Research" value={formatProjectedUsd(projection.estimatedResearchCostUsd)} />
+          <ProjectionMetric label="Generation" value={formatProjectedUsd(projection.estimatedGenerationCostUsd)} />
+        </div>
+        <div className="mt-1.5 flex items-center justify-between border-t border-line/70 pt-1.5 text-[11px]">
+          <span className="text-ink-muted">Estimated total</span>
+          <span className="mono font-medium text-ink">{formatProjectedUsd(projection.estimatedTotalCostUsd)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectionMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-subtle">{label}</span>
+      <span className="mono text-ink-muted">{value}</span>
+    </div>
+  );
+}
+
 function QueueListItem({
   job,
   article,
@@ -2186,7 +2513,7 @@ function QueueListItem({
   active: boolean;
   onSelect: () => void;
   onRetry: () => void;
-  onAction: (action: "skip" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void;
+  onAction: (action: "skip" | "remove" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void;
 }) {
   const scores = article ? calculateArticleScores(article) : null;
   const displayStatus = displayStatusLabel(job, article);
@@ -2234,7 +2561,7 @@ function QueueListItem({
   );
 }
 
-function QueueItemActions({ job, onAction }: { job: QueueJob; onAction: (action: "skip" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void }) {
+function QueueItemActions({ job, onAction }: { job: QueueJob; onAction: (action: "skip" | "remove" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void }) {
   const locked = job.status === "processing";
   const title = locked ? "This article is processing and cannot be reordered, skipped or regenerated yet." : "Queue item controls";
   return (
@@ -2249,6 +2576,7 @@ function QueueItemActions({ job, onAction }: { job: QueueJob; onAction: (action:
           <IconAction title="Move to bottom" onClick={() => onAction("move_bottom")}><ChevronsDown className="size-3" /></IconAction>
           <IconAction title="Regenerate later" onClick={() => onAction("regenerate_later")}><RotateCw className="size-3" /></IconAction>
           <IconAction title="Skip" danger onClick={() => onAction("skip")}><SkipForward className="size-3" /></IconAction>
+          {job.status === "queued" && <IconAction title="Remove from queue" danger onClick={() => onAction("remove")}><Trash2 className="size-3" /></IconAction>}
         </>
       )}
     </div>
@@ -2274,11 +2602,17 @@ function ArticleLibraryItem({
   article,
   active,
   onOpen,
+  onPin,
+  onRegenerate,
+  onGenerateSimilar,
   onDelete
 }: {
   article: ArticleDocument;
   active: boolean;
   onOpen: () => void;
+  onPin: () => void;
+  onRegenerate: () => void;
+  onGenerateSimilar: () => void;
   onDelete: () => void;
 }) {
   const scores = calculateArticleScores(article);
@@ -2326,17 +2660,12 @@ function ArticleLibraryItem({
           </span>
         </span>
       </button>
-      <button
-        onClick={(event) => {
-          event.stopPropagation();
-          confirmDelete();
-        }}
-        className="absolute right-2 top-8 z-20 grid size-6 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-surface-3 hover:text-ink focus:opacity-100 group-hover:opacity-100"
-        title={`Delete ${article.title}`}
-        aria-label={`Delete ${article.title}`}
-      >
-        <Trash2 className="size-3" />
-      </button>
+      <div className="absolute bottom-2 right-2 z-20 flex items-center gap-0.5 rounded bg-surface-1 p-0.5 opacity-0 shadow-sm ring-1 ring-line transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <IconAction title={article.isPinned ? "Unpin article" : "Pin article"} onClick={onPin}><Pin className={cn("size-3", article.isPinned && "fill-current text-ink")} /></IconAction>
+        <IconAction title="Regenerate article" onClick={onRegenerate}><RotateCw className="size-3" /></IconAction>
+        <IconAction title="Generate similar" onClick={onGenerateSimilar}><Sparkles className="size-3" /></IconAction>
+        <IconAction title={`Delete ${article.title}`} danger onClick={confirmDelete}><Trash2 className="size-3" /></IconAction>
+      </div>
     </div>
   );
 }
@@ -4216,6 +4545,7 @@ function isRecoverableProcessingJob(job: QueueJob, staleMinutes: number, now: nu
 function jobActionMessage(action: string) {
   return {
     skip: "Queue item skipped.",
+    remove: "Queue item removed.",
     regenerate_later: "Queue item moved to the end.",
     move_up: "Queue item moved up.",
     move_down: "Queue item moved down.",
@@ -4642,6 +4972,15 @@ function formatDuration(ms: number | null) {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatEstimatedRuntime(ms: number) {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  return `~${minutes} min`;
+}
+
+function formatProjectedUsd(value: number) {
+  return `$${value.toFixed(3)}`;
 }
 
 function formatSavedTime(minutes: number) {

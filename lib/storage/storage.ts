@@ -179,6 +179,10 @@ export class WorkspaceStore {
     return this.storage.getJson<QueueJob>(jobPath(jobId, projectId ?? await this.getActiveProjectId()));
   }
 
+  async deleteJob(jobId: string, projectId?: string) {
+    await this.storage.deletePath(jobPath(jobId, projectId ?? await this.getActiveProjectId()));
+  }
+
   async listArticles(projectId?: string) {
     const all = await this.storage.listJson<ArticleDocument>(articlesPrefix(projectId ?? await this.getActiveProjectId()));
     return all

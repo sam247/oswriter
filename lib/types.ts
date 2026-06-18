@@ -317,6 +317,7 @@ export interface ArticleDocument {
   title: string;
   status: JobStatus;
   statusReason?: string | null;
+  isPinned?: boolean;
   markdown: string;
   markdownBlobPath?: string | null;
   createdAt: string;
@@ -554,6 +555,15 @@ export interface ModelAdapter {
   generateArticle(input: ArticleGenerationInput): Promise<string | ModelGenerationResult>;
   editArticle(input: EditorInput): Promise<string>;
   validateArticle(input: ValidationInput): Promise<ValidationResult>;
+  generateSimilarTitles?(input: SimilarTitleGenerationInput): Promise<string[]>;
+}
+
+export interface SimilarTitleGenerationInput {
+  title: string;
+  markdown: string;
+  profileSnapshot: ProjectProfileSnapshot;
+  existingTitles: string[];
+  count?: number;
 }
 
 export interface ArticleGenerationInput {

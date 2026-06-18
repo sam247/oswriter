@@ -341,6 +341,34 @@ describe("QueueRunner", () => {
     assert.equal((await store.listJobs()).length, 1);
   });
 
+  it("removes one queued job without affecting the rest of the queue", async () => {
+    const { store, runner } = setup();
+    const [first, second] = await runner.addTitles(["Typo title", "Keep this title"]);
+
+    assert.equal(await runner.removeQueuedJob(first.id), first.id);
+    assert.deepEqual((await store.listJobs()).map((job) => job.id), [second.id]);
+
+    const skipped = await runner.skipJob(second.id);
+    await assert.rejects(() => runner.removeQueuedJob(skipped.id), /Only queued jobs can be removed/);
+  });
+
+  it("filters project and request duplicates when adding generated titles", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Existing queue title"]);
+    const [articleJob] = await runner.addTitles(["Existing article title"]);
+    await drainQueue(runner);
+    assert.ok(await store.getArticle(articleJob.articleId));
+
+    const added = await runner.addUniqueTitles([
+      "Existing queue title!",
+      "Existing article title",
+      "New related title",
+      "New related title."
+    ]);
+
+    assert.deepEqual(added.map((job) => job.title), ["New related title"]);
+  });
+
   it("records generation telemetry after an article is saved", async () => {
     const { store, runner } = setup(new FakeSearch(), new MeteredModel());
     const [job] = await runner.addTitles(["Telemetry cost tracking"]);
@@ -416,6 +444,37 @@ describe("QueueRunner", () => {
     assert.equal(article.costTelemetry.exaSearchRequests, 5);
     assert.equal(article.costTelemetry.exaContentPages, 25);
     assert.equal(article.planningDiagnostics.actualH3Count, 1);
+  });
+
+  it("queues regeneration as a new lifecycle while retaining the original article", async () => {
+    const { store, runner } = setup();
+    const [originalJob] = await runner.addTitles(["Original article"]);
+    await drainQueue(runner);
+    const original = await store.getArticle(originalJob.articleId);
+    assert.ok(original);
+
+    const regenerated = await runner.regenerateArticle(original.id);
+    assert.notEqual(regenerated.job.articleId, original.id);
+    assert.equal(regenerated.job.title, original.title);
+    assert.equal(regenerated.job.status, "queued");
+    assert.equal(regenerated.article.status, "needs_review");
+    assert.equal(regenerated.article.markdown, original.markdown);
+    assert.ok(await store.getArticle(original.id));
+  });
+
+  it("persists pinned article metadata without changing content or timestamps", async () => {
+    const { store, runner } = setup();
+    const [job] = await runner.addTitles(["Pin this article"]);
+    await drainQueue(runner);
+    const article = await store.getArticle(job.articleId);
+    assert.ok(article);
+    assert.equal(article.isPinned, false);
+
+    await store.saveArticle({ ...article, isPinned: true });
+    const pinned = await store.getArticle(article.id);
+    assert.equal(pinned?.isPinned, true);
+    assert.equal(pinned?.markdown, article.markdown);
+    assert.equal(pinned?.updatedAt, article.updatedAt);
   });
 
   it("regenerates later by moving an item to the queue end with settings preserved", async () => {

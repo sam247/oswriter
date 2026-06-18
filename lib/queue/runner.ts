@@ -62,6 +62,38 @@ export class QueueRunner {
     return jobs;
   }
 
+  async addUniqueTitles(titles: string[], projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const [articles, jobs] = await Promise.all([
+      this.store.listArticles(resolvedProjectId),
+      this.store.listJobs(resolvedProjectId)
+    ]);
+    const blocked = new Set([...articles.map((article) => article.title), ...jobs.map((job) => job.title)].map(normalizeTitle));
+    const unique = titles.filter((title) => {
+      const key = normalizeTitle(title);
+      if (!key || blocked.has(key)) return false;
+      blocked.add(key);
+      return true;
+    });
+    return this.addTitles(unique, resolvedProjectId);
+  }
+
+  async regenerateArticle(articleId: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const article = await this.store.getArticle(articleId, resolvedProjectId);
+    if (!article) throw new Error(`Article not found: ${articleId}`);
+    const [job] = await this.addTitles([article.title], resolvedProjectId);
+    const updatedArticle: ArticleDocument = {
+      ...article,
+      status: "needs_review",
+      statusReason: "Regeneration requested; original retained for comparison.",
+      needsReviewReasons: [...new Set([...article.needsReviewReasons, "Regeneration requested; compare with the new article."])],
+      updatedAt: nowIso()
+    };
+    await this.store.saveArticle(updatedArticle);
+    return { article: updatedArticle, job };
+  }
+
   async retryJob(jobId: string, projectId?: string) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const job = await this.store.getJob(jobId, resolvedProjectId);
@@ -137,6 +169,15 @@ export class QueueRunner {
     };
     await this.store.saveJob(skipped);
     return skipped;
+  }
+
+  async removeQueuedJob(jobId: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const job = await this.store.getJob(jobId, resolvedProjectId);
+    if (!job) throw new Error(`Job not found: ${jobId}`);
+    if (job.status !== "queued") throw new Error("Only queued jobs can be removed.");
+    await this.store.deleteJob(jobId, resolvedProjectId);
+    return jobId;
   }
 
   async regenerateLater(jobId: string, projectId?: string) {
@@ -735,6 +776,10 @@ function isBetweenCompletedStages(job: QueueJob) {
     && !job.pipeline.some((step) => step.status === "running");
 }
 
+function normalizeTitle(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 function createArticle(
   job: QueueJob,
   markdown: string,
@@ -754,6 +799,7 @@ function createArticle(
     jobId: job.id,
     title: job.title,
     status: job.status === "processing" ? statusFromReviewReasons(needsReviewReasons) : job.status,
+    isPinned: false,
     markdown,
     createdAt: job.createdAt,
     updatedAt: now,

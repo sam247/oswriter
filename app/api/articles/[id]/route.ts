@@ -9,10 +9,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (unauth) return unauth;
 
   const { id } = await context.params;
-  const body = await req.json().catch(() => ({})) as { markdown?: string; title?: string };
+  const body = await req.json().catch(() => ({})) as { markdown?: string; title?: string; isPinned?: boolean };
   const hasMarkdown = typeof body.markdown === "string";
   const hasTitle = typeof body.title === "string";
-  if (!hasMarkdown && !hasTitle) {
+  const hasPinned = typeof body.isPinned === "boolean";
+  if (!hasMarkdown && !hasTitle && !hasPinned) {
     return NextResponse.json({ error: "Missing article changes." }, { status: 400 });
   }
 
@@ -26,7 +27,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     title: hasTitle ? body.title!.trim() || article.title : article.title,
     markdown: hasMarkdown ? body.markdown! : article.markdown,
     wordCount: hasMarkdown ? countWords(body.markdown!) : article.wordCount,
-    updatedAt: nowIso()
+    isPinned: hasPinned ? body.isPinned! : article.isPinned ?? false,
+    updatedAt: hasMarkdown || hasTitle ? nowIso() : article.updatedAt
   };
   await store.saveArticle(updated);
 

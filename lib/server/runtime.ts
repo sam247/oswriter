@@ -2,13 +2,15 @@ import { OpenAIModelAdapter } from "@/lib/models/openai";
 import { QueueRunner } from "@/lib/queue/runner";
 import { ExaSearchAdapter } from "@/lib/research/exa";
 import { createWorkspaceStore } from "@/lib/storage/server";
-import type { ArticleGenerationInput, EditorInput, ModelAdapter, SearchAdapter, ValidationInput } from "@/lib/types";
+import type { ArticleGenerationInput, EditorInput, ModelAdapter, SearchAdapter, SimilarTitleGenerationInput, ValidationInput } from "@/lib/types";
 
 export function createRuntime() {
   const store = createWorkspaceStore();
+  const model = new LazyModelAdapter();
   return {
     store,
-    runner: new QueueRunner(store, new LazySearchAdapter(), new LazyModelAdapter())
+    model,
+    runner: new QueueRunner(store, new LazySearchAdapter(), model)
   };
 }
 
@@ -38,6 +40,10 @@ class LazyModelAdapter implements ModelAdapter {
 
   validateArticle(input: ValidationInput) {
     return this.instance.validateArticle(input);
+  }
+
+  generateSimilarTitles(input: SimilarTitleGenerationInput) {
+    return this.instance.generateSimilarTitles(input);
   }
 
   private get instance() {
