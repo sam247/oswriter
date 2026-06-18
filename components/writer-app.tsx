@@ -1675,7 +1675,7 @@ function SettingsPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
-        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Workspace settings</div>
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Settings</div>
         <div className="mt-1 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">Settings</h1>
@@ -1687,7 +1687,7 @@ function SettingsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-5xl">
-          <SettingsSection title="Workspace Settings">
+          <SettingsSection title="Settings">
             <SettingsTextInput label="Name" value={preferences.account.name} onSave={(name) => onUpdatePreferences({ account: { name } })} />
             <SettingsTextInput label="Email address" value={preferences.account.email} type="email" onSave={(email) => onUpdatePreferences({ account: { email } })} />
             <SettingsTextInput label="Workspace Name" value={preferences.account.workspaceName} onSave={(workspaceName) => onUpdatePreferences({ account: { workspaceName } })} />
@@ -2384,7 +2384,7 @@ function ProjectMenu({
         <span className="mono text-[10.5px] text-ink-subtle">Open</span>
       </button>
       <button onClick={onSettings} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
-        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Workspace settings</span>
+        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Settings</span>
         <span className="mono text-[10.5px] text-ink-subtle">Workspace</span>
       </button>
       {projects.length > 0 && (

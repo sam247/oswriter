@@ -24,7 +24,7 @@ export function getSourceDisplayDomain(url: string, domain = "") {
   }
 }
 
-export function truncateSourceTitle(title: string, maxLength = 40) {
+export function truncateSourceTitle(title: string, maxLength = 50) {
   const characters = Array.from(title);
   if (characters.length <= maxLength) return title;
   return `${characters.slice(0, Math.max(1, maxLength - 1)).join("").trimEnd()}…`;

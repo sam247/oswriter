@@ -22,11 +22,11 @@ describe("research source display", () => {
     assert.ok(!title.includes("https://"));
   });
 
-  it("caps displayed titles at 40 characters without losing the source title", () => {
+  it("caps displayed titles at 50 characters without losing the source title", () => {
     const title = "Designing High-Throughput Multi-Tenant SaaS on Azure";
     const truncated = truncateSourceTitle(title);
-    assert.ok(Array.from(truncated).length <= 40);
-    assert.equal(truncated, "Designing High-Throughput Multi-Tenant…");
+    assert.ok(Array.from(truncated).length <= 50);
+    assert.equal(truncated, "Designing High-Throughput Multi-Tenant SaaS on Az…");
     assert.equal(truncateSourceTitle("Short source title"), "Short source title");
   });
 });
