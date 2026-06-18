@@ -5,6 +5,5 @@ import { createWorkspaceStore } from "@/lib/storage/server";
 export async function GET() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
-
-  return NextResponse.json(await createWorkspaceStore().getProjectAnalytics());
+  return NextResponse.json(await createWorkspaceStore().getArticleListMetadata());
 }

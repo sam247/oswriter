@@ -6,5 +6,7 @@ export async function GET() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  return NextResponse.json(await createWorkspaceStore().getProjectAnalytics());
+  // Queue polling must never load full project state.
+  const status = await createWorkspaceStore().getQueueStatus();
+  return NextResponse.json(status);
 }

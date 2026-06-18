@@ -6,7 +6,10 @@ import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
-import type { ArticleDocument, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { WorkerObservationTimings } from "@/lib/storage/storage";
+import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import { toArticleSummary } from "@/lib/articles/summary";
+import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -62,7 +65,7 @@ export class NeonStorageProvider implements StorageProvider {
       if (isSettingsPath(path)) return this.saveSettings(value as SettingsDocument);
       if (isQueueControlPath(path)) return this.saveQueueControl(value as QueueControlDocument);
       if (isJobPath(path)) return this.saveJob(value as QueueJob);
-      if (isArticlePath(path)) return this.saveArticle(value as ArticleDocument);
+      if (isArticlePath(path)) return this.saveArticleRow(value as ArticleDocument);
       if (isResearchPath(path)) return this.saveResearch(value as ResearchPack, pathProjectId(path));
       if (isDebugPath(path)) return this.saveDebug(value as DebugDocument, pathProjectId(path));
       if (isGenerationTelemetryPath(path)) return this.saveGenerationTelemetry(value as GenerationTelemetryDocument, pathProjectId(path));
@@ -130,6 +133,268 @@ export class NeonStorageProvider implements StorageProvider {
         const project = row.document as ProjectDocument;
         return { ...project, profile: normalizeProjectProfile(project.profile) };
       });
+    });
+  }
+
+  async getQueueStatus(projectId: string): Promise<QueueStatus> {
+    return this.withFailureLogging("getQueueStatus", projectId, async () => {
+      const found = rows(await this.sql`
+        select
+          count(*) filter (where j.status = 'queued')::int as queued,
+          count(*) filter (where j.status = 'processing')::int as processing,
+          count(*) filter (where j.status = 'failed')::int as failed,
+          count(*) filter (where j.status = 'generated')::int as generated,
+          count(*) filter (where j.status = 'needs_review')::int as review,
+          (array_agg(j.id order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_id,
+          (array_agg(j.title order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_title
+        from jobs j
+        where j.project_id = ${projectId}
+      `);
+      const row = found[0] ?? {};
+      const activeJobId = row.active_job_id ? String(row.active_job_id) : null;
+      return {
+        queued: Number(row.queued ?? 0),
+        processing: Number(row.processing ?? 0),
+        generated: Number(row.generated ?? 0),
+        review: Number(row.review ?? 0),
+        failed: Number(row.failed ?? 0),
+        ...(activeJobId ? { activeJob: { id: activeJobId, title: String(row.active_job_title ?? "") } } : {})
+      };
+    });
+  }
+
+  async getProjectQueueScan() {
+    return this.withFailureLogging("getProjectQueueScan", undefined, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select
+          (select count(*)::int from projects where organisation_id = ${tenant.organisationId}) as projects_checked,
+          coalesce(array_agg(distinct project_id) filter (where status in ('queued', 'processing')), array[]::text[]) as project_ids
+        from jobs
+        where organisation_id = ${tenant.organisationId}
+      `);
+      return {
+        projectsChecked: Number(found[0]?.projects_checked ?? 0),
+        projectIds: Array.isArray(found[0]?.project_ids) ? found[0].project_ids.map(String) : []
+      };
+    });
+  }
+
+  async getCompactJobCounts(projectId: string) {
+    return this.withFailureLogging("getCompactJobCounts", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select
+          count(*) filter (where status = 'queued')::int as queued,
+          count(*) filter (where status = 'processing')::int as processing,
+          count(*) filter (where status = 'generated')::int as generated,
+          count(*) filter (where status = 'needs_review')::int as needs_review,
+          count(*) filter (where status = 'failed')::int as failed
+        from jobs
+        where organisation_id = ${tenant.organisationId} and project_id = ${projectId}
+      `);
+      const row = found[0] ?? {};
+      return {
+        queued: Number(row.queued ?? 0),
+        processing: Number(row.processing ?? 0),
+        generated: Number(row.generated ?? 0),
+        needsReview: Number(row.needs_review ?? 0),
+        failed: Number(row.failed ?? 0)
+      };
+    });
+  }
+
+  async getQueueCandidate(projectId: string) {
+    return this.withFailureLogging("getQueueCandidate", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select document from jobs
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+          and status in ('processing', 'queued')
+        order by case when status = 'processing' then 0 else 1 end,
+          queue_position asc, created_at asc
+        limit 1
+      `);
+      return found[0]?.document as QueueJob | null ?? null;
+    });
+  }
+
+  async getActiveProcessingJob(projectId: string) {
+    return this.getSingleQueueJob(projectId, "processing");
+  }
+
+  async getNextQueuedJob(projectId: string) {
+    return this.getSingleQueueJob(projectId, "queued");
+  }
+
+  async getResumableQueuedJob(projectId: string) {
+    return this.withFailureLogging("getResumableQueuedJob", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select document from jobs
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+          and status = 'queued'
+          and (attempts > 0 or pipeline @> '[{"status":"done"}]'::jsonb or pipeline @> '[{"status":"running"}]'::jsonb)
+        order by queue_position asc, created_at asc
+        limit 1
+      `);
+      return found[0]?.document as QueueJob | null ?? null;
+    });
+  }
+
+  async getStaleProcessingJobs(projectId: string, cutoff: string) {
+    return this.withFailureLogging("getStaleProcessingJobs", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select document from jobs
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+          and status = 'processing'
+          and updated_at < ${cutoff}::timestamptz
+        order by updated_at asc
+      `);
+      return found.map((row) => row.document as QueueJob);
+    });
+  }
+
+  async getLatestQueuePosition(projectId: string) {
+    return this.withFailureLogging("getLatestQueuePosition", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select coalesce(max(queue_position), 0) as position
+        from jobs
+        where organisation_id = ${tenant.organisationId} and project_id = ${projectId}
+      `);
+      return Number(found[0]?.position ?? 0);
+    });
+  }
+
+  async recordWorkerObservation(projectId: string, timings: WorkerObservationTimings) {
+    return this.withFailureLogging("recordWorkerObservation", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      await this.sql`
+        with targets as (
+          select id, coalesce(jobs.timings, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+            'worker_first_seen_at', coalesce(jobs.timings->'worker_first_seen_at', to_jsonb(${timings.worker_first_seen_at}::text)),
+            'worker_lease_requested_at', coalesce(jobs.timings->'worker_lease_requested_at', to_jsonb(${timings.worker_lease_requested_at}::text)),
+            'worker_lease_acquired_at', coalesce(jobs.timings->'worker_lease_acquired_at', to_jsonb(${timings.worker_lease_acquired_at ?? null}::text)),
+            'worker_lease_blocked_at', coalesce(jobs.timings->'worker_lease_blocked_at', to_jsonb(${timings.worker_lease_blocked_at ?? null}::text))
+          )) as next_timings
+          from jobs
+          where organisation_id = ${tenant.organisationId}
+            and project_id = ${projectId}
+            and status in ('queued', 'processing')
+        )
+        update jobs
+        set timings = targets.next_timings,
+          document = jsonb_set(jobs.document, '{timings}', targets.next_timings, true)
+        from targets
+        where jobs.id = targets.id
+      `;
+    });
+  }
+
+  async getArticleById(articleId: string): Promise<ArticleDocument | null> {
+    return this.withFailureLogging("getArticleById", articleId, async () => {
+      const found = rows(await this.sql`select document from articles where id = ${articleId}`);
+      return found[0]?.document as ArticleDocument | null ?? null;
+    });
+  }
+
+  async updateArticle(article: ArticleDocument): Promise<void> {
+    return this.withFailureLogging("updateArticle", article.id, async () => {
+      const summary = toArticleSummary(article);
+      const persistedDocument = {
+        ...article,
+        summaryScores: { research: summary.researchScore, evidence: summary.evidenceScore }
+      };
+      await this.sql`
+        update articles set
+          title = ${article.title},
+          markdown = ${article.markdown},
+          word_count = ${article.wordCount},
+          document = ${JSON.stringify(persistedDocument)}::jsonb,
+          updated_at = ${article.updatedAt}::timestamptz
+        where id = ${article.id}
+      `;
+    });
+  }
+
+  async listArticleSummaries(projectId: string): Promise<ArticleSummary[]> {
+    return this.withFailureLogging("listArticleSummaries", projectId, async () => {
+      const found = rows(await this.sql`
+        select id, title, quality_score, word_count, status, updated_at,
+          coalesce((document #>> '{summaryScores,research}')::numeric, quality_score, 0) as research_score,
+          coalesce((document #>> '{summaryScores,evidence}')::numeric, quality_score, 0) as evidence_score
+        from articles
+        where project_id = ${projectId}
+        order by updated_at desc
+      `);
+      return found.map((row) => ({
+        id: String(row.id),
+        title: String(row.title),
+        qualityScore: Number(row.quality_score ?? 0),
+        researchScore: Number(row.research_score ?? 0),
+        evidenceScore: Number(row.evidence_score ?? 0),
+        wordCount: Number(row.word_count ?? 0),
+        status: String(row.status) as ArticleSummary["status"],
+        updatedAt: new Date(row.updated_at as string | number | Date).toISOString()
+      }));
+    });
+  }
+
+  async getArticleListMetadata(projectId: string) {
+    return this.withFailureLogging("getArticleListMetadata", projectId, async () => {
+      const found = rows(await this.sql`
+        select id, coalesce((document->>'isPinned')::boolean, false) as is_pinned,
+          jsonb_array_length(coalesce(sources, '[]'::jsonb))::int as source_count
+        from articles where project_id = ${projectId}
+        order by updated_at desc
+      `);
+      return {
+        pinnedIds: found.filter((row) => Boolean(row.is_pinned)).map((row) => String(row.id)),
+        sourceCounts: Object.fromEntries(found.map((row) => [String(row.id), Number(row.source_count ?? 0)]))
+      };
+    });
+  }
+
+  async getProjectAnalytics(projectId: string): Promise<ProjectAnalyticsSummary> {
+    return this.withFailureLogging("getProjectAnalytics", projectId, async () => {
+      const found = rows(await this.sql`
+        with article_metrics as (
+          select
+            count(*)::int as article_count,
+            count(*) filter (where status = 'generated')::int as generated_count,
+            count(*) filter (where status = 'needs_review')::int as review_count,
+            coalesce(round(avg(quality_score)), 0)::int as average_quality,
+            coalesce(round(avg(coalesce((document #>> '{summaryScores,research}')::numeric, quality_score, 0))), 0)::int as average_research,
+            coalesce(round(avg(coalesce((document #>> '{summaryScores,evidence}')::numeric, quality_score, 0))), 0)::int as average_evidence,
+            coalesce(sum(word_count), 0)::int as total_words,
+            coalesce(sum(jsonb_array_length(coalesce(sources, '[]'::jsonb))), 0)::int as source_count
+          from articles
+          where project_id = ${projectId}
+            and status in ('generated', 'needs_review')
+        ), job_metrics as (
+          select count(*) filter (where status = 'failed')::int as failed_count
+          from jobs where project_id = ${projectId}
+        )
+        select article_metrics.*, job_metrics.failed_count
+        from article_metrics cross join job_metrics
+      `);
+      const row = found[0] ?? {};
+      return {
+        article_count: Number(row.article_count ?? 0),
+        generated_count: Number(row.generated_count ?? 0),
+        review_count: Number(row.review_count ?? 0),
+        failed_count: Number(row.failed_count ?? 0),
+        average_quality: Number(row.average_quality ?? 0),
+        average_research: Number(row.average_research ?? 0),
+        average_evidence: Number(row.average_evidence ?? 0),
+        total_words: Number(row.total_words ?? 0),
+        source_count: Number(row.source_count ?? 0)
+      };
     });
   }
 
@@ -674,6 +939,21 @@ export class NeonStorageProvider implements StorageProvider {
     return found[0]?.document as T | null ?? null;
   }
 
+  private async getSingleQueueJob(projectId: string, status: "queued" | "processing") {
+    return this.withFailureLogging(`getSingleQueueJob:${status}`, projectId, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select document from jobs
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+          and jobs.status = ${status}
+        order by queue_position asc, created_at asc
+        limit 1
+      `);
+      return found[0]?.document as QueueJob | null ?? null;
+    });
+  }
+
   private async listDocuments<T>(table: "jobs" | "articles", projectId: string, order: "created_at asc" | "updated_at desc") {
     const found = rows(table === "jobs"
       ? await this.sql`select document from jobs where project_id = ${projectId} order by created_at asc`
@@ -763,10 +1043,15 @@ export class NeonStorageProvider implements StorageProvider {
     `;
   }
 
-  private async saveArticle(article: ArticleDocument) {
+  private async saveArticleRow(article: ArticleDocument) {
     const tenant = await this.ensureTenant();
     await this.ensureProjectRows(article.projectId);
     const next = withArticleDefaults(article, tenant);
+    const summary = toArticleSummary(next);
+    const persistedDocument = {
+      ...next,
+      summaryScores: { research: summary.researchScore, evidence: summary.evidenceScore }
+    };
     await this.sql`
       insert into articles (
         id, organisation_id, project_id, job_id, title, status, status_reason, markdown, markdown_blob_path,
@@ -779,7 +1064,7 @@ export class NeonStorageProvider implements StorageProvider {
         ${next.versionedAt ?? null}::timestamptz, ${next.wordCount}, ${next.qualityScore}, ${next.researchSummary},
         ${JSON.stringify(next.validation)}::jsonb, ${JSON.stringify(next.pipeline)}::jsonb, ${JSON.stringify(next.sources)}::jsonb,
         ${JSON.stringify(next.needsReviewReasons)}::jsonb, ${JSON.stringify(next.timings ?? {})}::jsonb,
-        ${next.createdByUserId}, ${JSON.stringify(next)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+        ${next.createdByUserId}, ${JSON.stringify(persistedDocument)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
       )
       on conflict (id) do update set
         status = excluded.status,

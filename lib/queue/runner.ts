@@ -259,64 +259,51 @@ export class QueueRunner {
   async reclaimStale(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const settings = await this.store.getSettings(resolvedProjectId);
-    const cutoff = Date.now() - settings.staleProcessingMinutes * 60_000;
+    const cutoff = new Date(Date.now() - settings.staleProcessingMinutes * 60_000).toISOString();
     await this.reconcileSavedArticles(resolvedProjectId);
-    const jobs = await this.store.listJobs(resolvedProjectId);
-    const stale = jobs.filter((job) => job.status === "processing" && new Date(job.updatedAt).getTime() < cutoff);
-    await Promise.all(stale.map((job) => this.store.saveJob({
-      ...job,
-      status: "queued",
-      updatedAt: nowIso(),
-      pipeline: job.pipeline.map((step) => step.status === "running" ? { ...step, status: "idle", message: "Recovered after stale processing timeout." } : step)
-    })));
+    const stale = await this.store.getStaleProcessingJobs(cutoff, resolvedProjectId);
+    await Promise.all(stale.map(async (job) => {
+      const article = await this.store.getArticle(job.articleId, resolvedProjectId);
+      if (article && job.status !== article.status) {
+        await this.store.saveJob(reconciledJob(job, article));
+        return;
+      }
+      await this.store.saveJob({
+        ...job,
+        status: "queued",
+        updatedAt: nowIso(),
+        pipeline: job.pipeline.map((step) => step.status === "running" ? { ...step, status: "idle", message: "Recovered after stale processing timeout." } : step)
+      });
+    }));
     return stale.length;
   }
 
   async reconcileSavedArticles(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
-    const [jobs, articles] = await Promise.all([
-      this.store.listJobs(resolvedProjectId),
-      this.store.listArticles(resolvedProjectId)
-    ]);
-    const articlesByJob = new Map(articles.map((article) => [article.jobId, article]));
-    const mismatched = jobs.filter((job) => {
-      const article = articlesByJob.get(job.id);
-      return article && job.status !== article.status;
-    });
-    await Promise.all(mismatched.map((job) => {
-      const article = articlesByJob.get(job.id);
-      if (!article) return Promise.resolve();
-      const reconciledAt = nowIso();
-      return this.store.saveJob({
-        ...job,
-        status: article.status,
-        needsReviewReasons: article.needsReviewReasons,
-        pipeline: article.pipeline,
-        timings: { ...article.timings, state_reconciled_at: article.timings?.state_reconciled_at ?? reconciledAt },
-        updatedAt: reconciledAt,
-        fatalError: undefined
-      });
-    }));
-    return mismatched.length;
+    const job = await this.store.getActiveProcessingJob(resolvedProjectId);
+    if (!job) return 0;
+    const article = await this.store.getArticle(job.articleId, resolvedProjectId);
+    if (!article || job.status === article.status) return 0;
+    await this.store.saveJob(reconciledJob(job, article));
+    return 1;
   }
 
   async processNext(projectId?: string, context: { source?: "manual" | "worker" } = {}) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     await this.reclaimStale(resolvedProjectId);
-    const jobs = await this.store.listJobs(resolvedProjectId);
-    const processing = jobs.find((item) => item.status === "processing");
+    const processing = await this.store.getActiveProcessingJob(resolvedProjectId);
     if (processing && !canContinueProcessing(processing, context.source)) {
       return { processed: false, job: processing };
     }
     const control = await this.store.getQueueControl(resolvedProjectId);
-    const resumableCurrent = jobs.find(isResumableQueuedJob);
+    const resumableCurrent = processing ? null : await this.store.getResumableQueuedJob(resolvedProjectId);
     if (!processing && control.mode === "stop_after_current" && !resumableCurrent) {
       return { processed: false, job: null };
     }
     if (!processing && control.mode !== "running" && control.mode !== "stop_after_current") {
       return { processed: false, job: null };
     }
-    const job = processing ?? (control.mode === "stop_after_current" ? resumableCurrent : jobs.find((item) => item.status === "queued"));
+    const job = processing ?? (control.mode === "stop_after_current" ? resumableCurrent : await this.store.getNextQueuedJob(resolvedProjectId));
     if (!job) {
       await this.markStoppedIfQueueEmpty(resolvedProjectId);
       return { processed: false, job: null };
@@ -483,8 +470,7 @@ export class QueueRunner {
   }
 
   private async nextQueuePosition(projectId: string) {
-    const jobs = await this.store.listJobs(projectId);
-    const last = jobs.reduce((max, job) => Math.max(max, job.queuePosition ?? new Date(job.createdAt).getTime()), 0);
+    const last = await this.store.getLatestQueuePosition(projectId);
     return Math.max(Date.now(), last + 1);
   }
 
@@ -633,8 +619,8 @@ export class QueueRunner {
   private async markStoppedIfQueueEmpty(projectId: string) {
     const control = await this.store.getQueueControl(projectId);
     if (control.mode !== "running") return;
-    const active = (await this.store.listJobs(projectId)).some((job) => job.status === "queued" || job.status === "processing");
-    if (active) return;
+    const counts = await this.store.getCompactJobCounts(projectId);
+    if (counts.queued > 0 || counts.processing > 0) return;
     const now = nowIso();
     await this.store.saveQueueControl({
       ...control,
@@ -651,6 +637,19 @@ export class QueueRunner {
       throw new Error(EMERGENCY_STOP_REASON);
     }
   }
+}
+
+function reconciledJob(job: QueueJob, article: ArticleDocument): QueueJob {
+  const reconciledAt = nowIso();
+  return {
+    ...job,
+    status: article.status,
+    needsReviewReasons: article.needsReviewReasons,
+    pipeline: article.pipeline,
+    timings: { ...article.timings, state_reconciled_at: article.timings?.state_reconciled_at ?? reconciledAt },
+    updatedAt: reconciledAt,
+    fatalError: undefined
+  };
 }
 
 function estimateResearchTokens(research: Parameters<typeof heuristicValidation>[0]["research"]) {

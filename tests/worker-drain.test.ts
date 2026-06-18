@@ -136,7 +136,7 @@ describe("autonomous worker drain", () => {
       runner,
       now: () => new Date("2026-06-13T09:00:00.000Z").getTime()
     });
-    const state = await store.getState();
+    const state = await store.getFullState();
 
     assert.equal(result.leaseAcquired, true);
     assert.equal(result.remaining, 0);
@@ -155,8 +155,8 @@ describe("autonomous worker drain", () => {
     await runner.resumeQueue("project-b");
 
     const result = await drainActiveProjectsWithLeases({ store, runner });
-    const projectA = await store.getState("project-a");
-    const projectB = await store.getState("project-b");
+    const projectA = await store.getFullState("project-a");
+    const projectB = await store.getFullState("project-b");
 
     assert.equal(result.projectsWithWork, 2);
     assert.equal(result.remaining, 0);
@@ -177,7 +177,7 @@ describe("autonomous worker drain", () => {
       runner,
       now: () => calls++ === 0 ? 0 : 11_000
     });
-    const state = await store.getState();
+    const state = await store.getFullState();
 
     assert.equal(result.leaseAcquired, true);
     assert.equal(result.processed, 0);

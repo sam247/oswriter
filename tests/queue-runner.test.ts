@@ -147,7 +147,7 @@ describe("QueueRunner", () => {
     await runner.addTitles(["First queued article", "Second queued article", "Third queued article"]);
     await runner.resumeQueue();
 
-    const initial = await store.getState();
+    const initial = await store.getFullState();
     assert.deepEqual(initial.jobs.map((job) => job.title), ["First queued article", "Second queued article", "Third queued article"]);
     assert.ok(initial.jobs[0].createdAt < initial.jobs[1].createdAt);
     assert.ok(initial.jobs[1].createdAt < initial.jobs[2].createdAt);
@@ -178,7 +178,7 @@ describe("QueueRunner", () => {
 
     const workerAttempt = await runner.processNext(undefined, { source: "worker" });
     assert.equal(workerAttempt.processed, false);
-    assert.equal((await store.getState()).jobs[0].status, "queued");
+    assert.equal((await store.getFullState()).jobs[0].status, "queued");
 
     await runner.resumeQueue();
     const manualAttempt = await runner.processNext(undefined, { source: "manual" });
@@ -195,7 +195,7 @@ describe("QueueRunner", () => {
     assert.equal((await store.getQueueControl()).mode, "stopped");
     const workerAttempt = await runner.processNext(undefined, { source: "worker" });
     assert.equal(workerAttempt.processed, false);
-    assert.equal((await store.getState()).jobs[0].status, "queued");
+    assert.equal((await store.getFullState()).jobs[0].status, "queued");
   });
 
   it("does not let the worker duplicate research for an active manual job", async () => {
@@ -241,7 +241,7 @@ describe("QueueRunner", () => {
     assert.equal(workerOutline.job?.pipeline.find((step) => step.stage === "outline")?.status, "done");
 
     await drainQueue(runner);
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.articles.length, 1);
   });
 
@@ -258,7 +258,7 @@ describe("QueueRunner", () => {
     assert.equal(control.mode, "stop_after_current");
 
     await drainQueue(runner, 1000, false);
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.queueControl.mode, "stopped");
     assert.ok(["generated", "needs_review"].includes(state.jobs.find((job) => job.id === first.id)?.status ?? ""));
     assert.equal(state.jobs.find((job) => job.id === second.id)?.status, "queued");
@@ -282,7 +282,7 @@ describe("QueueRunner", () => {
     });
 
     await drainQueue(runner, 1000, false);
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.queueControl.mode, "stopped");
     assert.ok(["generated", "needs_review"].includes(state.jobs.find((job) => job.id === first.id)?.status ?? ""));
     assert.equal(state.jobs.find((job) => job.id === second.id)?.status, "queued");
@@ -297,7 +297,7 @@ describe("QueueRunner", () => {
     await store.saveJob({ ...researched.job!, status: "queued" });
 
     const stopped = await runner.emergencyStop();
-    const state = await store.getState();
+    const state = await store.getFullState();
 
     assert.equal(stopped?.id, first.id);
     assert.equal(state.queueControl.mode, "stopped");
@@ -586,7 +586,7 @@ describe("QueueRunner", () => {
       updatedAt: new Date().toISOString()
     });
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.preferences.account.email, "sam@example.com");
     assert.equal(state.preferences.notifications.dailySummaryEmail, true);
     assert.equal(state.preferences.aiProvider.preference, "bring_your_own_key");
@@ -600,7 +600,7 @@ describe("QueueRunner", () => {
     const { store, runner } = setup();
     await runner.addTitles(["Default project article"]);
     await drainQueue(runner);
-    const defaultState = await store.getState("default");
+    const defaultState = await store.getFullState("default");
     assert.equal(defaultState.jobs.length, 1);
     assert.equal(defaultState.articles.length, 1);
 
@@ -614,12 +614,12 @@ describe("QueueRunner", () => {
     await runner.addTitles(["Second project article"]);
     await drainQueue(runner);
 
-    const activeState = await store.getState();
+    const activeState = await store.getFullState();
     assert.equal(activeState.project.id, "project_second");
     assert.deepEqual(activeState.jobs.map((job) => job.title), ["Second project article"]);
     assert.equal(activeState.articles.length, 1);
 
-    const preservedDefaultState = await store.getState("default");
+    const preservedDefaultState = await store.getFullState("default");
     assert.deepEqual(preservedDefaultState.jobs.map((job) => job.title), ["Default project article"]);
     assert.equal(preservedDefaultState.articles.length, 1);
   });
@@ -639,12 +639,12 @@ describe("QueueRunner", () => {
     assert.ok(projects.some((project) => project.id === "default"));
     assert.ok(projects.some((project) => project.id === "project_library"));
 
-    const active = await store.getState();
+    const active = await store.getFullState();
     assert.equal(active.project.id, "project_library");
     assert.deepEqual(active.articles.map((article) => article.title), ["Isolated library article"]);
 
     await store.setActiveProjectId("default");
-    const restored = await store.getState();
+    const restored = await store.getFullState();
     assert.deepEqual(restored.articles.map((article) => article.title), ["Default library article"]);
   });
 
@@ -662,7 +662,7 @@ describe("QueueRunner", () => {
 
     await store.deleteProject("project_delete_me");
     const projects = await store.listProjects();
-    const state = await store.getState();
+    const state = await store.getFullState();
 
     assert.equal(state.project.id, "default");
     assert.deepEqual(state.articles.map((article) => article.title), ["Default survives"]);
@@ -679,7 +679,7 @@ describe("QueueRunner", () => {
     await drainQueue(runner);
 
     await store.deleteProject("project_active_delete");
-    const state = await store.getState();
+    const state = await store.getFullState();
 
     assert.equal(state.project.id, "default");
     assert.equal(state.projects?.some((project) => project.id === "project_active_delete"), false);
@@ -697,12 +697,12 @@ describe("QueueRunner", () => {
       updatedAt: new Date().toISOString()
     });
 
-    const before = await store.getState();
+    const before = await store.getFullState();
     assert.equal(before.articles.length, 2);
     assert.ok(before.jobs.some((job) => job.id === second.id && job.status === "failed"));
 
     const cleared = await store.clearQueueData();
-    const after = await store.getState();
+    const after = await store.getFullState();
     assert.equal(cleared, 1);
     assert.equal(after.articles.length, 2);
     assert.ok(after.jobs.every((job) => job.status === "generated" || job.status === "needs_review"));
@@ -714,12 +714,12 @@ describe("QueueRunner", () => {
     await runner.addTitles(["Delete only article"]);
     await drainQueue(runner);
 
-    const before = await store.getState();
+    const before = await store.getFullState();
     assert.equal(before.jobs.length, 1);
     assert.equal(before.articles.length, 1);
 
     await store.deleteArticle(before.articles[0].id);
-    const after = await store.getState();
+    const after = await store.getFullState();
     assert.equal(after.jobs.length, 1);
     assert.equal(after.articles.length, 0);
   });
@@ -729,7 +729,7 @@ describe("QueueRunner", () => {
     await runner.addTitles(Array.from({ length: 20 }, (_, index) => `Technical article ${index + 1}`));
     await drainQueue(runner);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.jobs.length, 20);
     assert.equal(state.articles.length, 20);
     assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
@@ -740,7 +740,7 @@ describe("QueueRunner", () => {
     await runner.addTitles(["Piling cost per metre UK"]);
     await drainQueue(runner);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.jobs[0].status, "needs_review");
     assert.equal(state.articles.length, 1);
     assert.equal(state.articles[0].status, "needs_review");
@@ -752,7 +752,7 @@ describe("QueueRunner", () => {
     await runner.addTitles(["Road adoption process explained"]);
     await drainQueue(runner);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.jobs[0].status, "needs_review");
     assert.equal(state.articles[0].status, "needs_review");
     assert.notEqual(state.jobs[0].status, "failed");
@@ -763,7 +763,7 @@ describe("QueueRunner", () => {
     await runner.addTitles(["What is a CBR test?"]);
     await drainQueue(runner);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.jobs[0].status, "failed");
     assert.equal(state.articles.length, 0);
     assert.match(state.jobs[0].fatalError ?? "", /OpenAI API unavailable/);
@@ -779,7 +779,7 @@ describe("QueueRunner", () => {
     });
 
     const count = await runner.reclaimStale();
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(count, 1);
     assert.equal(state.jobs[0].status, "queued");
   });
@@ -794,7 +794,7 @@ describe("QueueRunner", () => {
     const resumed = setup(new FakeSearch(), new FakeModel(), store).runner;
     await drainQueue(resumed);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.notEqual(state.jobs[0].status, "failed");
     assert.equal(state.articles.length, 1);
   });
@@ -809,7 +809,7 @@ describe("QueueRunner", () => {
     const restarted = new QueueRunner(store, new FakeSearch(), new FakeModel());
     await drainQueue(restarted);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.notEqual(state.jobs[0].status, "failed");
     assert.equal(state.articles.length, 1);
   });
@@ -824,7 +824,7 @@ describe("QueueRunner", () => {
     const restarted = new QueueRunner(store, new FakeSearch(), new FakeModel());
     await drainQueue(restarted, 200);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.jobs.length, 25);
     assert.equal(state.articles.length, 25);
     assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
@@ -839,7 +839,7 @@ describe("QueueRunner", () => {
     const restarted = setup(new FakeSearch(), new FakeModel(), store).runner;
     await drainQueue(restarted, 400);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.jobs.length, 50);
     assert.equal(state.articles.length, 50);
     assert.equal(state.jobs.every((job) => job.status === "generated" || job.status === "needs_review"), true);
@@ -849,13 +849,13 @@ describe("QueueRunner", () => {
     const { store, runner } = setup(new FakeSearch("down"), new FakeModel());
     const [job] = await runner.addTitles(["Retry after timeout"]);
     await drainQueue(runner);
-    assert.equal((await store.getState()).jobs[0].status, "failed");
+    assert.equal((await store.getFullState()).jobs[0].status, "failed");
 
     const healthy = setup(new FakeSearch(), new FakeModel(), store).runner;
     await healthy.retryJob(job.id);
     await drainQueue(healthy);
 
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.notEqual(state.jobs[0].status, "failed");
     assert.equal(state.articles.length, 1);
   });

@@ -54,7 +54,7 @@ neonTest("OS Writer workflow persists correctly through NeonStorageProvider", as
     assert.equal(jobVersion.versionNumber, 1);
 
     await drainQueue(runner);
-    const state = await store.getState();
+    const state = await store.getFullState();
     assert.equal(state.jobs.length, 1);
     assert.equal(state.articles.length, 1);
     assert.ok(state.jobs[0].status === "generated" || state.jobs[0].status === "needs_review");
@@ -105,7 +105,7 @@ neonTest("OS Writer workflow persists correctly through NeonStorageProvider", as
     assert.equal(seoScores.research.key, "research");
     assert.equal(seoScores.evidence.key, "evidence");
 
-    const refreshed = await store.getState();
+    const refreshed = await store.getFullState();
     const analytics = buildProjectAnalytics({ articles: refreshed.articles, jobs: refreshed.jobs, researchPacks: [research as ResearchPack] });
     assert.equal(analytics.total_articles, 1);
     assert.equal(analytics.reliability.success_rate, 100);
@@ -120,8 +120,8 @@ neonTest("OS Writer workflow persists correctly through NeonStorageProvider", as
     assert.ok((await store.listArticles()).some((item) => item.id === article.id));
 
     await store.clearProjectData();
-    assert.equal((await store.getState()).jobs.length, 0);
-    assert.equal((await store.getState()).articles.length, 0);
+    assert.equal((await store.getFullState()).jobs.length, 0);
+    assert.equal((await store.getFullState()).articles.length, 0);
     assert.equal(await store.getResearch(article.id), null);
     assert.equal(await provider.getJson<QueueJob>(jobPath(job.id, projectId)), null);
     assert.equal(await provider.getJson<typeof article>(articlePath(article.id, projectId)), null);

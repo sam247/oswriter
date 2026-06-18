@@ -1,7 +1,9 @@
-import type { ArticleDocument, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
+import { toArticleSummary } from "@/lib/articles/summary";
+import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
@@ -13,7 +15,37 @@ export interface StorageProvider {
   listPaths(prefix: string): Promise<string[]>;
   deletePath(path: string): Promise<void>;
   listProjects?(): Promise<ProjectDocument[]>;
+  getQueueStatus?(projectId: string): Promise<QueueStatus>;
+  listArticleSummaries?(projectId: string): Promise<ArticleSummary[]>;
+  getArticleListMetadata?(projectId: string): Promise<{ pinnedIds: string[]; sourceCounts: Record<string, number> }>;
+  getProjectAnalytics?(projectId: string): Promise<ProjectAnalyticsSummary>;
+  getArticleById?(articleId: string): Promise<ArticleDocument | null>;
+  updateArticle?(article: ArticleDocument): Promise<void>;
+  getProjectQueueScan?(): Promise<{ projectsChecked: number; projectIds: string[] }>;
+  getCompactJobCounts?(projectId: string): Promise<CompactJobCounts>;
+  getQueueCandidate?(projectId: string): Promise<QueueJob | null>;
+  getActiveProcessingJob?(projectId: string): Promise<QueueJob | null>;
+  getNextQueuedJob?(projectId: string): Promise<QueueJob | null>;
+  getResumableQueuedJob?(projectId: string): Promise<QueueJob | null>;
+  getStaleProcessingJobs?(projectId: string, cutoff: string): Promise<QueueJob[]>;
+  getLatestQueuePosition?(projectId: string): Promise<number>;
+  recordWorkerObservation?(projectId: string, timings: WorkerObservationTimings): Promise<void>;
   globalSearch?(query: string, projectId: string, limit?: number): Promise<GlobalSearchResponse>;
+}
+
+export interface CompactJobCounts {
+  queued: number;
+  processing: number;
+  generated: number;
+  needsReview: number;
+  failed: number;
+}
+
+export interface WorkerObservationTimings {
+  worker_first_seen_at: string;
+  worker_lease_requested_at: string;
+  worker_lease_acquired_at?: string;
+  worker_lease_blocked_at?: string;
 }
 
 export type StorageAdapter = StorageProvider;
@@ -81,9 +113,60 @@ export class WorkspaceStore {
       this.ensureWorkspacePreferences(),
       this.listProjects(),
       this.listJobs(resolvedProjectId),
+      this.listArticleSummaries(resolvedProjectId)
+    ]);
+    return { project, projects, settings, preferences, queueControl, jobs, articles };
+  }
+
+  async getFullState(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    const { project, settings, queueControl } = await this.ensureProject(resolvedProjectId);
+    const [preferences, projects, jobs, articles] = await Promise.all([
+      this.ensureWorkspacePreferences(),
+      this.listProjects(),
+      this.listJobs(resolvedProjectId),
       this.listArticles(resolvedProjectId)
     ]);
     return { project, projects, settings, preferences, queueControl, jobs, articles };
+  }
+
+  async getQueueStatus(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getQueueStatus) return this.storage.getQueueStatus(resolvedProjectId);
+
+    const jobs = await this.listJobs(resolvedProjectId);
+    const activeJob = jobs.find((job) => job.status === "processing");
+    return {
+      queued: jobs.filter((job) => job.status === "queued").length,
+      processing: jobs.filter((job) => job.status === "processing").length,
+      generated: jobs.filter((job) => job.status === "generated").length,
+      review: jobs.filter((job) => job.status === "needs_review").length,
+      failed: jobs.filter((job) => job.status === "failed").length,
+      ...(activeJob ? { activeJob: { id: activeJob.id, title: activeJob.title } } : {})
+    } satisfies QueueStatus;
+  }
+
+  async getProjectAnalytics(projectId?: string): Promise<ProjectAnalyticsSummary> {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getProjectAnalytics) return this.storage.getProjectAnalytics(resolvedProjectId);
+    const [articles, jobs, metadata] = await Promise.all([
+      this.listArticleSummaries(resolvedProjectId),
+      this.listJobs(resolvedProjectId),
+      this.getArticleListMetadata(resolvedProjectId)
+    ]);
+    const completed = articles.filter((article) => article.status === "generated" || article.status === "needs_review");
+    const average = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+    return {
+      article_count: completed.length,
+      generated_count: completed.filter((article) => article.status === "generated").length,
+      review_count: completed.filter((article) => article.status === "needs_review").length,
+      failed_count: jobs.filter((job) => job.status === "failed").length,
+      average_quality: average(completed.map((article) => article.qualityScore)),
+      average_research: average(completed.map((article) => article.researchScore)),
+      average_evidence: average(completed.map((article) => article.evidenceScore)),
+      total_words: completed.reduce((sum, article) => sum + article.wordCount, 0),
+      source_count: completed.reduce((sum, article) => sum + (metadata.sourceCounts[article.id] ?? 0), 0)
+    };
   }
 
   async saveProject(project: ProjectDocument) {
@@ -169,6 +252,86 @@ export class WorkspaceStore {
     return jobs.sort((a, b) => (a.queuePosition ?? new Date(a.createdAt).getTime()) - (b.queuePosition ?? new Date(b.createdAt).getTime()) || a.createdAt.localeCompare(b.createdAt));
   }
 
+  async getProjectQueueScan() {
+    if (this.storage.getProjectQueueScan) return this.storage.getProjectQueueScan();
+    const projects = await this.listProjects();
+    const active = await Promise.all(projects.map(async (project) => ({
+      id: project.id,
+      counts: await this.getCompactJobCounts(project.id)
+    })));
+    return {
+      projectsChecked: projects.length,
+      projectIds: active.filter(({ counts }) => counts.queued > 0 || counts.processing > 0).map(({ id }) => id)
+    };
+  }
+
+  async getCompactJobCounts(projectId?: string): Promise<CompactJobCounts> {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getCompactJobCounts) return this.storage.getCompactJobCounts(resolvedProjectId);
+    const jobs = await this.listJobs(resolvedProjectId);
+    return {
+      queued: jobs.filter((job) => job.status === "queued").length,
+      processing: jobs.filter((job) => job.status === "processing").length,
+      generated: jobs.filter((job) => job.status === "generated").length,
+      needsReview: jobs.filter((job) => job.status === "needs_review").length,
+      failed: jobs.filter((job) => job.status === "failed").length
+    };
+  }
+
+  async getQueueCandidate(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getQueueCandidate) return this.storage.getQueueCandidate(resolvedProjectId);
+    return await this.getActiveProcessingJob(resolvedProjectId) ?? await this.getNextQueuedJob(resolvedProjectId);
+  }
+
+  async getActiveProcessingJob(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getActiveProcessingJob) return this.storage.getActiveProcessingJob(resolvedProjectId);
+    return (await this.listJobs(resolvedProjectId)).find((job) => job.status === "processing") ?? null;
+  }
+
+  async getNextQueuedJob(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getNextQueuedJob) return this.storage.getNextQueuedJob(resolvedProjectId);
+    return (await this.listJobs(resolvedProjectId)).find((job) => job.status === "queued") ?? null;
+  }
+
+  async getResumableQueuedJob(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getResumableQueuedJob) return this.storage.getResumableQueuedJob(resolvedProjectId);
+    return (await this.listJobs(resolvedProjectId)).find((job) => job.status === "queued" && (
+      job.attempts > 0 || job.pipeline.some((step) => step.status === "done" || step.status === "running")
+    )) ?? null;
+  }
+
+  async getStaleProcessingJobs(cutoff: string, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getStaleProcessingJobs) return this.storage.getStaleProcessingJobs(resolvedProjectId, cutoff);
+    return (await this.listJobs(resolvedProjectId)).filter((job) => job.status === "processing" && job.updatedAt < cutoff);
+  }
+
+  async getLatestQueuePosition(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getLatestQueuePosition) return this.storage.getLatestQueuePosition(resolvedProjectId);
+    return (await this.listJobs(resolvedProjectId)).reduce((max, job) => Math.max(max, job.queuePosition ?? new Date(job.createdAt).getTime()), 0);
+  }
+
+  async recordWorkerObservation(timings: WorkerObservationTimings, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.recordWorkerObservation) return this.storage.recordWorkerObservation(resolvedProjectId, timings);
+    const jobs = (await this.listJobs(resolvedProjectId)).filter((job) => job.status === "queued" || job.status === "processing");
+    await Promise.all(jobs.map((job) => this.saveJob({
+      ...job,
+      timings: {
+        ...job.timings,
+        worker_first_seen_at: job.timings?.worker_first_seen_at ?? timings.worker_first_seen_at,
+        worker_lease_requested_at: job.timings?.worker_lease_requested_at ?? timings.worker_lease_requested_at,
+        worker_lease_acquired_at: job.timings?.worker_lease_acquired_at ?? timings.worker_lease_acquired_at,
+        worker_lease_blocked_at: job.timings?.worker_lease_blocked_at ?? timings.worker_lease_blocked_at
+      }
+    })));
+  }
+
   async saveJob(job: QueueJob) {
     await this.storage.putJson(jobPath(job.id, job.projectId), job);
   }
@@ -192,9 +355,35 @@ export class WorkspaceStore {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
+  async listArticleSummaries(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.listArticleSummaries) return this.storage.listArticleSummaries(resolvedProjectId);
+    return (await this.listArticles(resolvedProjectId)).map(toArticleSummary);
+  }
+
+  async getArticleListMetadata(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.getArticleListMetadata) return this.storage.getArticleListMetadata(resolvedProjectId);
+    const articles = await this.listArticles(resolvedProjectId);
+    return {
+      pinnedIds: articles.filter((article) => article.isPinned).map((article) => article.id),
+      sourceCounts: Object.fromEntries(articles.map((article) => [article.id, article.sources.length]))
+    };
+  }
+
   async getArticle(articleId: string, projectId?: string) {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
     return this.storage.getJson<ArticleDocument>(articlePath(articleId, resolvedProjectId));
+  }
+
+  async getArticleById(articleId: string) {
+    if (this.storage.getArticleById) return this.storage.getArticleById(articleId);
+    return this.getArticle(articleId);
+  }
+
+  async updateArticle(article: ArticleDocument) {
+    if (this.storage.updateArticle) return this.storage.updateArticle(article);
+    return this.saveArticle(article);
   }
 
   async saveArticle(article: ArticleDocument) {

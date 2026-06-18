@@ -82,7 +82,6 @@ export async function drainQueueWithLease({
       worker_lease_requested_at: leaseRequestedAt,
       worker_lease_acquired_at: lease.acquiredAt
     });
-    await runner.reclaimStale(resolvedProjectId);
     let processed = 0;
     while (now() - startedAt < budgetMs) {
       const snapshot = await getWorkerQueueSnapshot(store, resolvedProjectId, now);
@@ -115,19 +114,17 @@ export async function drainActiveProjectsWithLeases({
   now?: () => number;
 }): Promise<WorkerDrainAllResult> {
   const startedAt = now();
-  const projects = await store.listProjects();
+  // Worker polling must never load full project job or article collections.
+  const scan = await store.getProjectQueueScan();
   const results: WorkerProjectDrainResult[] = [];
 
-  for (const project of projects) {
-    const jobs = await store.listJobs(project.id);
-    const hasActiveWork = jobs.some((job) => job.status === "queued" || job.status === "processing");
-    if (!hasActiveWork) continue;
-    const result = await drainQueueWithLease({ store, runner, projectId: project.id, now });
-    results.push({ ...result, projectId: project.id });
+  for (const projectId of scan.projectIds) {
+    const result = await drainQueueWithLease({ store, runner, projectId, now });
+    results.push({ ...result, projectId });
   }
 
   return {
-    projectsChecked: projects.length,
+    projectsChecked: scan.projectsChecked,
     projectsWithWork: results.length,
     processed: results.reduce((total, result) => total + result.processed, 0),
     remaining: results.reduce((total, result) => total + result.remaining, 0),
@@ -166,18 +163,7 @@ async function recordWorkerObservation(store: WorkspaceStore, projectId: string,
   worker_lease_acquired_at?: string;
   worker_lease_blocked_at?: string;
 }) {
-  const jobs = await store.listJobs(projectId);
-  const observed = jobs.filter((job) => job.status === "queued" || job.status === "processing");
-  await Promise.all(observed.map((job) => store.saveJob({
-    ...job,
-    timings: {
-      ...job.timings,
-      worker_first_seen_at: job.timings?.worker_first_seen_at ?? timings.worker_first_seen_at,
-      worker_lease_requested_at: job.timings?.worker_lease_requested_at ?? timings.worker_lease_requested_at,
-      worker_lease_acquired_at: job.timings?.worker_lease_acquired_at ?? timings.worker_lease_acquired_at,
-      worker_lease_blocked_at: job.timings?.worker_lease_blocked_at ?? timings.worker_lease_blocked_at
-    }
-  })));
+  await store.recordWorkerObservation(timings, projectId);
 }
 
 export async function releaseWorkerLease(store: WorkspaceStore, lease: WorkerLeaseDocument, projectId?: string) {
@@ -186,26 +172,24 @@ export async function releaseWorkerLease(store: WorkspaceStore, lease: WorkerLea
   if (current?.token === lease.token) await store.deleteWorkerLease(resolvedProjectId);
 }
 
-function countRemaining(jobs: Array<{ status: string }>) {
-  return jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
-}
-
 export async function getWorkerQueueSnapshot(store: WorkspaceStore, projectId?: string, now = () => Date.now()) {
   const resolvedProjectId = projectId ?? await store.getActiveProjectId();
-  const jobs = await store.listJobs(resolvedProjectId);
-  const lease = await store.getWorkerLease(resolvedProjectId);
-  const job = jobs.find((item) => item.status === "processing") ?? jobs.find((item) => item.status === "queued");
+  const [counts, lease, job] = await Promise.all([
+    store.getCompactJobCounts(resolvedProjectId),
+    store.getWorkerLease(resolvedProjectId),
+    store.getQueueCandidate(resolvedProjectId)
+  ]);
   const nextStage = job?.pipeline.find((step) => step.status !== "done" && step.status !== "skipped")?.stage ?? null;
   const leaseExpiresAtMs = lease ? new Date(lease.expiresAt).getTime() : null;
   return {
     counts: {
-      queued: jobs.filter((item) => item.status === "queued").length,
-      processing: jobs.filter((item) => item.status === "processing").length,
-      generated: jobs.filter((item) => item.status === "generated").length,
-      needsReview: jobs.filter((item) => item.status === "needs_review").length,
-      failed: jobs.filter((item) => item.status === "failed").length
+      queued: counts.queued,
+      processing: counts.processing,
+      generated: counts.generated,
+      needsReview: counts.needsReview,
+      failed: counts.failed
     },
-    remaining: countRemaining(jobs),
+    remaining: counts.queued + counts.processing,
     nextJob: job ? {
       id: job.id,
       articleId: job.articleId,

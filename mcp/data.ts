@@ -1,7 +1,7 @@
 import { calculateArticleScores } from "@/lib/scoring/article-scores";
 import { NeonStorageProvider } from "@/lib/storage/neon";
 import { WorkspaceStore } from "@/lib/storage/storage";
-import type { ArticleDocument, AppState, ProjectDocument, QueueJob, ResearchPack } from "@/lib/types";
+import type { ArticleDocument, FullAppState, ProjectDocument, QueueJob, ResearchPack } from "@/lib/types";
 
 export interface WriterOsMcpContext {
   store: WorkspaceStore;
@@ -22,7 +22,7 @@ export async function listProjects(context: WriterOsMcpContext) {
 
 export async function getProject(context: WriterOsMcpContext, projectId?: string) {
   const resolvedProjectId = await resolveProjectId(context, projectId);
-  const state = await context.store.getState(resolvedProjectId);
+  const state = await context.store.getFullState(resolvedProjectId);
   return {
     project: projectSummary(state.project),
     settings: {
@@ -140,7 +140,7 @@ export async function getQueueStatus(context: WriterOsMcpContext, projectId?: st
 export async function getWorkspaceStats(context: WriterOsMcpContext) {
   const activeProjectId = await context.store.getActiveProjectId();
   const projects = await context.store.listProjects();
-  const states = await Promise.all(projects.map((project) => context.store.getState(project.id)));
+  const states = await Promise.all(projects.map((project) => context.store.getFullState(project.id)));
   const totals = states.reduce((acc, state) => {
     const counts = projectCounts(state);
     acc.articles += counts.articles;
@@ -275,7 +275,7 @@ function sourceSummary(source: ResearchPack["sources"][number]) {
   };
 }
 
-function projectCounts(state: AppState) {
+function projectCounts(state: FullAppState) {
   return {
     articles: state.articles.length,
     words: state.articles.reduce((sum, article) => sum + article.wordCount, 0),

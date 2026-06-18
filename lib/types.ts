@@ -352,6 +352,17 @@ export interface ArticleDocument {
   timings?: ArticleTiming;
 }
 
+export interface ArticleSummary {
+  id: string;
+  title: string;
+  qualityScore: number;
+  researchScore: number;
+  evidenceScore: number;
+  wordCount: number;
+  status: JobStatus;
+  updatedAt: string;
+}
+
 export interface ModelGenerationResult {
   markdown: string;
   provider?: string;
@@ -516,7 +527,24 @@ export interface AppState {
   preferences: WorkspacePreferencesDocument;
   queueControl: QueueControlDocument;
   jobs: QueueJob[];
+  articles: ArticleSummary[];
+}
+
+export interface FullAppState extends Omit<AppState, "articles"> {
   articles: ArticleDocument[];
+}
+
+export interface QueueStatus {
+  queued: number;
+  processing: number;
+  generated: number;
+  review: number;
+  failed: number;
+  activeJob?: {
+    id: string;
+    title: string;
+    progress?: number;
+  };
 }
 
 export type GlobalSearchResultType = "project" | "article" | "research_run" | "research_finding" | "research_source";

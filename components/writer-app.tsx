@@ -7,10 +7,12 @@ import { SeoDecisionPanel } from "@/components/seo/SeoDecisionPanel";
 import { KnowledgeBaseSettings } from "@/components/project/KnowledgeBaseSettings";
 import { SourceFavicon } from "@/components/research/SourceFavicon";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
+import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
-import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
+import { toArticleSummary } from "@/lib/articles/summary";
+import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -104,6 +106,7 @@ function Workbench() {
   const [state, setState] = useState<AppState | null>(null);
   const [titles, setTitles] = useState("");
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
+  const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("queue");
   const [running, setRunning] = useState(false);
@@ -111,8 +114,11 @@ function Workbench() {
   const [message, setMessage] = useState("Ready");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
-  const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalytics | null>(null);
+  const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
   const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const [pinnedArticleIds, setPinnedArticleIds] = useState<Set<string>>(new Set());
+  const [articleSourceCounts, setArticleSourceCounts] = useState<Record<string, number>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
@@ -127,8 +133,8 @@ function Workbench() {
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResponse | null>(null);
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
-  const [regenerateCandidate, setRegenerateCandidate] = useState<ArticleDocument | null>(null);
-  const [similarCandidate, setSimilarCandidate] = useState<ArticleDocument | null>(null);
+  const [regenerateCandidate, setRegenerateCandidate] = useState<ArticleSummary | null>(null);
+  const [similarCandidate, setSimilarCandidate] = useState<ArticleSummary | null>(null);
   const [similarTitles, setSimilarTitles] = useState<string[]>([]);
   const [selectedSimilarTitles, setSelectedSimilarTitles] = useState<Set<string>>(new Set());
   const [similarLoading, setSimilarLoading] = useState(false);
@@ -147,6 +153,7 @@ function Workbench() {
   const visibilityBaselineRef = useRef<Set<string> | null>(null);
   const traceJobIdRef = useRef<string | null>(null);
   const optimisticClaimsRef = useRef<Map<string, QueueJob>>(new Map());
+  const analyticsProjectIdRef = useRef<string | null>(null);
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -156,29 +163,22 @@ function Workbench() {
   const projectSettingsProject = projectSettingsProjectId
     ? projects.find((project) => project.id === projectSettingsProjectId) ?? null
     : null;
-  const selectedArticle = useMemo(
-    () => selectedArticleId ? articles.find((article) => article.id === selectedArticleId) ?? null : null,
-    [articles, selectedArticleId]
-  );
   const selectedJob = useMemo(
-    () => {
-      const article = articles.find((item) => item.id === selectedArticleId);
-      return jobs.find((job) => job.articleId === selectedArticleId || job.id === article?.jobId) ?? null;
-    },
-    [articles, jobs, selectedArticleId]
+    () => jobs.find((job) => job.articleId === selectedArticleId || job.id === selectedArticle?.jobId) ?? null,
+    [jobs, selectedArticle?.jobId, selectedArticleId]
   );
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
   const displayJobs = useMemo(() => jobs.map((job) => {
-    const article = articles.find((item) => item.jobId === job.id);
+    const article = articles.find((item) => item.id === job.articleId);
     return article ? { ...job, status: article.status } : job;
   }), [articles, jobs]);
   const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter);
   const queueJobs = visibleJobs.filter(isQueueJobVisible);
   const libraryArticles = inventoryArticles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
-  const pinnedLibraryArticles = libraryArticles.filter((article) => article.isPinned);
-  const regularLibraryArticles = libraryArticles.filter((article) => !article.isPinned);
-  const stats = useMemo(() => ({
+  const pinnedLibraryArticles = libraryArticles.filter((article) => pinnedArticleIds.has(article.id));
+  const regularLibraryArticles = libraryArticles.filter((article) => !pinnedArticleIds.has(article.id));
+  const localStats = useMemo(() => ({
     queued: displayJobs.filter((job) => job.status === "queued").length,
     processing: displayJobs.filter((job) => job.status === "processing").length,
     generated: inventoryArticles.filter((article) => article.status === "generated").length,
@@ -186,11 +186,19 @@ function Workbench() {
     failed: displayJobs.filter((job) => job.status === "failed").length,
     skipped: displayJobs.filter((job) => job.status === "skipped").length
   }), [displayJobs, inventoryArticles]);
+  const stats = queueStatus ? {
+    queued: queueStatus.queued,
+    processing: queueStatus.processing,
+    generated: queueStatus.generated,
+    needs_review: queueStatus.review,
+    failed: queueStatus.failed,
+    skipped: localStats.skipped
+  } : localStats;
   const queueMetrics = useMemo(() => calculateQueueMetrics(displayJobs, inventoryArticles, tick), [inventoryArticles, displayJobs, tick]);
   const runHistory = useMemo(() => buildRunHistory(displayJobs, inventoryArticles), [inventoryArticles, displayJobs]);
-  const projectSummary = useMemo(() => state ? calculateProjectSummary({ ...state, articles: inventoryArticles }) : null, [state, inventoryArticles]);
-  const accountStats = useMemo(() => calculateAccountOutcomeStats(inventoryArticles), [inventoryArticles]);
-  const shouldPollState = running || busy || displayJobs.some((job) => job.status === "queued" || job.status === "processing");
+  const projectSummary = useMemo(() => state ? calculateProjectSummary({ ...state, articles: inventoryArticles }, projectAnalytics) : null, [state, inventoryArticles, projectAnalytics]);
+  const accountStats = useMemo(() => calculateAccountOutcomeStats(inventoryArticles, projectAnalytics?.source_count ?? 0), [inventoryArticles, projectAnalytics]);
+  const shouldPollQueue = running || busy || stats.queued > 0 || stats.processing > 0;
   const queueMutationBlockedReason = queueMutationBlockReason(state, displayJobs);
   const settingsBlockedReason = settingsMutationBlockReason(displayJobs);
   const hasRunnableQueueWork = stats.queued > 0 || stats.processing > 0;
@@ -213,6 +221,7 @@ function Workbench() {
     const merged = mergeOptimisticProcessingClaims(next, optimisticClaimsRef.current);
     recordStateTrace(merged, traceJobIdRef.current, source);
     setState(merged);
+    setQueueStatus(null);
     const selectedExists = selectedArticleId && (
       merged.jobs.some((job) => job.articleId === selectedArticleId) ||
       merged.articles.some((article) => article.id === selectedArticleId)
@@ -231,9 +240,28 @@ function Workbench() {
     }
   }
 
+  async function refreshQueueStatus() {
+    // Queue polling must never load full project state.
+    const res = await fetchWithTimeout("/api/queue/status", { cache: "no-store" }, 8_000);
+    if (!res?.ok) return;
+    const next = await res.json() as QueueStatus;
+    setQueueStatus(next);
+    setState((current) => current ? reconcileQueueStatusState(current, next) : current);
+  }
+
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (!state?.project.id) return;
+    void fetch("/api/articles/pins", { cache: "no-store" })
+      .then((res) => res.ok ? res.json() : { pinnedIds: [], sourceCounts: {} })
+      .then((data: { pinnedIds?: string[]; sourceCounts?: Record<string, number> }) => {
+        setPinnedArticleIds(new Set(data.pinnedIds ?? []));
+        setArticleSourceCounts(data.sourceCounts ?? {});
+      });
+  }, [state?.project.id]);
 
   useEffect(() => {
     if (!state || stats.queued === 0) {
@@ -278,11 +306,14 @@ function Workbench() {
   }, [selectedArticleId, settingsOpen, projectSettingsProjectId]);
 
   useEffect(() => {
-    if (tab !== "project") return;
+    const projectId = state?.project.id;
+    if (!projectId || analyticsProjectIdRef.current === projectId) return;
+    analyticsProjectIdRef.current = projectId;
+    setProjectAnalytics(null);
     void fetch("/api/analytics/project", { cache: "no-store" })
       .then((res) => res.ok ? res.json() : null)
-      .then((data: ProjectAnalytics | null) => setProjectAnalytics(data));
-  }, [tab, articles.length, jobs.length]);
+      .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
+  }, [state?.project.id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -290,12 +321,12 @@ function Workbench() {
   }, []);
 
   useEffect(() => {
-    if (!shouldPollState) return;
+    if (!shouldPollQueue) return;
     const timer = window.setInterval(() => {
-      void refresh();
+      void refreshQueueStatus();
     }, 5_000);
     return () => window.clearInterval(timer);
-  }, [selectedArticleId, shouldPollState]);
+  }, [shouldPollQueue]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -351,29 +382,24 @@ function Workbench() {
   }, [globalSearchOpen, globalSearchQuery]);
 
   useEffect(() => {
-    if (!selectedArticle) return;
-    void fetch(`/api/articles/${selectedArticle.id}/details`, { cache: "no-store" })
-      .then((res) => res.ok ? res.json() : { research: null, debug: null })
-      .then((data: Details) => setDetails(data));
-  }, [selectedArticle?.id]);
-
-  useEffect(() => {
-    if (visibilityBaselineRef.current === null) {
-      const baseline = new Set(articles.filter((article) => article.timings?.generated_at).map((article) => article.id));
-      visibilityBaselineRef.current = baseline;
-      visibleRecordedRef.current = new Set([...visibleRecordedRef.current, ...baseline]);
+    if (!selectedArticleId) {
+      setSelectedArticle(null);
+      setDetails({ research: null, debug: null });
       return;
     }
-    for (const article of articles) {
-      if (!article.timings?.generated_at || article.timings.visible_at || visibleRecordedRef.current.has(article.id)) continue;
-      visibleRecordedRef.current.add(article.id);
-      void fetch("/api/analytics/article-visible", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ articleId: article.id, context: "state_observed_after_initial_load" })
-      });
-    }
-  }, [articles]);
+    const controller = new AbortController();
+    setSelectedArticle(null);
+    void fetch(`/api/articles/${selectedArticleId}`, { cache: "no-store", signal: controller.signal })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: { article?: ArticleDocument } | null) => {
+        if (data?.article) setSelectedArticle(data.article);
+      })
+      .catch(() => undefined);
+    void fetch(`/api/articles/${selectedArticleId}/details`, { cache: "no-store", signal: controller.signal })
+      .then((res) => res.ok ? res.json() : { research: null, debug: null })
+      .then((data: Details) => setDetails(data));
+    return () => controller.abort();
+  }, [selectedArticleId]);
 
   async function addTitles() {
     setBusy(true);
@@ -789,21 +815,25 @@ function Workbench() {
     await refresh();
   }
 
-  async function toggleArticlePin(article: ArticleDocument) {
+  async function toggleArticlePin(article: ArticleSummary) {
+    const nextPinned = !pinnedArticleIds.has(article.id);
     const res = await fetch(`/api/articles/${article.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isPinned: !article.isPinned })
+      body: JSON.stringify({ isPinned: nextPinned })
     });
     const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; error?: string };
     if (!res.ok || !data.article) {
       setMessage(data.error ?? "Could not update pinned state.");
       return;
     }
-    setState((current) => current ? {
-      ...current,
-      articles: current.articles.map((item) => item.id === data.article!.id ? data.article! : item)
-    } : current);
+    if (selectedArticle?.id === data.article.id) setSelectedArticle(data.article);
+    setPinnedArticleIds((current) => {
+      const next = new Set(current);
+      if (data.article!.isPinned) next.add(data.article!.id);
+      else next.delete(data.article!.id);
+      return next;
+    });
     setMessage(data.article.isPinned ? "Article pinned." : "Article unpinned.");
   }
 
@@ -824,7 +854,7 @@ function Workbench() {
     else await refresh();
   }
 
-  async function openSimilarTitles(article: ArticleDocument) {
+  async function openSimilarTitles(article: ArticleSummary) {
     setSimilarCandidate(article);
     setSimilarTitles([]);
     setSelectedSimilarTitles(new Set());
@@ -869,7 +899,7 @@ function Workbench() {
   function updateArticleDraft(articleId: string, patch: { title?: string; markdown?: string }) {
     let nextTitle = patch.title;
     let nextMarkdown = patch.markdown;
-    const currentArticle = state?.articles.find((article) => article.id === articleId);
+    const currentArticle = selectedArticle?.id === articleId ? selectedArticle : null;
     if (!currentArticle) return;
     if (nextTitle === undefined) nextTitle = titleDrafts[articleId] ?? currentArticle.title;
     if (nextMarkdown === undefined) nextMarkdown = drafts[articleId] ?? currentArticle.markdown;
@@ -881,10 +911,16 @@ function Workbench() {
       articles: current.articles.map((article) => article.id === articleId ? {
         ...article,
         title: nextTitle,
-        markdown: nextMarkdown,
         wordCount: countWordsLocal(nextMarkdown),
         updatedAt: new Date().toISOString()
       } : article)
+    } : current);
+    setSelectedArticle((current) => current?.id === articleId ? {
+      ...current,
+      title: nextTitle,
+      markdown: nextMarkdown,
+      wordCount: countWordsLocal(nextMarkdown),
+      updatedAt: new Date().toISOString()
     } : current);
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     const revision = saveRevisionRef.current + 1;
@@ -907,9 +943,10 @@ function Workbench() {
     }
     const data = await res.json().catch(() => ({})) as { article?: ArticleDocument };
     if (data.article) {
+      setSelectedArticle(data.article);
       setState((current) => current ? {
         ...current,
-        articles: current.articles.map((article) => article.id === data.article?.id ? data.article : article)
+        articles: current.articles.map((article) => article.id === data.article?.id ? toArticleSummary(data.article) : article)
       } : current);
       setDrafts((current) => {
         const next = { ...current };
@@ -1182,7 +1219,7 @@ function Workbench() {
             </div>
             {sidebarTab === "queue" ? (
               queueJobs.length ? queueJobs.map((job) => {
-                const article = articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
+                const article = articles.find((item) => item.id === job.articleId) ?? null;
                 return (
                   <QueueListItem
                     key={job.id}
@@ -1204,6 +1241,7 @@ function Workbench() {
                       <ArticleLibraryItem
                         key={article.id}
                         article={article}
+                        pinned
                         active={selectedArticleId === article.id}
                         onOpen={() => setSelectedArticleId(article.id)}
                         onPin={() => void toggleArticlePin(article)}
@@ -1218,6 +1256,7 @@ function Workbench() {
                   <ArticleLibraryItem
                     key={article.id}
                     article={article}
+                    pinned={false}
                     active={selectedArticleId === article.id}
                     onOpen={() => setSelectedArticleId(article.id)}
                     onPin={() => void toggleArticlePin(article)}
@@ -1317,6 +1356,7 @@ function Workbench() {
               articles={inventoryArticles}
               jobs={displayJobs}
               summary={projectSummary}
+              sourceCounts={articleSourceCounts}
               onSelectArticle={setSelectedArticleId}
             />
           )}
@@ -1446,7 +1486,7 @@ function QueueStateBanner({
 }
 
 function RegenerateArticleModal({ article, loading, onClose, onConfirm }: {
-  article: ArticleDocument;
+  article: ArticleSummary;
   loading: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -1470,7 +1510,7 @@ function RegenerateArticleModal({ article, loading, onClose, onConfirm }: {
 }
 
 function SimilarTitlesModal({ article, titles, selected, loading, submitting, error, onClose, onToggle, onSelectAll, onSubmit }: {
-  article: ArticleDocument;
+  article: ArticleSummary;
   titles: string[];
   selected: Set<string>;
   loading: boolean;
@@ -1590,18 +1630,20 @@ function ProjectDashboard({
   articles,
   jobs,
   summary,
+  sourceCounts,
   onSelectArticle
 }: {
   state: AppState | null;
-  articles: ArticleDocument[];
+  articles: ArticleSummary[];
   jobs: QueueJob[];
   summary: ProjectSummary | null;
+  sourceCounts: Record<string, number>;
   onSelectArticle: (id: string) => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const inventoryRows = sortInventoryRows(
-    articles.map((article) => ({ article, job: jobs.find((job) => job.id === article.jobId || job.articleId === article.id) ?? null })),
+    articles.map((article) => ({ article, job: jobs.find((job) => job.articleId === article.id) ?? null })),
     sortKey,
     sortDirection
   );
@@ -1640,7 +1682,7 @@ function ProjectDashboard({
         <div className="space-y-5">
           <ProjectSection title="Needs attention">
             {attentionRows.length ? (
-              <InventoryTable rows={attentionRows} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} compact />
+              <InventoryTable rows={attentionRows} sourceCounts={sourceCounts} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} compact />
             ) : (
               <Empty text="No articles currently need attention." />
             )}
@@ -1648,7 +1690,7 @@ function ProjectDashboard({
 
           <ProjectSection title="Content inventory">
             {contentInventory.length ? (
-              <InventoryTable rows={contentInventory} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} />
+              <InventoryTable rows={contentInventory} sourceCounts={sourceCounts} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} />
             ) : (
               <Empty text="Saved articles will appear here." />
             )}
@@ -1905,15 +1947,15 @@ function ProjectInsights({
   history
 }: {
   state: AppState | null;
-  articles: ArticleDocument[];
+  articles: ArticleSummary[];
   jobs: QueueJob[];
   metrics: QueueMetrics;
   history: RunSummary[];
 }) {
-  const sourceCount = articles.reduce((sum, article) => sum + article.sources.length, 0);
-  const warnings = articles.reduce((sum, article) => sum + article.validation.warnings.length, 0);
-  const reviewReasons = articles.reduce((sum, article) => sum + article.needsReviewReasons.length, 0);
-  const scoreAverages = averageArticleScores(articles.map((article) => calculateArticleScores(article)));
+  const sourceCount = 0;
+  const warnings = 0;
+  const reviewReasons = articles.filter((article) => article.status === "needs_review").length;
+  const scoreAverages = summaryScoreAverages(articles);
   const failed = jobs.filter((job) => job.status === "failed").slice(0, 5);
   const topDomains = buildTopDomains(articles);
 
@@ -1946,7 +1988,7 @@ function ProjectInsights({
               <MetricLine label="Evidence" value={scoreAverages.evidence || "-"} />
               <MetricLine label="Warnings" value={warnings} />
               <MetricLine label="Review reasons" value={reviewReasons} />
-              <MetricLine label="Validated" value={articles.filter((article) => article.validation.pass).length} />
+              <MetricLine label="Validated" value={articles.filter((article) => article.status === "generated").length} />
             </div>
             <AttentionList articles={articles} jobs={jobs} />
           </div>
@@ -1957,7 +1999,7 @@ function ProjectInsights({
             <MetricLine label="Sources" value={sourceCount} />
             <MetricLine label="Research" value={scoreAverages.research || "-"} />
             <MetricLine label="Evidence" value={scoreAverages.evidence || "-"} />
-            <MetricLine label="With sources" value={articles.filter((article) => article.sources.length > 0).length} />
+            <MetricLine label="With sources" value="-" />
             <MetricLine label="Avg/article" value={articles.length ? Math.round(sourceCount / articles.length) : "-"} />
           </div>
         </ProjectSection>
@@ -2132,13 +2174,15 @@ function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | nu
 
 function InventoryTable({
   rows,
+  sourceCounts,
   onSelectArticle,
   sortKey,
   sortDirection,
   onSort,
   compact = false
 }: {
-  rows: Array<{ article: ArticleDocument; job: QueueJob | null }>;
+  rows: Array<{ article: ArticleSummary; job: QueueJob | null }>;
+  sourceCounts: Record<string, number>;
   onSelectArticle: (id: string) => void;
   sortKey: InventorySortKey;
   sortDirection: SortDirection;
@@ -2159,7 +2203,6 @@ function InventoryTable({
       </div>
       <div className="divide-y divide-line/70">
         {rows.map(({ article, job }) => {
-          const scores = calculateArticleScores(article);
           return (
             <button
               key={article.id}
@@ -2168,14 +2211,14 @@ function InventoryTable({
             >
               <span className="min-w-0">
                 <span className="block truncate font-medium text-ink">{article.title}</span>
-                {!compact && <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">{job ? attentionSummary(article, job) ?? `Attempt ${job.attempts}` : article.needsReviewReasons[0] ?? `Updated ${relativeDate(article.updatedAt)}`}</span>}
+                {!compact && <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">{job ? attentionSummary(article, job) ?? `Attempt ${job.attempts}` : `Updated ${relativeDate(article.updatedAt)}`}</span>}
               </span>
               <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.sources.length}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{scores.quality.score}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{scores.research.score}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{scores.evidence.score}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.researchScore}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</span>
             </button>
           );
@@ -2195,7 +2238,7 @@ function InventorySortHeader({ label, metric, active, direction, onSort }: {
   return <button onClick={() => onSort(metric)} className={cn("text-right hover:text-ink", active === metric && "text-ink")} title={`Sort by ${label}`}>{label}{active === metric ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
 }
 
-function sortInventoryRows(rows: Array<{ article: ArticleDocument; job: QueueJob | null }>, key: InventorySortKey, direction: SortDirection) {
+function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob | null }>, key: InventorySortKey, direction: SortDirection) {
   const multiplier = direction === "desc" ? -1 : 1;
   return [...rows].sort((left, right) => {
     const leftValue = inventorySortValue(left.article, key);
@@ -2207,11 +2250,10 @@ function sortInventoryRows(rows: Array<{ article: ArticleDocument; job: QueueJob
   });
 }
 
-function inventorySortValue(article: ArticleDocument, key: InventorySortKey) {
+function inventorySortValue(article: ArticleSummary, key: InventorySortKey) {
   if (key === "words") return article.wordCount;
   if (key === "updated") return article.updatedAt;
-  const scores = calculateArticleScores(article);
-  return scores[key].score;
+  return key === "quality" ? article.qualityScore : key === "research" ? article.researchScore : article.evidenceScore;
 }
 
 function StatusDistribution({ jobs }: { jobs: QueueJob[] }) {
@@ -2240,14 +2282,14 @@ function StatusDistribution({ jobs }: { jobs: QueueJob[] }) {
   );
 }
 
-function AttentionList({ articles, jobs }: { articles: ArticleDocument[]; jobs: QueueJob[] }) {
+function AttentionList({ articles, jobs }: { articles: ArticleSummary[]; jobs: QueueJob[] }) {
   const items = [
     ...articles
-      .filter((article) => article.needsReviewReasons.length || article.validation.warnings.length)
+      .filter((article) => article.status === "needs_review")
       .map((article) => ({
         id: article.id,
         title: article.title,
-        reason: article.needsReviewReasons[0] ?? article.validation.warnings[0],
+        reason: "Article needs review",
         tone: "warn" as const
       })),
     ...jobs
@@ -2292,9 +2334,9 @@ function SourceDomainList({ domains }: { domains: SourceDomainSummary[] }) {
   );
 }
 
-function ProjectExportReadiness({ articles, jobs, metrics }: { articles: ArticleDocument[]; jobs: QueueJob[]; metrics: QueueMetrics }) {
+function ProjectExportReadiness({ articles, jobs, metrics }: { articles: ArticleSummary[]; jobs: QueueJob[]; metrics: QueueMetrics }) {
   const generated = articles.filter((article) => article.status === "generated").length;
-  const needsReview = articles.filter((article) => article.status === "needs_review" || article.needsReviewReasons.length || article.validation.warnings.length).length;
+  const needsReview = articles.filter((article) => article.status === "needs_review").length;
   const failed = jobs.filter((job) => job.status === "failed").length;
   const exportable = articles.length > 0;
 
@@ -2318,9 +2360,8 @@ function ProjectExportReadiness({ articles, jobs, metrics }: { articles: Article
   );
 }
 
-function attentionSummary(article: ArticleDocument | null | undefined, job: QueueJob) {
-  if (article?.needsReviewReasons.length) return article.needsReviewReasons[0];
-  if (article?.validation.warnings.length) return article.validation.warnings[0];
+function attentionSummary(article: ArticleSummary | null | undefined, job: QueueJob) {
+  if (article?.status === "needs_review") return "Article needs review";
   if (job.fatalError) return job.fatalError;
   if (job.needsReviewReasons.length) return job.needsReviewReasons[0];
   return null;
@@ -2559,18 +2600,17 @@ function QueueListItem({
   onAction
 }: {
   job: QueueJob;
-  article: ArticleDocument | null;
+  article: ArticleSummary | null;
   active: boolean;
   onSelect: () => void;
   onRetry: () => void;
   onAction: (action: "skip" | "remove" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void;
 }) {
-  const scores = article ? calculateArticleScores(article) : null;
   const displayStatus = displayStatusLabel(job, article);
   const summary = attentionSummary(article, job);
-  const runtime = article ? calculatePipelineRuntime(article.pipeline).totalMs : job.status === "processing" ? currentJobRuntime(job, Date.now()) : null;
+  const runtime = article ? calculatePipelineRuntime(job.pipeline).totalMs : job.status === "processing" ? currentJobRuntime(job, Date.now()) : null;
   const facts = article
-    ? [`${formatNumber(article.wordCount)} words`, formatDuration(runtime), ...(scores ? [`Q${scores.quality.score}`, `R${scores.research.score}`, `E${scores.evidence.score}`] : [])]
+    ? [`${formatNumber(article.wordCount)} words`, formatDuration(runtime), `Q${article.qualityScore}`, `R${article.researchScore}`, `E${article.evidenceScore}`]
     : [`Attempt ${job.attempts}`, relativeDate(job.updatedAt)];
   return (
     <div className="group relative">
@@ -2650,6 +2690,7 @@ function IconAction({ title, onClick, children, danger = false }: { title: strin
 
 function ArticleLibraryItem({
   article,
+  pinned,
   active,
   onOpen,
   onPin,
@@ -2657,7 +2698,8 @@ function ArticleLibraryItem({
   onGenerateSimilar,
   onDelete
 }: {
-  article: ArticleDocument;
+  article: ArticleSummary;
+  pinned: boolean;
   active: boolean;
   onOpen: () => void;
   onPin: () => void;
@@ -2665,12 +2707,11 @@ function ArticleLibraryItem({
   onGenerateSimilar: () => void;
   onDelete: () => void;
 }) {
-  const scores = calculateArticleScores(article);
   const metadata = [
     `${formatNumber(article.wordCount)} words`,
-    `Q${scores.quality.score}`,
-    `R${scores.research.score}`,
-    `E${scores.evidence.score}`
+    `Q${article.qualityScore}`,
+    `R${article.researchScore}`,
+    `E${article.evidenceScore}`
   ];
 
   function confirmDelete() {
@@ -2711,7 +2752,7 @@ function ArticleLibraryItem({
         </span>
       </button>
       <div className="absolute bottom-2 right-2 z-20 flex items-center gap-0.5 rounded bg-surface-1 p-0.5 opacity-0 shadow-sm ring-1 ring-line transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        <IconAction title={article.isPinned ? "Unpin article" : "Pin article"} onClick={onPin}><Pin className={cn("size-3", article.isPinned && "fill-current text-ink")} /></IconAction>
+        <IconAction title={pinned ? "Unpin article" : "Pin article"} onClick={onPin}><Pin className={cn("size-3", pinned && "fill-current text-ink")} /></IconAction>
         <IconAction title="Regenerate article" onClick={onRegenerate}><RotateCw className="size-3" /></IconAction>
         <IconAction title="Generate similar" onClick={onGenerateSimilar}><Sparkles className="size-3" /></IconAction>
         <IconAction title={`Delete ${article.title}`} danger onClick={confirmDelete}><Trash2 className="size-3" /></IconAction>
@@ -2958,7 +2999,7 @@ function ExportMenuLink({ href, label, icon, onClick }: { href: string; label: s
 }
 
 function ProjectSummaryPanel({ state, metrics }: { state: AppState | null; metrics: QueueMetrics }) {
-  const summary = state ? calculateProjectSummary(state) : null;
+  const summary = state ? calculateProjectSummary(state, null) : null;
   return (
     <SummarySection
       title="Project Summary"
@@ -3295,12 +3336,12 @@ function Inspector({
   tab: InspectorTab;
   setTab: (tab: InspectorTab) => void;
   state: AppState | null;
-  articles: ArticleDocument[];
+  articles: ArticleSummary[];
   jobs: QueueJob[];
   metrics: QueueMetrics;
   history: RunSummary[];
   summary: ProjectSummary | null;
-  analytics: ProjectAnalytics | null;
+  analytics: ProjectAnalyticsSummary | null;
   article: ArticleDocument | null;
   job: QueueJob | null;
   markdown: string;
@@ -3342,16 +3383,15 @@ function ProjectContextPanel({
   analytics
 }: {
   state: AppState | null;
-  articles: ArticleDocument[];
+  articles: ArticleSummary[];
   jobs: QueueJob[];
   metrics: QueueMetrics;
   history: RunSummary[];
   summary: ProjectSummary | null;
-  analytics: ProjectAnalytics | null;
+  analytics: ProjectAnalyticsSummary | null;
 }) {
   const latestRun = history[0] ?? null;
   const averageLength = articles.length && summary ? Math.round(summary.totalWords / articles.length) : null;
-  const queueWaitMs = analytics?.performance.average_queue_wait_ms ?? null;
   const queuedCount = jobs.filter((job) => job.status === "queued").length;
   const status = projectStatus(metrics, jobs);
   const profile = state ? normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords) : null;
@@ -3411,7 +3451,6 @@ function ProjectContextPanel({
             <MetricLine label="Success rate" value={`${metrics.successRate}%`} />
             {metrics.throughputPerHour !== null && <MetricLine label="Throughput" value={`${metrics.throughputPerHour}/hr`} />}
             {metrics.averageGenerationMs !== null && <MetricLine label="Avg generation" value={formatDuration(metrics.averageGenerationMs)} />}
-            {queueWaitMs !== null && <MetricLine label="Avg queue wait" value={formatDuration(queueWaitMs)} />}
             {latestRun && <MetricLine label="Last run" value={formatDate(latestRun.startedAt)} />}
           </div>
         </ProjectSection>
@@ -4262,11 +4301,11 @@ function recordStateTrace(state: AppState, jobId: string | null, event: string) 
   if (!jobId) return;
   const job = state.jobs.find((item) => item.id === jobId);
   if (!job) return;
-  const article = state.articles.find((item) => item.jobId === job.id || item.id === job.articleId) ?? null;
+  const article = state.articles.find((item) => item.id === job.articleId) ?? null;
   recordTransitionTrace(event, job, article);
 }
 
-function recordTransitionTrace(event: string, job: QueueJob, article: ArticleDocument | null = null) {
+function recordTransitionTrace(event: string, job: QueueJob, article: ArticleSummary | ArticleDocument | null = null) {
   if (typeof window === "undefined") return;
   const displayedJob = article ? { ...job, status: article.status } : job;
   const entry: TransitionTraceEntry = {
@@ -4301,7 +4340,7 @@ function readTransitionTrace() {
   }
 }
 
-function displayStatusLabel(job: QueueJob, article?: ArticleDocument | null) {
+function displayStatusLabel(job: QueueJob, article?: ArticleSummary | ArticleDocument | null) {
   if (job.status !== "processing") return statusLabel(article?.status ?? job.status);
   const activeStage = currentPipelineStage(job.pipeline);
   if (activeStage === "research") return "Researching";
@@ -4322,7 +4361,7 @@ function mergeOptimisticProcessingClaims(state: AppState, claims: Map<string, Qu
   const jobs = state.jobs.map((job) => {
     const claimed = claims.get(job.id);
     if (!claimed) return job;
-    const article = state.articles.find((item) => item.jobId === job.id || item.id === job.articleId);
+    const article = state.articles.find((item) => item.id === job.articleId);
     if (article || job.status !== "queued" || claimed.status !== "processing") {
       claims.delete(job.id);
       return job;
@@ -4338,7 +4377,46 @@ function mergeOptimisticProcessingClaims(state: AppState, claims: Map<string, Qu
   return changed ? { ...state, jobs } : state;
 }
 
-function isInventoryArticle(article: ArticleDocument) {
+export function reconcileQueueStatusState(state: AppState, status: QueueStatus): AppState {
+  const jobs = state.jobs.map((job) => status.activeJob?.id === job.id && job.status !== "processing"
+    ? { ...job, status: "processing" as const, updatedAt: new Date().toISOString() }
+    : job);
+  const activeId = status.activeJob?.id;
+  const candidates = jobs
+    .filter((job) => job.id !== activeId && (job.status === "processing" || job.status === "queued"))
+    .sort((a, b) => Number(b.status === "processing") - Number(a.status === "processing") || a.createdAt.localeCompare(b.createdAt));
+  const targetCounts: Array<[JobStatus, number]> = [
+    ["generated", status.generated],
+    ["needs_review", status.review],
+    ["failed", status.failed]
+  ];
+  const completed = new Map<string, JobStatus>();
+
+  for (const [target, targetCount] of targetCounts) {
+    const currentCount = jobs.filter((job) => job.status === target).length;
+    for (let missing = Math.max(0, targetCount - currentCount); missing > 0; missing -= 1) {
+      const candidate = candidates.find((job) => !completed.has(job.id));
+      if (!candidate) break;
+      completed.set(candidate.id, target);
+    }
+  }
+
+  if (!completed.size && jobs.every((job, index) => job === state.jobs[index])) return state;
+  const updatedJobs = jobs.map((job) => {
+    const nextStatus = completed.get(job.id);
+    return nextStatus ? { ...job, status: nextStatus, updatedAt: new Date().toISOString() } : job;
+  });
+  const updatedArticles = state.articles.map((article) => {
+    const job = updatedJobs.find((item) => item.articleId === article.id);
+    const nextStatus = job ? completed.get(job.id) : undefined;
+    return nextStatus === "generated" || nextStatus === "needs_review" || nextStatus === "failed"
+      ? { ...article, status: nextStatus }
+      : article;
+  });
+  return { ...state, jobs: updatedJobs, articles: updatedArticles };
+}
+
+function isInventoryArticle(article: ArticleSummary) {
   return article.status === "generated" || article.status === "needs_review";
 }
 
@@ -4584,9 +4662,8 @@ interface SourceDomainSummary {
   sourceAuthority: number;
 }
 
-function calculateAccountOutcomeStats(articles: ArticleDocument[]): AccountOutcomeStats {
+function calculateAccountOutcomeStats(articles: ArticleSummary[], sources: number): AccountOutcomeStats {
   const words = articles.reduce((sum, article) => sum + article.wordCount, 0);
-  const sources = articles.reduce((sum, article) => sum + article.sources.length, 0);
   const articlesWritten = articles.length;
   return {
     words,
@@ -4643,9 +4720,9 @@ function pickMilestoneShareMessage(stats: AccountOutcomeStats) {
   return milestones.length ? milestones[Math.floor(Math.random() * milestones.length)] : null;
 }
 
-function calculateProjectSummary(state: AppState): ProjectSummary {
+function calculateProjectSummary(state: AppState, analytics: ProjectAnalyticsSummary | null): ProjectSummary {
   const articles = state.articles;
-  const scoreAverages = averageArticleScores(articles.map((article) => calculateArticleScores(article)));
+  const scoreAverages = summaryScoreAverages(articles);
   const generatedCount = articles.filter((article) => article.status === "generated").length;
   const reviewCount = articles.filter((article) => article.status === "needs_review").length;
   const failedCount = articles.filter((article) => article.status === "failed").length;
@@ -4659,46 +4736,33 @@ function calculateProjectSummary(state: AppState): ProjectSummary {
     projectName: state.project.name,
     createdDate: state.project.createdAt,
     lastActivity: timestamps[timestamps.length - 1] ?? state.project.createdAt,
-    articleCount: articles.length,
-    generatedCount,
-    reviewCount,
-    failedCount,
-    totalWords: articles.reduce((sum, article) => sum + article.wordCount, 0),
-    totalSources: articles.reduce((sum, article) => sum + article.sources.length, 0),
-    averageQuality: scoreAverages.quality,
-    averageResearch: scoreAverages.research,
-    averageEvidence: scoreAverages.evidence,
+    articleCount: analytics?.article_count ?? articles.length,
+    generatedCount: analytics?.generated_count ?? generatedCount,
+    reviewCount: analytics?.review_count ?? reviewCount,
+    failedCount: analytics?.failed_count ?? failedCount,
+    totalWords: analytics?.total_words ?? articles.reduce((sum, article) => sum + article.wordCount, 0),
+    totalSources: analytics?.source_count ?? 0,
+    averageQuality: analytics?.average_quality ?? scoreAverages.quality,
+    averageResearch: analytics?.average_research ?? scoreAverages.research,
+    averageEvidence: analytics?.average_evidence ?? scoreAverages.evidence,
     successRate: completedAssets ? Number((((generatedCount + reviewCount) / completedAssets) * 100).toFixed(1)) : 100
   };
 }
 
-function buildTopDomains(articles: ArticleDocument[]): SourceDomainSummary[] {
-  const domains = new Map<string, { count: number; accepted: number; articleIds: Set<string>; authorityScores: number[] }>();
-  for (const article of articles) {
-    for (const source of article.sources) {
-      const key = source.domain || safeDomain(source.url);
-      if (!key) continue;
-      const current = domains.get(key) ?? { count: 0, accepted: 0, articleIds: new Set<string>(), authorityScores: [] };
-      current.count += 1;
-      if (source.accepted) current.accepted += 1;
-      current.articleIds.add(article.id);
-      current.authorityScores.push(source.authorityScore);
-      domains.set(key, current);
-    }
-  }
-
-  return [...domains.entries()]
-    .map(([domain, data]) => ({
-      domain,
-      count: data.count,
-      accepted: data.accepted,
-      articleCount: data.articleIds.size,
-      sourceAuthority: averageNumber(data.authorityScores)
-    }))
-    .sort((a, b) => b.count - a.count || b.sourceAuthority - a.sourceAuthority);
+function summaryScoreAverages(articles: ArticleSummary[]) {
+  const average = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+  return {
+    quality: average(articles.map((article) => article.qualityScore)),
+    research: average(articles.map((article) => article.researchScore)),
+    evidence: average(articles.map((article) => article.evidenceScore))
+  };
 }
 
-function buildRunHistory(jobs: QueueJob[], articles: ArticleDocument[]): RunSummary[] {
+function buildTopDomains(_articles: ArticleSummary[]): SourceDomainSummary[] {
+  return [];
+}
+
+function buildRunHistory(jobs: QueueJob[], _articles: ArticleSummary[]): RunSummary[] {
   const sorted = [...jobs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const runs: QueueJob[][] = [];
 
@@ -4713,11 +4777,8 @@ function buildRunHistory(jobs: QueueJob[], articles: ArticleDocument[]): RunSumm
   }
 
   return runs.reverse().map((run) => {
-    const runArticles = run
-      .map((job) => articles.find((article) => article.jobId === job.id))
-      .filter((article): article is ArticleDocument => Boolean(article));
-    const runtimes = runArticles
-      .map((article) => calculatePipelineRuntime(article.pipeline).totalMs)
+    const runtimes = run
+      .map((job) => calculatePipelineRuntime(job.pipeline).totalMs)
       .filter((runtime) => runtime > 0);
     return {
       id: run[0]?.id ?? "run",
@@ -4731,7 +4792,7 @@ function buildRunHistory(jobs: QueueJob[], articles: ArticleDocument[]): RunSumm
   });
 }
 
-function calculateQueueMetrics(jobs: QueueJob[], articles: ArticleDocument[], now: number): QueueMetrics {
+function calculateQueueMetrics(jobs: QueueJob[], _articles: ArticleSummary[], now: number): QueueMetrics {
   const total = jobs.length;
   const generated = jobs.filter((job) => job.status === "generated").length;
   const needsReview = jobs.filter((job) => job.status === "needs_review").length;
@@ -4744,12 +4805,12 @@ function calculateQueueMetrics(jobs: QueueJob[], articles: ArticleDocument[], no
   const remaining = jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
   const successRate = completed ? Number(((successful / completed) * 100).toFixed(1)) : 100;
   const runStartedAt = jobs.map((job) => job.createdAt).sort()[0] ?? null;
-  const completedRuntimes = articles
-    .map((article) => calculatePipelineRuntime(article.pipeline).totalMs)
+  const completedRuntimes = jobs
+    .map((job) => calculatePipelineRuntime(job.pipeline).totalMs)
     .filter((runtime) => runtime > 0);
-  const averageResearchMs = averageStageRuntime(articles, "research");
-  const averageGenerationMs = averageStageRuntime(articles, "generation");
-  const averageSaveMs = averageStageRuntime(articles, "save");
+  const averageResearchMs = averageStageRuntime(jobs, "research");
+  const averageGenerationMs = averageStageRuntime(jobs, "generation");
+  const averageSaveMs = averageStageRuntime(jobs, "save");
   const averageRuntimeMs = completedRuntimes.length
     ? Math.round(completedRuntimes.reduce((sum, runtime) => sum + runtime, 0) / completedRuntimes.length)
     : null;
@@ -4818,9 +4879,9 @@ function earliestTimestamp(values: Array<string | undefined>) {
   return values.filter(Boolean).sort()[0] ?? null;
 }
 
-function averageStageRuntime(articles: ArticleDocument[], stage: string) {
-  const runtimes = articles
-    .map((article) => article.pipeline.find((step) => step.stage === stage)?.durationMs ?? 0)
+function averageStageRuntime(jobs: QueueJob[], stage: string) {
+  const runtimes = jobs
+    .map((job) => job.pipeline.find((step) => step.stage === stage)?.durationMs ?? 0)
     .filter((runtime) => runtime > 0);
   return runtimes.length ? Math.round(runtimes.reduce((sum, runtime) => sum + runtime, 0) / runtimes.length) : null;
 }
