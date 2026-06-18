@@ -6,14 +6,20 @@ export const EXA_PRICING_USD = {
 export interface ModelPricing {
   provider: string;
   inputPer1MTokens: number;
+  inputCacheHitPer1MTokens?: number;
+  inputCacheMissPer1MTokens?: number;
   outputPer1MTokens: number;
+  pricingSource?: string;
 }
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
   "deepseek-v4-flash": {
     provider: "openai-compatible",
-    inputPer1MTokens: 0,
-    outputPer1MTokens: 0
+    inputPer1MTokens: 0.14,
+    inputCacheHitPer1MTokens: 0.0028,
+    inputCacheMissPer1MTokens: 0.14,
+    outputPer1MTokens: 0.28,
+    pricingSource: "deepseek-v4-flash_cache_miss_assumed"
   },
   "gpt-4.1-mini": {
     provider: "openai",
@@ -37,13 +43,18 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   }
 };
 
-export function pricingForModel(model: string | null | undefined): ModelPricing {
+export function pricingForModel(model: string | null | undefined, provider?: string | null): ModelPricing {
   const key = modelKey(model);
-  const registry = key ? MODEL_PRICING[key] : undefined;
+  const normalizedProvider = provider?.trim().toLowerCase();
+  const deepSeekViaCompatibleProvider = normalizedProvider === "openai-compatible" && key?.startsWith("deepseek");
+  const registry = key ? MODEL_PRICING[key] ?? (deepSeekViaCompatibleProvider ? MODEL_PRICING["deepseek-v4-flash"] : undefined) : undefined;
   return {
-    provider: envString(`AI_PROVIDER_${envModelName(model ?? "")}`) ?? registry?.provider ?? inferProvider(model),
+    provider: envString(`AI_PROVIDER_${envModelName(model ?? "")}`) ?? provider ?? registry?.provider ?? inferProvider(model),
     inputPer1MTokens: envNumber(`AI_COST_${envModelName(model ?? "")}_INPUT_PER_1M_TOKENS`) ?? registry?.inputPer1MTokens ?? envNumber("AI_INPUT_COST_PER_1M_TOKENS") ?? 0,
-    outputPer1MTokens: envNumber(`AI_COST_${envModelName(model ?? "")}_OUTPUT_PER_1M_TOKENS`) ?? registry?.outputPer1MTokens ?? envNumber("AI_OUTPUT_COST_PER_1M_TOKENS") ?? 0
+    inputCacheHitPer1MTokens: registry?.inputCacheHitPer1MTokens,
+    inputCacheMissPer1MTokens: registry?.inputCacheMissPer1MTokens,
+    outputPer1MTokens: envNumber(`AI_COST_${envModelName(model ?? "")}_OUTPUT_PER_1M_TOKENS`) ?? registry?.outputPer1MTokens ?? envNumber("AI_OUTPUT_COST_PER_1M_TOKENS") ?? 0,
+    pricingSource: key && registry ? (registry.pricingSource ?? key) : undefined
   };
 }
 

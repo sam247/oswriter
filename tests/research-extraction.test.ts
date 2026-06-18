@@ -38,7 +38,7 @@ test("runResearch applies lightweight profile source bias without stuffing queri
   const profileSnapshot = snapshotProjectProfile(normalizeProjectProfile({
     regionKey: "united_kingdom",
     industryKey: "construction",
-    audienceKey: "technical_professionals"
+    audienceKey: "project_managers"
   }));
   const search: SearchAdapter = {
     async search(query) {

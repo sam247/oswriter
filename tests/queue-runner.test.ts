@@ -360,10 +360,13 @@ describe("QueueRunner", () => {
     assert.equal(telemetry.totalTokens, 2000);
     assert.equal(telemetry.generationTokens, 2000);
     assert.ok(telemetry.targetWords > 0);
-    assert.equal(telemetry.profileVersion, 1);
+    assert.equal(telemetry.profileVersion, 2);
     assert.equal(telemetry.region, "global");
     assert.equal(telemetry.industry, "general");
     assert.equal(telemetry.audience, "general_audience");
+    assert.equal(telemetry.profileKey, "general_general_audience");
+    assert.ok(Number.isInteger(telemetry.qualityScore));
+    assert.ok(["Excellent", "Good", "Acceptable", "Weak", "Poor"].includes(telemetry.qualityBand ?? ""));
     assert.equal(telemetry.regionAwarenessActive, false);
     assert.ok(typeof telemetry.profileRelevanceScore === "number");
     assert.ok(telemetry.actualWords > 0);

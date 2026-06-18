@@ -2,11 +2,19 @@ import { EXA_PRICING_USD, pricingForModel } from "@/lib/telemetry/pricing";
 
 const USD_PRECISION = 1_000_000;
 
-export function estimateAiCostUsd(inputTokens: number, outputTokens: number, model?: string | null) {
-  const pricing = pricingForModel(model);
-  const inputRate = pricing.inputPer1MTokens;
+export function estimateAiCostUsd(inputTokens: number, outputTokens: number, model?: string | null, provider?: string | null) {
+  return estimateGenerationCost(inputTokens, outputTokens, model, provider).costUsd;
+}
+
+export function estimateGenerationCost(inputTokens: number, outputTokens: number, model?: string | null, provider?: string | null) {
+  const pricing = pricingForModel(model, provider);
+  // V1 telemetry has no cache token split, so all input tokens are conservatively priced as cache misses.
+  const inputRate = pricing.inputCacheMissPer1MTokens ?? pricing.inputPer1MTokens;
   const outputRate = pricing.outputPer1MTokens;
-  return roundUsd((inputTokens / 1_000_000 * inputRate) + (outputTokens / 1_000_000 * outputRate));
+  return {
+    costUsd: roundUsd((inputTokens / 1_000_000 * inputRate) + (outputTokens / 1_000_000 * outputRate)),
+    pricingSource: pricing.pricingSource ?? null
+  };
 }
 
 export function estimateResearchCostUsd(exaSearchCalls: number, exaContentCalls: number) {

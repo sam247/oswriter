@@ -3,7 +3,7 @@
 import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Play, RotateCw, Search, Settings, SkipForward, Trash2, Unlink, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
-import { AUDIENCE_OPTIONS, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
+import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
 import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -1483,11 +1483,13 @@ function ProjectSettingsPanel({
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
             </div>
             <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => onUpdateProjectProfile({ regionKey })} />
-            <SettingsSelect label="Industry" value={profile.industryKey} options={INDUSTRY_OPTIONS} onChange={(industryKey) => onUpdateProjectProfile({ industryKey })} />
-            {profile.industryKey === "custom" && (
-              <SettingsTextInput label="Custom industry" value={profile.customIndustryLabel ?? ""} onSave={(customIndustryLabel) => onUpdateProjectProfile({ industryKey: "custom", customIndustryLabel })} />
-            )}
-            <SettingsSelect label="Audience" value={profile.audienceKey} options={AUDIENCE_OPTIONS} onChange={(audienceKey) => onUpdateProjectProfile({ audienceKey })} />
+            <SettingsSelect
+              label="Industry"
+              value={profile.industryKey}
+              options={INDUSTRY_OPTIONS}
+              onChange={(industryKey) => onUpdateProjectProfile({ industryKey, audienceKey: defaultAudienceForIndustry(industryKey) })}
+            />
+            <SettingsSelect label="Audience" value={profile.audienceKey} options={audienceOptionsForIndustry(profile.industryKey)} onChange={(audienceKey) => onUpdateProjectProfile({ audienceKey })} />
             <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
               <span className="text-ink-muted">Default target words</span>
               <input

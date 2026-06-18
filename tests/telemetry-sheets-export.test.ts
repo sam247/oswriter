@@ -3,14 +3,20 @@ import { describe, it } from "node:test";
 import { createDefaultProject } from "@/lib/defaults";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
+import { buildDailySummaryRows, DAILY_SUMMARY_HEADERS } from "@/lib/telemetry/daily-summary";
 import { buildDailySummaryRow, evaluateAnomalies, exportArticleTelemetry, TELEMETRY_SHEETS, type SheetsAppendClient, type TelemetryCell } from "@/lib/telemetry/sheets-export";
 import type { ArticleDocument, GenerationTelemetryDocument } from "@/lib/types";
 
 class FakeSheetsClient implements SheetsAppendClient {
   rows: Array<{ sheetName: string; row: TelemetryCell[] }> = [];
+  replacements: Array<{ sheetName: string; rows: TelemetryCell[][] }> = [];
 
   async appendRow(sheetName: string, row: TelemetryCell[]) {
     this.rows.push({ sheetName, row });
+  }
+
+  async replaceRows(sheetName: string, rows: TelemetryCell[][]) {
+    this.replacements.push({ sheetName, rows });
   }
 }
 
@@ -56,39 +62,60 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(articleRow?.[48], 900);
     assert.equal(articleRow?.[49], 2100);
     assert.equal(articleRow?.[50], 0.000114);
-    assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 5);
+    assert.equal(typeof articleRow?.[53], "number");
+    assert.equal(articleRow?.[54], "utilities_procurement_teams");
+    assert.equal(articleRow?.[55], "test-model_cache_miss_assumed");
+    assert.equal(articleRow?.[56], "Good");
+    assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 4);
+    assert.equal(client.replacements.at(-1)?.sheetName, TELEMETRY_SHEETS.dailySummary);
+    assert.deepEqual(client.replacements.at(-1)?.rows[0], Array.from(DAILY_SUMMARY_HEADERS));
     assert.equal((await store.getTelemetryExportStatus("article:default-project:article-telemetry"))?.status, "exported");
     assert.equal((await store.getTelemetryExportStatus("anomaly:default-project:article-telemetry:under-target-output"))?.status, "exported");
   });
 
   it("builds daily business summary rows from article telemetry", () => {
-    const first = sampleTelemetry({ articleId: "a", actualWords: 800, totalCostUsd: 0.08, generationDurationMs: 1200 });
-    const second = sampleTelemetry({ articleId: "b", actualWords: 1200, totalCostUsd: 0.12, generationDurationMs: 1800 });
+    const first = sampleTelemetry({ articleId: "a", actualWords: 800, totalCostUsd: 0.08, generationDurationMs: 1200, qualityScore: 80, qualityBand: "Good" });
+    const second = sampleTelemetry({ articleId: "b", actualWords: 1200, totalCostUsd: 0.12, generationDurationMs: 1800, qualityScore: 90, qualityBand: "Excellent" });
 
     const row = buildDailySummaryRow("2026-06-17", [first, second], [
       sampleArticle({ id: "a", qualityScore: 80, researchScore: 72 }),
       sampleArticle({ id: "b", qualityScore: 90, researchScore: 88 })
     ]);
 
-    assert.deepEqual(row, [
-      "2026-06-17",
-      2,
-      2000,
-      1000,
-      85,
-      80,
-      12,
-      16,
-      0.2,
-      0.1,
-      0.1,
-      1500
+    assert.equal(row.length, DAILY_SUMMARY_HEADERS.length);
+    assert.equal(row[0], "2026-06-17");
+    assert.equal(row[1], 2);
+    assert.equal(row[2], 0);
+    assert.equal(row[3], 100);
+    assert.equal(row[4], 1000);
+    assert.equal(row[8], 70);
+    assert.equal(row[16], 1.5);
+    assert.equal(row[17], 0.9);
+    assert.equal(row[18], 2.1);
+    assert.equal(row[21], 0.2);
+    assert.equal(row[22], 0.1);
+    assert.equal(row[23], 0.1);
+    assert.equal(row[28], "utilities: 2");
+    assert.match(String(row[31]), /Telemetry Article/);
+  });
+
+  it("calculates daily trend deltas without spreadsheet formulas", () => {
+    const rows = buildDailySummaryRows([
+      { telemetry: sampleTelemetry({ articleId: "a", updatedAt: "2026-06-16T12:00:00.000Z", actualWords: 1000, totalCostUsd: 0.1 }), article: sampleArticle({ id: "a", wordCount: 1000 }), project: createDefaultProject() },
+      { telemetry: sampleTelemetry({ articleId: "b", updatedAt: "2026-06-17T12:00:00.000Z", actualWords: 1200, totalCostUsd: 0.2 }), article: sampleArticle({ id: "b", wordCount: 1200 }), project: createDefaultProject() },
+      { telemetry: sampleTelemetry({ articleId: "c", updatedAt: "2026-06-17T14:00:00.000Z", actualWords: 800, totalCostUsd: 0.2 }), article: sampleArticle({ id: "c", wordCount: 800 }), project: createDefaultProject() }
     ]);
+
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1][34], 100);
+    assert.equal(rows[1][35], 100);
+    assert.equal(rows[1][48], 300);
+    assert.equal(rows[1][49], 300);
   });
 
   it("detects initial operational anomaly thresholds", () => {
     const article = sampleArticle({ qualityScore: 62, researchScore: 55 });
-    const telemetry = sampleTelemetry({ targetWords: 1000, actualWords: 700, totalCostUsd: 0.2, generationDurationMs: 3000 });
+    const telemetry = sampleTelemetry({ targetWords: 1000, actualWords: 700, totalCostUsd: 0.2, generationDurationMs: 3000, qualityScore: 62, qualityBand: "Weak" });
     const anomalies = evaluateAnomalies({ telemetry, article, project: createDefaultProject() }, [
       sampleTelemetry({ articleId: "baseline-1", totalCostUsd: 0.05, generationDurationMs: 1000 }),
       sampleTelemetry({ articleId: "baseline-2", totalCostUsd: 0.05, generationDurationMs: 1000 }),
@@ -115,6 +142,9 @@ function sampleTelemetry(overrides: Partial<GenerationTelemetryDocument> = {}): 
     generationProvider: "test-provider",
     model: "test-model",
     generationModel: "test-model",
+    generationCostPricingSource: "test-model_cache_miss_assumed",
+    qualityScore: 84,
+    qualityBand: "Good",
     targetWords: 1000,
     actualWords: 700,
     plannedSections: 6,
@@ -141,6 +171,7 @@ function sampleTelemetry(overrides: Partial<GenerationTelemetryDocument> = {}): 
     region: "united_kingdom",
     industry: "utilities",
     audience: "procurement_teams",
+    profileKey: "utilities_procurement_teams",
     profileRelevanceScore: 74,
     regionAwarenessActive: true,
     industryAwarenessActive: true,
@@ -201,6 +232,7 @@ function sampleArticle(overrides: Partial<ArticleDocument> & { researchScore?: n
       industryLabel: "Utilities",
       audience: "procurement_teams",
       audienceLabel: "Procurement Teams",
+      profileKey: "utilities_procurement_teams",
       targetWords: 1000,
       regionAwarenessActive: true,
       industryAwarenessActive: true,

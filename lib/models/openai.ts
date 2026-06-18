@@ -3,7 +3,7 @@ import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGeneration
 import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import { profileContextLines } from "@/lib/project/profile";
 import { cleanJsonText } from "@/lib/text";
-import { estimateAiCostUsd } from "@/lib/telemetry/costs";
+import { estimateGenerationCost } from "@/lib/telemetry/costs";
 import { pricingForModel } from "@/lib/telemetry/pricing";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 
@@ -34,6 +34,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
     const inputTokens = response.usage?.prompt_tokens ?? 0;
     const outputTokens = response.usage?.completion_tokens ?? 0;
     const resolvedModel = response.model ?? model;
+    const cost = estimateGenerationCost(inputTokens, outputTokens, resolvedModel, "openai-compatible");
     return {
       markdown,
       provider: pricingForModel(resolvedModel).provider,
@@ -42,7 +43,8 @@ export class OpenAIModelAdapter implements ModelAdapter {
       outputTokens,
       totalTokens: response.usage?.total_tokens ?? inputTokens + outputTokens,
       finishReason: response.choices[0]?.finish_reason ?? null,
-      estimatedAiCostUsd: estimateAiCostUsd(inputTokens, outputTokens, resolvedModel)
+      estimatedAiCostUsd: cost.costUsd,
+      generationCostPricingSource: cost.pricingSource
     };
   }
 
@@ -132,6 +134,7 @@ Style profile: ${controls.styleProfile}
 Tone: ${controls.targetTone}
 Target length: about ${plan.targetWords} words (${plan.minimumWords}-${plan.maximumWords} acceptable)
 Structure target: about ${plan.h2SectionCount} main H2 sections, roughly ${plan.wordsPerSection} words per main section, then a short conclusion and FAQ when enabled.
+Planning emphasis: ${plan.planningPriorities.length ? plan.planningPriorities.join(", ") : "match the reader's practical needs"}.
 Include TL;DR: ${controls.includeTldr ? "yes" : "no"}
 Include FAQ: ${controls.includeFaq ? "yes" : "no"}
 

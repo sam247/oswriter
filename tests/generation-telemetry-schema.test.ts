@@ -124,6 +124,13 @@ test("article cost telemetry migration adds actual usage and derived cost column
   assert.match(costMigration, /generation_telemetry_cost_idx/);
 });
 
+test("profile key telemetry migration supports profile combination analysis", () => {
+  const sql = readFileSync("db/migrations/0011_profile_key_telemetry.sql", "utf8").toLowerCase();
+
+  assert.match(sql, /add column if not exists profile_key text/);
+  assert.match(sql, /generation_telemetry_profile_key_idx/);
+});
+
 test("telemetry export status tracks Google Sheets delivery separately", () => {
   const body = tableBodyFrom(expansion, "telemetry_export_status");
 
@@ -153,6 +160,13 @@ test("generation telemetry is tenant scoped and idempotent by article", () => {
   assert.match(body, /unique \(organisation_id, project_id, article_id\)/);
   assert.match(migration, /generation_telemetry_project_updated_idx/);
   assert.match(migration, /generation_telemetry_article_idx/);
+});
+
+test("telemetry quality migration stores score and band", () => {
+  const sql = readFileSync("db/migrations/0012_telemetry_quality_score.sql", "utf8").toLowerCase();
+
+  assert.match(sql, /quality_score integer not null default 0/);
+  assert.match(sql, /quality_band text not null default 'poor'/);
 });
 
 function tableBody(table: string) {

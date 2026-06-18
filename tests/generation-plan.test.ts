@@ -19,6 +19,7 @@ describe("article generation planning", () => {
 
   it("uses project profile target words and lightly adapts sections for procurement audiences", () => {
     const profileSnapshot = snapshotProjectProfile(normalizeProjectProfile({
+      industryKey: "construction",
       audienceKey: "procurement_teams",
       defaultTargetWords: 2400
     }));
@@ -28,6 +29,14 @@ describe("article generation planning", () => {
     assert.ok(plan.h2SectionCount >= 7);
     assert.equal(plan.expectedDepth, "deep");
     assert.equal(plan.h3SectionCount, plan.h2SectionCount * 2);
+    assert.deepEqual(plan.planningPriorities, ["costs", "supplier selection", "procurement strategy", "compliance", "risk", "lead times"]);
+  });
+
+  it("biases SaaS CTO planning towards strategic architecture decisions", () => {
+    const profileSnapshot = snapshotProjectProfile(normalizeProjectProfile({ industryKey: "saas", audienceKey: "ctos" }));
+    const plan = buildArticleGenerationPlan(DEFAULT_CONTROLS, profileSnapshot);
+
+    assert.deepEqual(plan.planningPriorities, ["scalability", "strategy", "architecture decisions", "risk", "business impact"]);
   });
 
   it("records H2 and H3 achievement without changing generation behaviour", () => {

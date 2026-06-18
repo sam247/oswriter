@@ -5,9 +5,10 @@ import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
 import { runResearch } from "@/lib/research/research-engine";
 import { statusFromReviewReasons } from "@/lib/status";
-import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateResearchCostUsd, roundUsd } from "@/lib/telemetry/costs";
+import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateGenerationCost, estimateResearchCostUsd, roundUsd } from "@/lib/telemetry/costs";
 import { pricingForModel } from "@/lib/telemetry/pricing";
 import { exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
+import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/project/profile";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
@@ -460,6 +461,18 @@ export class QueueRunner {
     const inputTokens = generation.inputTokens ?? 0;
     const outputTokens = generation.outputTokens ?? 0;
     const findingsExtracted = research.usefulFacts.length + research.rejectedFacts.length + research.questionsFound.length + research.headingsFound.length;
+    const telemetryQuality = calculateTelemetryQuality({
+      targetAchievementPercent: planningDiagnostics.targetAchievementPercent,
+      plannedH2Count: planningDiagnostics.plannedH2Count,
+      actualH2Count: planningDiagnostics.actualH2Count,
+      plannedH3Count: planningDiagnostics.plannedH3Count,
+      actualH3Count: planningDiagnostics.actualH3Count,
+      actualBreadthCoveragePercent: planningDiagnostics.actualBreadthCoveragePercent,
+      plannerOutcome: planningDiagnostics.plannerOutcome,
+      breadthStatus: planningDiagnostics.breadthStatus,
+      researchConceptCount: planningDiagnostics.researchConceptCount,
+      sourcesAccepted: research.sources.length
+    });
     const telemetry: GenerationTelemetryDocument = {
       projectId: job.projectId,
       articleId: job.articleId,
@@ -488,12 +501,15 @@ export class QueueRunner {
       actualBreadthCoverage: planningDiagnostics.actualBreadthCoverage,
       actualBreadthCoveragePercent: planningDiagnostics.actualBreadthCoveragePercent,
       breadthStatus: planningDiagnostics.breadthStatus,
+      qualityScore: telemetryQuality.qualityScore,
+      qualityBand: telemetryQuality.qualityBand,
       finishReason: generation.finishReason ?? null,
       reviewStatus: article.status,
       profileVersion: article.profileSnapshot?.profileVersion ?? 0,
       region: article.profileSnapshot?.region ?? null,
       industry: article.profileSnapshot?.industry ?? null,
       audience: article.profileSnapshot?.audience ?? null,
+      profileKey: article.profileSnapshot?.profileKey ?? null,
       profileRelevanceScore: article.profileRelevanceScore ?? null,
       regionAwarenessActive: article.profileSnapshot?.regionAwarenessActive ?? false,
       industryAwarenessActive: article.profileSnapshot?.industryAwarenessActive ?? false,
@@ -512,6 +528,7 @@ export class QueueRunner {
       generationTokens: costTelemetry.totalTokens,
       estimatedAiCostUsd: aiCost,
       estimatedGenerationCostUsd: aiCost,
+      generationCostPricingSource: costTelemetry.generationCostPricingSource,
       exaSearchCalls: costTelemetry.exaSearchRequests,
       exaContentCalls: costTelemetry.exaContentPages,
       exaSearchRequests: costTelemetry.exaSearchRequests,
@@ -651,7 +668,12 @@ function buildArticleCostTelemetry(
   const estimatedExaSearchCost = research.estimatedExaSearchCostUsd ?? estimatedExaSearchCostUsd(exaSearchRequests);
   const estimatedExaContentCost = research.estimatedExaContentCostUsd ?? estimatedExaContentCostUsd(exaContentPages);
   const estimatedResearchCost = research.estimatedResearchCostUsd ?? estimateResearchCostUsd(exaSearchRequests, exaContentPages);
-  const estimatedGenerationCost = generation.estimatedAiCostUsd ?? 0;
+  const calculatedGenerationCost = estimateGenerationCost(inputTokens, outputTokens, generationModel, generationProvider);
+  const suppliedGenerationCost = generation.estimatedAiCostUsd ?? 0;
+  const useCalculatedGenerationCost = suppliedGenerationCost <= 0 && inputTokens + outputTokens > 0 && calculatedGenerationCost.costUsd > 0;
+  const estimatedGenerationCost = useCalculatedGenerationCost ? calculatedGenerationCost.costUsd : suppliedGenerationCost;
+  const generationCostPricingSource = generation.generationCostPricingSource
+    ?? (useCalculatedGenerationCost ? calculatedGenerationCost.pricingSource : null);
   const estimatedTotalCost = roundUsd(estimatedResearchCost + estimatedGenerationCost);
   const wordCount = countWords(markdown);
   const researchConceptCount = planningDiagnostics.researchConceptCount ?? research.researchConceptCount ?? research.researchConcepts?.length ?? 0;
@@ -672,6 +694,7 @@ function buildArticleCostTelemetry(
     estimatedExaContentCostUsd: estimatedExaContentCost,
     estimatedResearchCostUsd: estimatedResearchCost,
     estimatedGenerationCostUsd: estimatedGenerationCost,
+    generationCostPricingSource,
     estimatedTotalCostUsd: estimatedTotalCost,
     costPerWord: wordCount ? roundUsd(estimatedTotalCost / wordCount) : 0,
     costPerResearchConcept: researchConceptCount ? roundUsd(estimatedTotalCost / researchConceptCount) : 0,

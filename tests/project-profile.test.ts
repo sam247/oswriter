@@ -1,39 +1,37 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createDefaultProjectProfile, normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
+import { audienceOptionsForIndustry, createDefaultProjectProfile, normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
 
 describe("project profile", () => {
-  it("defaults to stable v1 controlled values", () => {
+  it("defaults to stable v2 controlled values", () => {
     const profile = createDefaultProjectProfile();
 
-    assert.equal(profile.profileVersion, 1);
+    assert.equal(profile.profileVersion, 2);
     assert.equal(profile.regionKey, "global");
     assert.equal(profile.industryKey, "general");
     assert.equal(profile.audienceKey, "general_audience");
     assert.equal(profile.defaultTargetWords, 1400);
   });
 
-  it("normalizes invalid keys and supports custom industries", () => {
+  it("normalizes invalid saved combinations to the industry default", () => {
     const profile = normalizeProjectProfile({
       regionKey: "mars",
-      industryKey: "custom",
-      customIndustryLabel: "  Specialist Rail Utilities  ",
-      audienceKey: "procurement_teams",
+      industryKey: "healthcare",
+      audienceKey: "consumers",
       defaultTargetWords: 9000
     });
 
     assert.equal(profile.regionKey, "global");
-    assert.equal(profile.industryKey, "custom");
-    assert.equal(profile.industryLabel, "Specialist Rail Utilities");
-    assert.equal(profile.customIndustryLabel, "Specialist Rail Utilities");
-    assert.equal(profile.audienceKey, "procurement_teams");
+    assert.equal(profile.industryKey, "healthcare");
+    assert.equal(profile.audienceKey, "practice_managers");
+    assert.equal(profile.audienceLabel, "Practice Managers");
     assert.equal(profile.defaultTargetWords, 5000);
   });
 
   it("creates immutable generation snapshots with awareness flags", () => {
     const snapshot = snapshotProjectProfile(normalizeProjectProfile({
       regionKey: "united_kingdom",
-      industryKey: "utilities",
+      industryKey: "construction",
       audienceKey: "procurement_teams",
       defaultTargetWords: 2500
     }));
@@ -48,14 +46,25 @@ describe("project profile", () => {
       industryAwarenessActive: snapshot.industryAwarenessActive,
       audienceAwarenessActive: snapshot.audienceAwarenessActive
     }, {
-      profileVersion: 1,
+      profileVersion: 2,
       region: "united_kingdom",
-      industry: "utilities",
+      industry: "construction",
       audience: "procurement_teams",
       targetWords: 2500,
       regionAwarenessActive: true,
       industryAwarenessActive: true,
       audienceAwarenessActive: true
     });
+    assert.equal(snapshot.profileKey, "construction_procurement_teams");
+  });
+
+  it("returns only audiences allowed for the selected industry", () => {
+    assert.deepEqual(audienceOptionsForIndustry("saas").map((option) => option.key), [
+      "developers",
+      "engineering_managers",
+      "product_managers",
+      "ctos",
+      "technical_decision_makers"
+    ]);
   });
 });

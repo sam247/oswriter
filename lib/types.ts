@@ -33,6 +33,7 @@ export interface ProjectProfileSnapshot {
   industryLabel: string;
   audience: string;
   audienceLabel: string;
+  profileKey: string;
   targetWords: number;
   regionAwarenessActive: boolean;
   industryAwarenessActive: boolean;
@@ -347,6 +348,7 @@ export interface ModelGenerationResult {
   totalTokens?: number;
   finishReason?: string | null;
   estimatedAiCostUsd?: number;
+  generationCostPricingSource?: string | null;
 }
 
 export interface ArticleCostTelemetry {
@@ -361,6 +363,7 @@ export interface ArticleCostTelemetry {
   estimatedExaContentCostUsd: number;
   estimatedResearchCostUsd: number;
   estimatedGenerationCostUsd: number;
+  generationCostPricingSource: string | null;
   estimatedTotalCostUsd: number;
   costPerWord: number;
   costPerResearchConcept: number;
@@ -400,12 +403,15 @@ export interface GenerationTelemetryDocument {
   actualBreadthCoverage?: number;
   actualBreadthCoveragePercent?: number;
   breadthStatus?: import("@/lib/generation/plan").BreadthStatus | string | null;
+  qualityScore?: number;
+  qualityBand?: import("@/lib/telemetry/quality").QualityBand;
   finishReason?: string | null;
   reviewStatus: JobStatus;
   profileVersion?: number | null;
   region?: string | null;
   industry?: string | null;
   audience?: string | null;
+  profileKey?: string | null;
   profileRelevanceScore?: number | null;
   regionAwarenessActive?: boolean;
   industryAwarenessActive?: boolean;
@@ -424,6 +430,7 @@ export interface GenerationTelemetryDocument {
   generationTokens: number;
   estimatedAiCostUsd: number;
   estimatedGenerationCostUsd?: number;
+  generationCostPricingSource?: string | null;
   exaSearchCalls: number;
   exaContentCalls: number;
   exaSearchRequests?: number;

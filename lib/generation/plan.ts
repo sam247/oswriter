@@ -1,4 +1,4 @@
-import { clampTargetWords } from "@/lib/project/profile";
+import { clampTargetWords, planningPrioritiesForProfile } from "@/lib/project/profile";
 import type { ContentControls, ProjectProfileSnapshot, ResearchPack } from "@/lib/types";
 
 const MIN_OUTPUT_TOKENS = 3200;
@@ -16,6 +16,7 @@ export interface ArticleGenerationPlan {
   expectedDepth: ExpectedDepth;
   wordsPerSection: number;
   maxOutputTokens: number;
+  planningPriorities: string[];
 }
 
 export interface PlanningDiagnostics {
@@ -51,7 +52,8 @@ export function buildArticleGenerationPlan(controls: ContentControls, profileSna
     h3SectionCount,
     expectedDepth,
     wordsPerSection: Math.max(120, Math.round(targetWords / h2SectionCount)),
-    maxOutputTokens: clamp(Math.ceil(targetWords * 2), MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS)
+    maxOutputTokens: clamp(Math.ceil(targetWords * 2), MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS),
+    planningPriorities: planningPrioritiesForProfile(profileSnapshot)
   };
 }
 
@@ -89,9 +91,9 @@ export function buildPlanningDiagnostics(plan: ArticleGenerationPlan, markdown: 
 }
 
 function sectionDensityForAudience(audience?: string | null) {
-  if (audience === "technical_professionals" || audience === "developers" || audience === "procurement_teams") return 320;
-  if (audience === "consumers" || audience === "general_audience") return 420;
-  if (audience === "executives" || audience === "business_owners") return 390;
+  if (["developers", "engineering_managers", "procurement_teams", "project_managers", "site_managers", "security_managers"].includes(audience ?? "")) return 320;
+  if (audience === "general_audience") return 420;
+  if (["ctos", "cisos", "business_leaders", "business_owners", "healthcare_leaders"].includes(audience ?? "")) return 390;
   return 350;
 }
 
@@ -99,11 +101,11 @@ function expectedDepthForProfile(profileSnapshot: ProjectProfileSnapshot | null 
   const audience = profileSnapshot?.audience;
   const industry = profileSnapshot?.industry;
   if (targetWords >= 4000) return "reference";
-  if (audience === "technical_professionals" || audience === "developers") return targetWords >= 3000 ? "reference" : "deep";
+  if (["developers", "engineering_managers", "security_managers"].includes(audience ?? "")) return targetWords >= 3000 ? "reference" : "deep";
   if (audience === "procurement_teams") return "deep";
-  if (industry === "compliance" || industry === "legal" || industry === "utilities" || industry === "healthcare" || industry === "finance") return "deep";
-  if (audience === "executives" || audience === "business_owners") return "standard";
-  if (audience === "consumers" || audience === "general_audience") return targetWords <= 1200 ? "light" : "standard";
+  if (industry === "cyber_security" || industry === "healthcare" || industry === "finance") return "deep";
+  if (["ctos", "cisos", "business_leaders", "business_owners", "healthcare_leaders"].includes(audience ?? "")) return "standard";
+  if (audience === "general_audience") return targetWords <= 1200 ? "light" : "standard";
   return targetWords <= 1000 ? "light" : "standard";
 }
 

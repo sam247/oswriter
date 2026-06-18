@@ -1,6 +1,9 @@
 import { createSign } from "node:crypto";
+import { calculateArticleScores } from "@/lib/scoring/article-scores";
 import type { WorkspaceStore } from "@/lib/storage/storage";
+import { buildDailySummaryRows, DAILY_SUMMARY_HEADERS, type DailySummaryContext } from "@/lib/telemetry/daily-summary";
 import type { ArticleDocument, GenerationTelemetryDocument, ProjectDocument, TelemetryExportStatusDocument } from "@/lib/types";
+import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 
 export const TELEMETRY_SPREADSHEET_ID = "1G0wbTt7xPoobZZncWZ1K-Y9EP2CjvmOrKP3WZvtAC3o";
 
@@ -12,6 +15,7 @@ export const TELEMETRY_SHEETS = {
 
 export interface SheetsAppendClient {
   appendRow(sheetName: string, row: TelemetryCell[]): Promise<void>;
+  replaceRows?(sheetName: string, rows: TelemetryCell[][]): Promise<void>;
 }
 
 export type TelemetryCell = string | number;
@@ -30,7 +34,7 @@ export async function exportArticleTelemetry(store: WorkspaceStore, telemetry: G
   ]);
   const context = { telemetry, article, project };
 
-  await exportOnce(store, client, {
+  const articleExport = await exportOnce(store, client, {
     id: exportId("article", telemetry.projectId, telemetry.articleId),
     exportType: "article",
     projectId: telemetry.projectId,
@@ -59,26 +63,52 @@ export async function exportArticleTelemetry(store: WorkspaceStore, telemetry: G
       ]
     });
   }
+
+  if (articleExport.status === "exported") {
+    await exportDailyTelemetrySummaries(store, client);
+  }
 }
 
 export async function exportDailyTelemetrySummary(store: WorkspaceStore, date = previousUtcDate(), client = createGoogleSheetsAppendClient()) {
-  const projects = await store.listProjects();
-  const recordsByProject = await Promise.all(projects.map(async (project) => ({
-    project,
-    telemetry: await store.listGenerationTelemetry(project.id)
-  })));
-  const records = recordsByProject.flatMap(({ telemetry }) => telemetry).filter((item) => dateOnly(item.updatedAt) === date);
-  const articles = await Promise.all(records.map((item) => store.getArticle(item.articleId, item.projectId)));
-  const row = buildDailySummaryRow(date, records, articles);
-  await exportOnce(store, client, {
-    id: exportId("daily_summary", date),
-    exportType: "daily_summary",
-    projectId: null,
-    articleId: null,
-    exportKey: date,
-    targetSheet: TELEMETRY_SHEETS.dailySummary,
-    row
-  });
+  await exportDailyTelemetrySummaries(store, client, date);
+}
+
+export async function exportDailyTelemetrySummaries(store: WorkspaceStore, client = createGoogleSheetsAppendClient(), requiredDate?: string) {
+  const contexts = await loadDailySummaryContexts(store);
+  const rows = buildDailySummaryRows(contexts);
+  if (requiredDate && !rows.some((row) => row[0] === requiredDate)) {
+    rows.push(buildDailySummaryRow(requiredDate, [], []));
+    rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  }
+
+  if (client.replaceRows) {
+    await client.replaceRows(TELEMETRY_SHEETS.dailySummary, [Array.from(DAILY_SUMMARY_HEADERS), ...rows]);
+  } else {
+    const row = rows.find((item) => item[0] === (requiredDate ?? previousUtcDate()));
+    if (row) await client.appendRow(TELEMETRY_SHEETS.dailySummary, row);
+  }
+
+  const now = new Date().toISOString();
+  for (const row of rows) {
+    const date = String(row[0]);
+    const existing = await store.getTelemetryExportStatus(exportId("daily_summary", date));
+    await store.saveTelemetryExportStatus({
+      id: exportId("daily_summary", date),
+      organisationId: existing?.organisationId,
+      exportType: "daily_summary",
+      projectId: null,
+      articleId: null,
+      exportKey: date,
+      targetSheet: TELEMETRY_SHEETS.dailySummary,
+      status: "exported",
+      attempts: (existing?.attempts ?? 0) + 1,
+      lastError: null,
+      exportedAt: now,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now
+    });
+  }
+  return rows;
 }
 
 export async function retryFailedTelemetryExports(store: WorkspaceStore, client = createGoogleSheetsAppendClient()) {
@@ -120,6 +150,7 @@ export async function retryFailedTelemetryExports(store: WorkspaceStore, client 
 }
 
 export function buildArticleTelemetryRow({ telemetry, article, project }: ArticleTelemetryContext): TelemetryCell[] {
+  const quality = calculateTelemetryQuality(telemetry);
   return [
     dateOnly(telemetry.updatedAt),
     project?.name ?? telemetry.projectId,
@@ -149,7 +180,7 @@ export function buildArticleTelemetryRow({ telemetry, article, project }: Articl
     telemetry.breadthStatus ?? article?.planningDiagnostics?.breadthStatus ?? "",
     telemetry.plannedSections,
     telemetry.actualSections,
-    article?.qualityScore ?? "",
+    telemetry.qualityScore ?? quality.qualityScore,
     researchScore(article),
     telemetry.profileRelevanceScore ?? article?.profileRelevanceScore ?? article?.validation.profileRelevanceScore ?? "",
     telemetry.sourcesAccepted,
@@ -173,31 +204,17 @@ export function buildArticleTelemetryRow({ telemetry, article, project }: Articl
     telemetry.totalDurationMs ?? "",
     money(telemetry.costPerWord ?? 0),
     money(telemetry.costPerResearchConcept ?? 0),
-    money(telemetry.costPerSource ?? 0)
+    money(telemetry.costPerSource ?? 0),
+    evidenceScore(article),
+    telemetry.profileKey ?? article?.profileSnapshot?.profileKey ?? "",
+    telemetry.generationCostPricingSource ?? "",
+    telemetry.qualityBand ?? quality.qualityBand
   ];
 }
 
 export function buildDailySummaryRow(date: string, records: GenerationTelemetryDocument[], articles: Array<ArticleDocument | null>): TelemetryCell[] {
-  const articlesGenerated = records.length;
-  const wordsGenerated = sum(records.map((item) => item.actualWords));
-  const qualityScores = articles.map((article) => article?.qualityScore).filter(isNumber);
-  const researchScores = articles.map(researchScore).filter(isNumber);
-  const totalCost = sum(records.map((item) => item.totalCostUsd));
-  const averageWordsPerArticle = articlesGenerated ? wordsGenerated / articlesGenerated : 0;
-  return [
-    date,
-    articlesGenerated,
-    wordsGenerated,
-    rounded(averageWordsPerArticle),
-    rounded(average(qualityScores)),
-    rounded(average(researchScores)),
-    sum(records.map((item) => item.sourcesDiscovered)),
-    sum(records.map((item) => item.findingsExtracted)),
-    money(totalCost),
-    money(articlesGenerated ? totalCost / articlesGenerated : 0),
-    money(wordsGenerated ? totalCost / (wordsGenerated / 1000) : 0),
-    rounded(average(records.map((item) => item.generationDurationMs).filter(isNumber)))
-  ];
+  const contexts = records.map((telemetry, index): DailySummaryContext => ({ telemetry, article: articles[index] ?? null, project: null }));
+  return buildDailySummaryRows(contexts).find((row) => row[0] === date) ?? emptyDailySummaryRow(date);
 }
 
 export function evaluateAnomalies(
@@ -218,8 +235,9 @@ export function evaluateAnomalies(
     anomalies.push({ issueType: "Low Research Score", expectedValue: ">= 70", actualValue: String(currentResearchScore) });
   }
 
-  if (isNumber(article?.qualityScore) && article.qualityScore < 70) {
-    anomalies.push({ issueType: "Low Quality Score", expectedValue: ">= 70", actualValue: String(article.qualityScore) });
+  const telemetryQuality = telemetry.qualityScore ?? calculateTelemetryQuality(telemetry).qualityScore;
+  if (telemetryQuality < 70) {
+    anomalies.push({ issueType: "Low Quality Score", expectedValue: ">= 70", actualValue: String(telemetryQuality) });
   }
 
   const costBaseline = rollingAverage(projectHistory, telemetry.articleId, (item) => item.totalCostUsd);
@@ -252,7 +270,7 @@ export function createGoogleSheetsAppendClient(): SheetsAppendClient {
     async appendRow(sheetName, row) {
       const spreadsheetId = process.env.WRITER_OS_TELEMETRY_SHEET_ID ?? process.env.GOOGLE_TELEMETRY_SHEET_ID ?? TELEMETRY_SPREADSHEET_ID;
       const token = await getGoogleAccessToken();
-      const range = encodeURIComponent(`${sheetName}!A:BA`);
+      const range = encodeURIComponent(`${sheetName}!A:BD`);
       const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
         method: "POST",
         headers: {
@@ -265,8 +283,94 @@ export function createGoogleSheetsAppendClient(): SheetsAppendClient {
         const body = await response.text().catch(() => "");
         throw new Error(`Google Sheets append failed (${response.status}): ${body.slice(0, 500)}`);
       }
+    },
+    async replaceRows(sheetName, rows) {
+      const spreadsheetId = telemetrySpreadsheetId();
+      const token = await getGoogleAccessToken();
+      await ensureSheetSize(spreadsheetId, token, sheetName, rows[0]?.length ?? 1);
+      const lastColumn = columnLetter(rows[0]?.length ?? 1);
+      const range = encodeURIComponent(`${sheetName}!A:${lastColumn}`);
+      const clearResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:clear`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}"
+      });
+      if (!clearResponse.ok) {
+        const body = await clearResponse.text().catch(() => "");
+        throw new Error(`Google Sheets clear failed (${clearResponse.status}): ${body.slice(0, 500)}`);
+      }
+      const updateRange = encodeURIComponent(`${sheetName}!A1`);
+      const updateResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${updateRange}?valueInputOption=USER_ENTERED`, {
+        method: "PUT",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ values: rows })
+      });
+      if (!updateResponse.ok) {
+        const body = await updateResponse.text().catch(() => "");
+        throw new Error(`Google Sheets update failed (${updateResponse.status}): ${body.slice(0, 500)}`);
+      }
     }
   };
+}
+
+async function loadDailySummaryContexts(store: WorkspaceStore): Promise<DailySummaryContext[]> {
+  const projects = await store.listProjects();
+  const groups = await Promise.all(projects.map(async (project) => {
+    const records = await store.listGenerationTelemetry(project.id);
+    return Promise.all(records.map(async (telemetry) => ({
+      telemetry,
+      article: await store.getArticle(telemetry.articleId, telemetry.projectId),
+      project
+    })));
+  }));
+  return groups.flat();
+}
+
+async function ensureSheetSize(spreadsheetId: string, token: string, sheetName: string, columnCount: number) {
+  const metadataResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  if (!metadataResponse.ok) throw new Error(`Google Sheets metadata failed (${metadataResponse.status}).`);
+  const metadata = await metadataResponse.json() as {
+    sheets?: Array<{ properties?: { sheetId?: number; title?: string; gridProperties?: { columnCount?: number } } }>;
+  };
+  const sheet = metadata.sheets?.find((item) => item.properties?.title === sheetName)?.properties;
+  const requests: Array<Record<string, unknown>> = [];
+  if (!sheet?.sheetId && sheet?.sheetId !== 0) {
+    requests.push({ addSheet: { properties: { title: sheetName, gridProperties: { columnCount: Math.max(columnCount, 26), rowCount: 1000 } } } });
+  } else if ((sheet.gridProperties?.columnCount ?? 0) < columnCount) {
+    requests.push({
+      updateSheetProperties: {
+        properties: { sheetId: sheet.sheetId, gridProperties: { columnCount } },
+        fields: "gridProperties.columnCount"
+      }
+    });
+  }
+  if (!requests.length) return;
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ requests })
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Google Sheets resize failed (${response.status}): ${body.slice(0, 500)}`);
+  }
+}
+
+function telemetrySpreadsheetId() {
+  return process.env.WRITER_OS_TELEMETRY_SHEET_ID ?? process.env.GOOGLE_TELEMETRY_SHEET_ID ?? TELEMETRY_SPREADSHEET_ID;
+}
+
+function columnLetter(columnCount: number) {
+  let value = Math.max(1, columnCount);
+  let result = "";
+  while (value > 0) {
+    value -= 1;
+    result = String.fromCharCode(65 + value % 26) + result;
+    value = Math.floor(value / 26);
+  }
+  return result;
 }
 
 async function exportOnce(
@@ -370,6 +474,14 @@ function base64Url(value: string | Buffer) {
 function researchScore(article: ArticleDocument | null) {
   const score = article?.validation.sectionScores.research;
   return isNumber(score) ? score : "";
+}
+
+function evidenceScore(article: ArticleDocument | null) {
+  return article ? calculateArticleScores(article).evidence.score : "";
+}
+
+function emptyDailySummaryRow(date: string): TelemetryCell[] {
+  return [date, ...Array.from({ length: DAILY_SUMMARY_HEADERS.length - 1 }, () => 0)];
 }
 
 function rollingAverage(records: GenerationTelemetryDocument[], articleId: string, select: (record: GenerationTelemetryDocument) => number | null) {
