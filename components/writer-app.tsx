@@ -13,6 +13,7 @@ import { averageArticleScores, calculateArticleScores, type ArticleScore, type A
 import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
+import { getSourceDisplayDomain, getSourceDisplayTitle } from "@/lib/ui/source-display";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
@@ -3506,9 +3507,9 @@ function SourceList({ sources, rejected = false }: { sources: ResearchSource[]; 
           <div className="flex items-start gap-2.5">
             <SourceFavicon url={source.url || source.domain} className="mt-0.5" />
             <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] font-medium leading-snug text-ink">{source.title}</div>
-              <a className="mono mt-1 flex items-center gap-1 truncate text-[10.5px] font-medium text-ink-muted hover:text-ink" href={source.url} target="_blank" rel="noreferrer">
-                <ExternalLink className="size-2.5 shrink-0" /> {source.domain || source.url}
+              <div className="text-[12.5px] font-medium leading-snug text-ink">{getSourceDisplayTitle(source.title, source.url, source.domain)}</div>
+              <a className="mono mt-1 flex items-center gap-1 truncate text-[11px] font-semibold text-ink-muted hover:text-ink" href={source.url} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-2.5 shrink-0" /> {getSourceDisplayDomain(source.url, source.domain) || "Open source"}
               </a>
               <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-subtle">
                 <span>Source <span className="text-ink-muted">{source.authorityScore}</span></span>
