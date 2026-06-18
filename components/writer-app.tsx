@@ -5,6 +5,7 @@ import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { UsageIndicator } from "@/components/usage/UsageIndicator";
 import { SeoDecisionPanel } from "@/components/seo/SeoDecisionPanel";
 import { KnowledgeBaseSettings } from "@/components/project/KnowledgeBaseSettings";
+import { SourceFavicon } from "@/components/research/SourceFavicon";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
@@ -3500,13 +3501,13 @@ function SourceList({ sources, rejected = false }: { sources: ResearchSource[]; 
   if (!sources.length) return <Empty text="No sources recorded." />;
   return (
     <ul className="divide-y divide-line/70">
-      {sources.map((source, index) => (
-        <li key={source.url} className="group px-1 py-2">
-          <div className="flex items-start gap-2">
-            <span className="mono mt-0.5 w-6 shrink-0 text-[10px] text-ink-subtle">#{index + 1}</span>
+      {sources.map((source) => (
+        <li key={source.url} className="group px-1 py-3">
+          <div className="flex items-start gap-2.5">
+            <SourceFavicon url={source.url || source.domain} className="mt-0.5" />
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] font-medium leading-snug text-ink">{source.title}</div>
-              <a className="mono mt-0.5 flex items-center gap-1 truncate text-[10.5px] text-ink-subtle hover:text-ink-muted" href={source.url} target="_blank" rel="noreferrer">
+              <a className="mono mt-1 flex items-center gap-1 truncate text-[10.5px] font-medium text-ink-muted hover:text-ink" href={source.url} target="_blank" rel="noreferrer">
                 <ExternalLink className="size-2.5 shrink-0" /> {source.domain || source.url}
               </a>
               <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-subtle">
