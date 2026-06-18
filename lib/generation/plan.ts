@@ -1,5 +1,6 @@
 import { clampTargetWords, planningPrioritiesForProfile } from "@/lib/project/profile";
-import type { ContentControls, ProjectProfileSnapshot, ResearchPack } from "@/lib/types";
+import { knowledgeBasePlanningPriorities, projectKnowledgeContextLines } from "@/lib/project/knowledge-base";
+import type { ContentControls, ProjectKnowledgeBase, ProjectProfileSnapshot, ResearchPack } from "@/lib/types";
 
 const MIN_OUTPUT_TOKENS = 3200;
 const MAX_OUTPUT_TOKENS = 8000;
@@ -17,6 +18,7 @@ export interface ArticleGenerationPlan {
   wordsPerSection: number;
   maxOutputTokens: number;
   planningPriorities: string[];
+  knowledgeContext?: string[];
 }
 
 export interface PlanningDiagnostics {
@@ -38,12 +40,13 @@ export interface PlanningDiagnostics {
   breadthStatus: BreadthStatus;
 }
 
-export function buildArticleGenerationPlan(controls: ContentControls, profileSnapshot?: ProjectProfileSnapshot | null): ArticleGenerationPlan {
+export function buildArticleGenerationPlan(controls: ContentControls, profileSnapshot?: ProjectProfileSnapshot | null, knowledgeBase?: ProjectKnowledgeBase | null): ArticleGenerationPlan {
   const targetWords = clampTargetWords(profileSnapshot?.targetWords ?? controls.lengthTargetWords);
   const density = sectionDensityForAudience(profileSnapshot?.audience);
   const h2SectionCount = clamp(Math.round(targetWords / density), 4, 12);
   const expectedDepth = expectedDepthForProfile(profileSnapshot, targetWords);
   const h3SectionCount = plannedH3CountForDepth(h2SectionCount, expectedDepth);
+  const knowledgeContext = projectKnowledgeContextLines(knowledgeBase);
   return {
     targetWords,
     minimumWords: Math.round(targetWords * 0.8),
@@ -53,7 +56,8 @@ export function buildArticleGenerationPlan(controls: ContentControls, profileSna
     expectedDepth,
     wordsPerSection: Math.max(120, Math.round(targetWords / h2SectionCount)),
     maxOutputTokens: clamp(Math.ceil(targetWords * 2), MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS),
-    planningPriorities: planningPrioritiesForProfile(profileSnapshot)
+    planningPriorities: [...planningPrioritiesForProfile(profileSnapshot), ...knowledgeBasePlanningPriorities(knowledgeBase)],
+    ...(knowledgeContext.length ? { knowledgeContext } : {})
   };
 }
 

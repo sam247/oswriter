@@ -1,6 +1,7 @@
 import type { ArticleDocument, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, ResearchPack, SettingsDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { normalizeProjectProfile } from "@/lib/project/profile";
+import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
@@ -88,7 +89,8 @@ export class WorkspaceStore {
   async saveProject(project: ProjectDocument) {
     await this.storage.putJson(workspacePath(project.id), {
       ...project,
-      profile: normalizeProjectProfile(project.profile)
+      profile: normalizeProjectProfile(project.profile),
+      knowledgeBase: normalizeProjectKnowledgeBase(project.knowledgeBase)
     });
   }
 

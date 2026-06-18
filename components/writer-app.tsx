@@ -3,11 +3,13 @@
 import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Pin, Play, RotateCw, Search, Settings, SkipForward, Sparkles, Trash2, Unlink, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { UsageIndicator } from "@/components/usage/UsageIndicator";
+import { SeoDecisionPanel } from "@/components/seo/SeoDecisionPanel";
+import { KnowledgeBaseSettings } from "@/components/project/KnowledgeBaseSettings";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { averageArticleScores, calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 
@@ -577,6 +579,40 @@ function Workbench() {
       }, "project-profile");
     } else {
       setMessage(data.error ?? "Project settings save failed.");
+      await refresh();
+    }
+  }
+
+  async function updateProjectKnowledgeBase(knowledgeBase: ProjectKnowledgeBase, projectId = state?.project.id) {
+    if (!state) return;
+    const targetProjectId = projectId ?? state.project.id;
+    const targetProject = projects.find((project) => project.id === targetProjectId) ?? state.project;
+    const isActiveProject = targetProjectId === state.project.id;
+    if (isActiveProject && settingsBlockedReason) {
+      setMessage(settingsBlockedReason);
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    setState((current) => current ? {
+      ...current,
+      project: current.project.id === targetProjectId ? { ...current.project, knowledgeBase, updatedAt } : current.project,
+      projects: (current.projects ?? []).map((project) => project.id === targetProjectId ? { ...project, knowledgeBase, updatedAt } : project)
+    } : current);
+    const res = await fetch("/api/project", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: targetProjectId, knowledgeBase })
+    });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string };
+    if (res.ok && data.state) {
+      setMessage("Knowledge base saved.");
+      applyServerState({
+        ...data.state,
+        projects: (data.state.projects ?? []).map((project) => data.project && project.id === data.project.id ? data.project : project),
+        project: data.project && data.state.project.id === data.project.id ? data.project : data.state.project
+      }, "project-knowledge-base");
+    } else {
+      setMessage(data.error ?? "Knowledge base save failed.");
       await refresh();
     }
   }
@@ -1231,6 +1267,7 @@ function Workbench() {
               settingsBlockedReason={projectSettingsProject.id === state.project.id ? settingsBlockedReason : null}
               onClose={() => setProjectSettingsProjectId(null)}
               onUpdateProjectProfile={(patch) => updateProjectProfile(patch, projectSettingsProject.id)}
+              onUpdateKnowledgeBase={(knowledgeBase) => updateProjectKnowledgeBase(knowledgeBase, projectSettingsProject.id)}
             />
           ) : settingsOpen && state ? (
             <SettingsPanel
@@ -1712,13 +1749,15 @@ function ProjectSettingsPanel({
   fallbackTargetWords,
   settingsBlockedReason,
   onClose,
-  onUpdateProjectProfile
+  onUpdateProjectProfile,
+  onUpdateKnowledgeBase
 }: {
   project: ProjectDocument;
   fallbackTargetWords: number;
   settingsBlockedReason: string | null;
   onClose: () => void;
   onUpdateProjectProfile: (patch: ProjectProfilePatch) => void;
+  onUpdateKnowledgeBase: (knowledgeBase: ProjectKnowledgeBase) => void;
 }) {
   const profile = normalizeProjectProfile(project.profile, fallbackTargetWords);
   return (
@@ -1765,6 +1804,11 @@ function ProjectSettingsPanel({
             </label>
             {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
           </SettingsSection>
+          <KnowledgeBaseSettings
+            knowledgeBase={project.knowledgeBase}
+            disabledReason={settingsBlockedReason}
+            onSave={onUpdateKnowledgeBase}
+          />
         </div>
       </div>
     </div>
@@ -3271,7 +3315,16 @@ function Inspector({
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
-      {tab === "seo" && (article ? <SeoPanel article={article} markdown={markdown} onApplyMarkdown={onApplyMarkdown} /> : <Empty text="No article available for SEO checks." />)}
+      {tab === "seo" && (article ? (
+        <SeoDecisionPanel
+          key={article.id}
+          article={article}
+          markdown={markdown}
+          research={details.research}
+          profile={state ? normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords) : null}
+          onApplyMarkdown={onApplyMarkdown}
+        />
+      ) : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
   );
@@ -3721,199 +3774,6 @@ function ValidationPanel({
       </div>
     </div>
   );
-}
-
-function SeoPanel({ article, markdown, onApplyMarkdown }: { article: ArticleDocument; markdown: string; onApplyMarkdown: (markdown: string) => void }) {
-  const [preview, setPreview] = useState<{ title: string; markdown: string } | null>(null);
-  const recommendations = buildSeoRecommendations(article, markdown);
-  const headings = (markdown.match(/^## /gm) ?? []).length;
-  const faqs = (markdown.match(/^### .*\?/gm) ?? []).length;
-  return (
-    <div className="space-y-4">
-      <MetricGrid items={[["Words", countWordsLocal(markdown)], ["H2s", headings], ["FAQs", faqs], ["Sources", article.sources.length]]} />
-      <SectionTitle title="Recommendations" />
-      <div className="space-y-2">
-        {recommendations.map((item) => (
-          <div key={item.title} className="rounded-md border border-line bg-surface-1 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[13px] font-semibold text-ink">{item.title}</div>
-                <p className="mt-1 text-[11.5px] leading-snug text-ink-muted">{item.why}</p>
-                <div className="mono mt-2 text-[10.5px] text-ink-subtle">Impact: {item.impact}</div>
-              </div>
-              <button onClick={() => setPreview({ title: item.title, markdown: item.apply(markdown, article) })} className="shrink-0 rounded-md border border-line bg-background px-2 py-1 text-[11px] font-medium text-ink hover:bg-surface-3">
-                {item.action}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-      {preview && (
-        <div className="rounded-md border border-line bg-surface-1 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <PanelTitle title={preview.title} />
-            <div className="flex gap-1">
-              <button onClick={() => setPreview(null)} className="rounded px-2 py-1 text-[11px] text-ink-muted hover:bg-surface-3">Reject</button>
-              <button
-                onClick={() => {
-                  onApplyMarkdown(preview.markdown);
-                  setPreview(null);
-                }}
-                className="rounded bg-ink px-2 py-1 text-[11px] font-medium text-white"
-              >
-                Accept
-              </button>
-            </div>
-          </div>
-          <pre className="mono mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background p-3 text-[11px] leading-relaxed text-ink-muted">{preview.markdown}</pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
-type SeoRecommendation = {
-  title: string;
-  why: string;
-  impact: string;
-  action: string;
-  apply: (markdown: string, article: ArticleDocument) => string;
-};
-
-function buildSeoRecommendations(article: ArticleDocument, markdown: string): SeoRecommendation[] {
-  const h2s = [...markdown.matchAll(/^##\s+(.+)$/gm)].map((match) => match[1]);
-  const hasFaq = /^##\s+FAQ\b/im.test(markdown);
-  const hasLinks = /\[[^\]]+\]\([^)]+\)/.test(markdown);
-  const firstParagraph = firstBodyParagraph(markdown);
-  const sourceDomains = [...new Set(article.sources.map((source) => source.domain).filter(Boolean))].slice(0, 4);
-  const titleTopic = article.title.replace(/[?:].*$/, "").trim();
-  const recommendations: SeoRecommendation[] = [];
-
-  if (!hasFaq) {
-    recommendations.push({
-      title: `Add FAQ section for ${titleTopic}`,
-      why: "The article has no FAQ block, so it misses long-tail question coverage around the topic.",
-      impact: "High",
-      action: "Preview",
-      apply: addFaqSection
-    });
-  }
-  if (firstParagraph.split(/\s+/).filter(Boolean).length < 95) {
-    recommendations.push({
-      title: "Strengthen introduction",
-      why: `The opening is concise; a stronger intro can frame ${titleTopic} and the reader problem more clearly.`,
-      impact: "Medium",
-      action: "Preview",
-      apply: strengthenIntroduction
-    });
-  }
-  if (h2s.length < 5) {
-    recommendations.push({
-      title: "Expand topic coverage",
-      why: `Only ${h2s.length} H2 sections are present. Broader coverage can improve topical completeness.`,
-      impact: "High",
-      action: "Preview",
-      apply: expandTopicCoverage
-    });
-  }
-  if (!hasLinks) {
-    recommendations.push({
-      title: "Add internal link opportunities",
-      why: "No markdown links are present. Suggested anchors make internal linking explicit before export.",
-      impact: "Medium",
-      action: "Preview",
-      apply: addInternalLinkSuggestions
-    });
-  }
-  recommendations.push({
-    title: "Increase entity coverage",
-    why: sourceDomains.length ? `Source domains such as ${sourceDomains.join(", ")} indicate entities worth reinforcing.` : "The article can make important entities and source context clearer.",
-    impact: "Medium",
-    action: "Preview",
-    apply: increaseEntityCoverage
-  });
-  recommendations.push({
-    title: "Add statistics and examples",
-    why: `${article.sources.length} sources are available; a short examples section can turn evidence into more concrete reader value.`,
-    impact: "Medium",
-    action: "Preview",
-    apply: addStatisticsExamples
-  });
-
-  return recommendations.slice(0, 6);
-}
-
-function addFaqSection(markdown: string, article: ArticleDocument) {
-  if (/^##\s+FAQ\b/im.test(markdown)) return markdown;
-  const topic = article.title.replace(/\?$/, "");
-  return `${markdown.trim()}
-
-## FAQ
-
-### What is the main issue in ${topic}?
-The central issue is how the underlying pressures, incentives, and practical trade-offs affect the people or organisations involved.
-
-### Why does ${topic} matter now?
-It matters because readers need a clear explanation of the current situation, the evidence behind it, and the likely consequences.
-
-### What should readers look at next?
-Readers should compare the evidence, check the assumptions behind each claim, and look for examples that show how the issue plays out in practice.
-`;
-}
-
-function strengthenIntroduction(markdown: string, article: ArticleDocument) {
-  const paragraph = firstBodyParagraph(markdown);
-  if (!paragraph) return markdown;
-  const replacement = `${paragraph} This article explains the issue through the evidence, the operational pressures behind it, and the practical implications for readers trying to understand ${article.title.toLowerCase()}.`;
-  return markdown.replace(paragraph, replacement);
-}
-
-function expandTopicCoverage(markdown: string, article: ArticleDocument) {
-  return `${markdown.trim()}
-
-## What This Means In Practice
-
-For readers evaluating ${article.title}, the practical question is not only what is happening, but which forces are driving the change and which outcomes are most likely. The evidence should be read alongside the incentives of the organisations involved, the constraints they face, and the trade-offs that shape their decisions.
-`;
-}
-
-function addInternalLinkSuggestions(markdown: string, article: ArticleDocument) {
-  const anchors = article.title.split(/[:?]/)[0].split(/\s+/).filter((word) => word.length > 4).slice(0, 4);
-  return `${markdown.trim()}
-
-## Internal Link Opportunities
-
-- Link "${article.title}" to the most relevant pillar page for this topic.
-- Add a supporting link using the anchor "${anchors.join(" ").trim() || article.title}".
-- Link from related glossary, comparison, or explainer content back to this article.
-`;
-}
-
-function increaseEntityCoverage(markdown: string, article: ArticleDocument) {
-  const domains = [...new Set(article.sources.map((source) => source.domain).filter(Boolean))].slice(0, 5);
-  const entityLine = domains.length ? domains.join(", ") : "the key organisations, regulations, markets, and stakeholders involved";
-  return `${markdown.trim()}
-
-## Key Entities And Signals
-
-Important entities connected to this topic include ${entityLine}. Referencing these clearly helps readers understand where the evidence comes from and how the article connects to the wider subject area.
-`;
-}
-
-function addStatisticsExamples(markdown: string, article: ArticleDocument) {
-  return `${markdown.trim()}
-
-## Evidence, Statistics, And Examples
-
-The article draws on ${article.sources.length} sources. Where possible, add concrete figures, named examples, or before-and-after comparisons to support the main claims and make the analysis easier to verify.
-`;
-}
-
-function firstBodyParagraph(markdown: string) {
-  return markdown
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .find((block) => block && !block.startsWith("#") && !block.startsWith("- ") && !/^\d+\.\s/.test(block)) ?? "";
 }
 
 function DebugPanel({ debug }: { debug: DebugDocument | null }) {

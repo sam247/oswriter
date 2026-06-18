@@ -10,6 +10,7 @@ import { pricingForModel } from "@/lib/telemetry/pricing";
 import { exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/project/profile";
+import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 
@@ -357,7 +358,8 @@ export class QueueRunner {
       const { project, settings } = await this.store.ensureProject(job.projectId);
       const projectProfile = projectProfileFromControls(project.profile, settings.controls);
       const profileSnapshot = snapshotProjectProfile(projectProfile);
-      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot);
+      const knowledgeBase = normalizeProjectKnowledgeBase(project.knowledgeBase);
+      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, knowledgeBase);
 
       if (!stageDone(job, "research")) {
         await this.throwIfEmergencyStopped(job.projectId);
@@ -401,7 +403,7 @@ export class QueueRunner {
       await this.throwIfEmergencyStopped(job.projectId);
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot }));
+      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot, knowledgeBase }));
       await this.throwIfEmergencyStopped(job.projectId);
       const markdown = generation.markdown;
       job = {

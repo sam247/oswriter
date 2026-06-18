@@ -1,5 +1,6 @@
 import type { ContentControls, PipelineStep, ProjectDocument, QueueControlDocument, SettingsDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProjectProfile } from "@/lib/project/profile";
+import { EMPTY_PROJECT_KNOWLEDGE_BASE } from "@/lib/project/knowledge-base";
 
 export const DEFAULT_PROJECT_ID = "default";
 
@@ -22,6 +23,7 @@ export function createDefaultProject(): ProjectDocument {
     id: DEFAULT_PROJECT_ID,
     name: "Default Project",
     profile: createDefaultProjectProfile(DEFAULT_CONTROLS.lengthTargetWords),
+    knowledgeBase: EMPTY_PROJECT_KNOWLEDGE_BASE,
     createdAt: now,
     updatedAt: now
   };

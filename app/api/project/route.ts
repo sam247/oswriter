@@ -5,13 +5,14 @@ import { createRuntime } from "@/lib/server/runtime";
 import { slugId } from "@/lib/text";
 import { getQueueMutationBlocker, getSettingsMutationBlocker } from "@/lib/queue/safety";
 import { normalizeProjectProfile } from "@/lib/project/profile";
-import type { ProjectProfile } from "@/lib/types";
+import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
+import type { ProjectKnowledgeBase, ProjectProfile } from "@/lib/types";
 
 export async function PATCH(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; projectId?: string; name?: string; profile?: Partial<ProjectProfile> };
+  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; projectId?: string; name?: string; profile?: Partial<ProjectProfile>; knowledgeBase?: Partial<ProjectKnowledgeBase> };
   const { store } = createRuntime();
 
   const activeProjectId = body.activeProjectId?.trim();
@@ -24,9 +25,9 @@ export async function PATCH(req: Request) {
   }
 
   const name = body.name?.trim();
-  if (!name && !body.profile) return NextResponse.json({ error: "Project name or profile is required." }, { status: 400 });
+  if (!name && !body.profile && !body.knowledgeBase) return NextResponse.json({ error: "Project changes are required." }, { status: 400 });
   const targetProjectId = body.projectId?.trim();
-  if (body.profile) {
+  if (body.profile || body.knowledgeBase) {
     const blocker = await getSettingsMutationBlocker(store, targetProjectId);
     if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
   }
@@ -37,6 +38,7 @@ export async function PATCH(req: Request) {
     ...project,
     ...(name ? { name } : {}),
     ...(body.profile ? { profile: normalizeProjectProfile({ ...project.profile, ...body.profile }, settings.controls.lengthTargetWords) } : {}),
+    ...(body.knowledgeBase ? { knowledgeBase: normalizeProjectKnowledgeBase(body.knowledgeBase) } : {}),
     updatedAt: nowIso()
   };
   await store.saveProject(updated);

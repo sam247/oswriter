@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, SimilarTitleGenerationInput, ValidationInput, ValidationResult } from "@/lib/types";
 import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import { profileContextLines } from "@/lib/project/profile";
+import { projectKnowledgeContextLines } from "@/lib/project/knowledge-base";
 import { cleanJsonText } from "@/lib/text";
 import { estimateGenerationCost } from "@/lib/telemetry/costs";
 import { pricingForModel } from "@/lib/telemetry/pricing";
@@ -18,7 +19,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
     const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
-    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot);
+    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.knowledgeBase);
     const response = await this.client.chat.completions.create({
       model,
       messages: promptToMessages(
@@ -135,8 +136,11 @@ function normaliseBaseUrl(value: string | undefined) {
     .replace(/\/v1$/i, "");
 }
 
-function buildGenerationPrompt({ title, research, controls, profileSnapshot, plan = buildArticleGenerationPlan(controls, profileSnapshot) }: ArticleGenerationInput) {
+export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, plan = buildArticleGenerationPlan(controls, profileSnapshot, knowledgeBase) }: ArticleGenerationInput) {
   const projectContext = profileContextLines(profileSnapshot);
+  const knowledgeContext = projectKnowledgeContextLines(knowledgeBase);
+  const projectContextBlock = projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : "";
+  const knowledgeContextBlock = knowledgeContext.length ? `\nKnowledge Base (use during planning, outline construction, and writing; do not force irrelevant mentions):\n${knowledgeContext.map((line) => `- ${line}`).join("\n")}` : "";
   return `Write a practical Markdown article.
 
 Non-negotiable:
@@ -148,7 +152,7 @@ Non-negotiable:
 - Write a complete article. Do not stop mid-sentence.
 
 Title: ${title}
-${projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : ""}
+${projectContextBlock}${knowledgeContextBlock}
 Style profile: ${controls.styleProfile}
 Tone: ${controls.targetTone}
 Target length: about ${plan.targetWords} words (${plan.minimumWords}-${plan.maximumWords} acceptable)

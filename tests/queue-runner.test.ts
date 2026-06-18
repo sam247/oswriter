@@ -94,6 +94,15 @@ Short answer with a draft that intentionally has thin structure.`;
   }
 }
 
+class CapturingModel extends FakeModel {
+  input: ArticleGenerationInput | null = null;
+
+  async generateArticle(input: ArticleGenerationInput) {
+    this.input = input;
+    return super.generateArticle(input);
+  }
+}
+
 class MeteredModel implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     const markdown = await new FakeModel().generateArticle(input);
@@ -444,6 +453,31 @@ describe("QueueRunner", () => {
     assert.equal(article.costTelemetry.exaSearchRequests, 5);
     assert.equal(article.costTelemetry.exaContentPages, 25);
     assert.equal(article.planningDiagnostics.actualH3Count, 1);
+  });
+
+  it("passes the current project knowledge base through the worker generation path", async () => {
+    const model = new CapturingModel();
+    const { store, runner } = setup(new FakeSearch(), model);
+    const { project } = await store.ensureProject();
+    await store.saveProject({
+      ...project,
+      knowledgeBase: {
+        brandName: "NitNOT",
+        website: "https://nitnot.example",
+        aboutBusiness: "A specialist screening provider.",
+        services: "Head lice screening",
+        products: "",
+        targetCustomer: "Parents of children aged 4-12",
+        writingRules: "Use UK English.",
+        preferredCTA: "Book a screening appointment."
+      }
+    });
+
+    await runner.addTitles(["Head Lice Screening Guide"]);
+    await drainQueue(runner);
+
+    assert.equal(model.input?.knowledgeBase?.brandName, "NitNOT");
+    assert.ok(model.input?.plan?.knowledgeContext?.includes("Preferred CTA: Book a screening appointment."));
   });
 
   it("queues regeneration as a new lifecycle while retaining the original article", async () => {

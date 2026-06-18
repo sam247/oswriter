@@ -40,12 +40,24 @@ export interface ProjectProfileSnapshot {
   audienceAwarenessActive: boolean;
 }
 
+export interface ProjectKnowledgeBase {
+  brandName: string;
+  website: string;
+  aboutBusiness: string;
+  services: string;
+  products: string;
+  targetCustomer: string;
+  writingRules: string;
+  preferredCTA: string;
+}
+
 export interface ProjectDocument {
   id: string;
   organisationId?: string;
   name: string;
   slug?: string;
   profile?: ProjectProfile;
+  knowledgeBase?: ProjectKnowledgeBase;
   createdByUserId?: string;
   createdAt: string;
   updatedAt: string;
@@ -572,6 +584,7 @@ export interface ArticleGenerationInput {
   controls: ContentControls;
   plan?: import("@/lib/generation/plan").ArticleGenerationPlan;
   profileSnapshot?: ProjectProfileSnapshot | null;
+  knowledgeBase?: ProjectKnowledgeBase | null;
 }
 
 export interface EditorInput {
