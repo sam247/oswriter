@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { getSourceDisplayDomain, getSourceDisplayTitle } from "@/lib/ui/source-display";
+import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
 
 describe("research source display", () => {
   it("preserves a useful source title and promotes the domain separately", () => {
@@ -20,5 +20,13 @@ describe("research source display", () => {
     const title = getSourceDisplayTitle(url, url);
     assert.equal(title, "UK Legislation UKSI");
     assert.ok(!title.includes("https://"));
+  });
+
+  it("caps displayed titles at 40 characters without losing the source title", () => {
+    const title = "Designing High-Throughput Multi-Tenant SaaS on Azure";
+    const truncated = truncateSourceTitle(title);
+    assert.ok(Array.from(truncated).length <= 40);
+    assert.equal(truncated, "Designing High-Throughput Multi-Tenant…");
+    assert.equal(truncateSourceTitle("Short source title"), "Short source title");
   });
 });

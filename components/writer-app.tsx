@@ -13,7 +13,7 @@ import { averageArticleScores, calculateArticleScores, type ArticleScore, type A
 import type { AppState, ArticleDocument, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, QueueControlMode, QueueJob, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
-import { getSourceDisplayDomain, getSourceDisplayTitle } from "@/lib/ui/source-display";
+import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
@@ -3502,24 +3502,27 @@ function SourceList({ sources, rejected = false }: { sources: ResearchSource[]; 
   if (!sources.length) return <Empty text="No sources recorded." />;
   return (
     <ul className="divide-y divide-line/70">
-      {sources.map((source) => (
-        <li key={source.url} className="group px-1 py-3">
-          <div className="flex items-start gap-2.5">
-            <SourceFavicon url={source.url || source.domain} className="mt-0.5" />
-            <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] font-medium leading-snug text-ink">{getSourceDisplayTitle(source.title, source.url, source.domain)}</div>
-              <a className="mono mt-1 flex items-center gap-1 truncate text-[11px] font-semibold text-ink-muted hover:text-ink" href={source.url} target="_blank" rel="noreferrer">
-                <ExternalLink className="size-2.5 shrink-0" /> {getSourceDisplayDomain(source.url, source.domain) || "Open source"}
-              </a>
-              <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-subtle">
-                <span>Source <span className="text-ink-muted">{source.authorityScore}</span></span>
-                <span>Rel <span className="text-ink-muted">{source.relevanceScore}</span></span>
-                {rejected && <span className="text-danger">{source.rejectionReason ?? "rejected"}</span>}
+      {sources.map((source) => {
+        const fullTitle = getSourceDisplayTitle(source.title, source.url, source.domain);
+        return (
+          <li key={source.url} className="group px-1 py-3">
+            <div className="flex items-start gap-2.5">
+              <SourceFavicon url={source.url || source.domain} className="mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div title={fullTitle} className="text-[12.5px] font-medium leading-snug text-ink">{truncateSourceTitle(fullTitle)}</div>
+                <a className="mono mt-1 flex items-center gap-1 truncate text-[11px] font-semibold text-ink-muted hover:text-ink" href={source.url} target="_blank" rel="noreferrer">
+                  <ExternalLink className="size-2.5 shrink-0" /> {getSourceDisplayDomain(source.url, source.domain) || "Open source"}
+                </a>
+                <div className="mono mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-subtle">
+                  <span>Sources <span className="text-ink-muted">{source.authorityScore}</span></span>
+                  <span>Relevance <span className="text-ink-muted">{source.relevanceScore}</span></span>
+                  {rejected && <span className="text-danger">{source.rejectionReason ?? "rejected"}</span>}
+                </div>
               </div>
             </div>
-          </div>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }
