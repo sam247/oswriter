@@ -2,6 +2,7 @@
 
 import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Pin, Play, RotateCw, Search, Settings, SkipForward, Sparkles, Trash2, Unlink, Upload } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { UsageIndicator } from "@/components/usage/UsageIndicator";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
@@ -1313,9 +1314,12 @@ function Workbench() {
 
       <footer className="hairline-t mono flex h-6 items-center gap-3 bg-surface-2/70 px-3 text-[10.5px] text-ink-subtle">
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />{message}</span>
-        <button onClick={shareAccountStats} className="ml-auto rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
+        <div className="ml-auto flex items-center gap-1">
+          <UsageIndicator />
+          <button onClick={shareAccountStats} className="rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
           Words {formatNumber(accountStats.words)} · Sources {formatNumber(accountStats.sources)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
-        </button>
+          </button>
+        </div>
       </footer>
       {globalSearchOpen && (
         <GlobalSearchModal
