@@ -1,28 +1,34 @@
 "use client";
 
 import { Gauge } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { UsagePopover } from "@/components/usage/UsagePopover";
-import { getUsageSummary, usagePercentage } from "@/lib/usage/usage";
+import type { BillingSnapshot } from "@/lib/billing/types";
+import { usagePercent } from "@/lib/billing/usage";
 
 export function UsageIndicator() {
   const [open, setOpen] = useState(false);
+  const [snapshot, setSnapshot] = useState<BillingSnapshot | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const popoverId = useId();
-  const usage = useMemo(() => getUsageSummary(), []);
-  const percent = usagePercentage(usage);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/billing", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data: { snapshot?: BillingSnapshot } | null) => setSnapshot(data?.snapshot ?? null))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
-
     function onPointerDown(event: PointerEvent) {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
     }
-
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
     }
-
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
@@ -31,6 +37,7 @@ export function UsageIndicator() {
     };
   }, [open]);
 
+  const percent = snapshot ? usagePercent(snapshot.usage.words) : 0;
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -43,9 +50,9 @@ export function UsageIndicator() {
         title="View account usage"
       >
         <Gauge className="size-3" aria-hidden="true" />
-        <span>Usage {percent}%</span>
+        <span>Usage {snapshot ? `${percent}%` : "..."}</span>
       </button>
-      {open && <UsagePopover usage={usage} id={popoverId} />}
+      {open && <UsagePopover snapshot={snapshot} id={popoverId} />}
     </div>
   );
 }

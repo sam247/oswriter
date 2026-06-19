@@ -1734,6 +1734,14 @@ function SettingsPanel({
             <SettingsTextInput label="Email address" value={preferences.account.email} type="email" onSave={(email) => onUpdatePreferences({ account: { email } })} />
             <SettingsTextInput label="Workspace Name" value={preferences.account.workspaceName} onSave={(workspaceName) => onUpdatePreferences({ account: { workspaceName } })} />
 
+            <a href="/settings/billing" className="mt-3 flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3 text-sm text-ink hover:border-line-strong hover:bg-surface-3">
+              <span>
+                <span className="block font-medium">Billing</span>
+                <span className="mt-0.5 block text-xs text-ink-muted">Current plan, usage, limits and upgrades</span>
+              </span>
+              <ChevronRight className="size-4 text-ink-subtle" />
+            </a>
+
             <div className="my-3 h-px bg-line" />
 
             <SettingsToggle
