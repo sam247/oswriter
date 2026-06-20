@@ -2,11 +2,17 @@ import type { WorkspaceStore } from "@/lib/storage/storage";
 import type { ResearchProvider, ResearchProviderInput } from "@/lib/research/providers/types";
 import { createFirecrawlResearchProvider } from "@/lib/research/providers/firecrawl";
 import { createQueueWriteResearchProvider } from "@/lib/research/providers/queuewrite";
+import { createQueueWriteResearchV2Provider } from "@/lib/research/providers/queuewrite-v2";
+import { isFirecrawlProviderEnabled } from "@/lib/research/providers/features";
 import type { ResearchPack, ResearchProviderId, ResearchProviderTelemetry } from "@/lib/types";
 
 export const RESEARCH_PROVIDER_OPTIONS: ReadonlyArray<{ id: ResearchProviderId; label: string; requiresApiKey: boolean }> = [
-  { id: "queuewrite", label: "QueueWrite Research", requiresApiKey: false },
-  { id: "firecrawl", label: "Firecrawl", requiresApiKey: true }
+  { id: "queuewrite", label: "QueueWrite Research", requiresApiKey: false }
+];
+
+export const INTERNAL_RESEARCH_PROVIDER_OPTIONS: ReadonlyArray<{ id: ResearchProviderId; label: string }> = [
+  { id: "queuewrite_v2", label: "QueueWrite Research v2" },
+  { id: "firecrawl", label: "Firecrawl" }
 ];
 
 export class ResearchProviderRegistry {
@@ -14,6 +20,7 @@ export class ResearchProviderRegistry {
 
   constructor() {
     this.register("queuewrite", () => createQueueWriteResearchProvider());
+    this.register("queuewrite_v2", () => createQueueWriteResearchV2Provider());
     this.register("firecrawl", (apiKey) => createFirecrawlResearchProvider(apiKey ?? ""));
   }
 
@@ -33,16 +40,21 @@ export class WorkspaceResearchProvider implements ResearchProvider {
   readonly id = "queuewrite" as const;
   readonly label = "QueueWrite Research";
 
-  constructor(private readonly store: WorkspaceStore, private readonly registry = new ResearchProviderRegistry()) {}
+  constructor(
+    private readonly store: WorkspaceStore,
+    private readonly registry = new ResearchProviderRegistry(),
+    private readonly firecrawlEnabled = isFirecrawlProviderEnabled()
+  ) {}
 
   async research(input: ResearchProviderInput): Promise<ResearchPack> {
     const preferences = await this.store.getWorkspacePreferences();
-    const selected = preferences.aiProvider.researchProvider ?? "queuewrite";
+    const requested = preferences.aiProvider.researchProvider ?? "queuewrite";
+    const selected = requested === "firecrawl" && this.firecrawlEnabled ? "firecrawl" : "queuewrite";
     if (selected === "queuewrite") {
       try {
-        return withProviderTelemetry(await this.registry.create("queuewrite").research(input), {
-          requestedResearchProvider: "queuewrite",
-          actualResearchProvider: "queuewrite",
+        return withProviderTelemetry(await this.registry.create(selected).research(input), {
+          requestedResearchProvider: selected,
+          actualResearchProvider: selected,
           fallbackUsed: false,
           fallbackReason: null
         });

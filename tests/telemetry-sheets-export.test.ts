@@ -26,7 +26,20 @@ describe("telemetry Google Sheets export", () => {
     const project = createDefaultProject();
     await store.saveProject(project);
     const article = sampleArticle();
-    const telemetry = sampleTelemetry({ totalCostUsd: 0.2, generationDurationMs: 3000 });
+    const telemetry = sampleTelemetry({
+      totalCostUsd: 0.2,
+      generationDurationMs: 3000,
+      actualResearchProvider: "firecrawl",
+      metadata: {
+        researchProvider: "firecrawl",
+        contentProfile: "industry_explainer",
+        sourcesFound: 6,
+        sourcesAccepted: 1,
+        evidenceItemsExtracted: 8,
+        evidenceItemsUsed: 5,
+        researchCostUsd: 0.03
+      }
+    });
     await store.saveArticle(article);
     await store.saveGenerationTelemetry(sampleTelemetry({ articleId: "baseline-1", totalCostUsd: 0.05, generationDurationMs: 1000 }));
     await store.saveGenerationTelemetry(sampleTelemetry({ articleId: "baseline-2", totalCostUsd: 0.05, generationDurationMs: 1000 }));
@@ -66,6 +79,19 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(articleRow?.[54], "utilities_procurement_teams");
     assert.equal(articleRow?.[55], "test-model_cache_miss_assumed");
     assert.equal(articleRow?.[56], "Good");
+    const providerRow = client.rows.find((row) => row.sheetName === TELEMETRY_SHEETS.providerTelemetry)?.row;
+    assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.providerTelemetry).length, 1);
+    assert.equal(providerRow?.[0], "Provider Benchmark 2026-06");
+    assert.equal(providerRow?.[4], "Telemetry Article");
+    assert.equal(providerRow?.[5], "industry_explainer");
+    assert.equal(providerRow?.[6], "Firecrawl BYOK");
+    assert.equal(providerRow?.[7], 0.03);
+    assert.equal(providerRow?.[8], 0.9);
+    assert.equal(providerRow?.[9], 6);
+    assert.equal(providerRow?.[10], 1);
+    assert.equal(providerRow?.[11], 8);
+    assert.equal(providerRow?.[12], 5);
+    assert.equal(providerRow?.[19], "Complete");
     assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 4);
     assert.equal(client.replacements.at(-1)?.sheetName, TELEMETRY_SHEETS.dailySummary);
     assert.deepEqual(client.replacements.at(-1)?.rows[0], Array.from(DAILY_SUMMARY_HEADERS));

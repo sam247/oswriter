@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
 import { nowIso } from "@/lib/defaults";
 import type { WorkspacePreferencesDocument } from "@/lib/types";
+import { isFirecrawlProviderEnabled, toPublicWorkspacePreferences } from "@/lib/research/providers/features";
 
 type SettingsPatch = {
   preferences?: Partial<{
@@ -21,7 +22,7 @@ export async function GET() {
     store.getSettings(),
     store.getWorkspacePreferences()
   ]);
-  return NextResponse.json({ settings, preferences });
+  return NextResponse.json({ settings, preferences: toPublicWorkspacePreferences(preferences) });
 }
 
 export async function PATCH(req: Request) {
@@ -33,17 +34,16 @@ export async function PATCH(req: Request) {
     store.getSettings(),
     store.getWorkspacePreferences()
   ]);
-  const requestedResearchProvider = patch.preferences?.aiProvider?.researchProvider ?? preferences.aiProvider.researchProvider ?? "queuewrite";
-  const requestedFirecrawlKey = cleanSecret(patch.preferences?.aiProvider?.firecrawlApiKey, preferences.aiProvider.firecrawlApiKey ?? "");
-  if (requestedResearchProvider === "firecrawl" && !requestedFirecrawlKey) {
-    return NextResponse.json({ error: "Add a Firecrawl API key before selecting Firecrawl." }, { status: 400 });
+  const requestedResearchProvider = patch.preferences?.aiProvider?.researchProvider;
+  if (requestedResearchProvider === "firecrawl" && !isFirecrawlProviderEnabled()) {
+    return NextResponse.json({ error: "This research provider is not available." }, { status: 400 });
   }
   const nextPreferences = mergePreferences(preferences, patch);
   await Promise.all([
     store.saveSettings(settings),
     store.saveWorkspacePreferences(nextPreferences)
   ]);
-  return NextResponse.json({ settings, preferences: nextPreferences });
+  return NextResponse.json({ settings, preferences: toPublicWorkspacePreferences(nextPreferences) });
 }
 
 function mergePreferences(preferences: WorkspacePreferencesDocument, patch: SettingsPatch): WorkspacePreferencesDocument {
@@ -54,10 +54,13 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
   const researchKeyEnabled = bool(aiProvider.researchKeyEnabled, preferences.aiProvider.researchKeyEnabled);
   const writerApiKey = cleanSecret(aiProvider.writerApiKey, preferences.aiProvider.writerApiKey);
   const researchApiKey = cleanSecret(aiProvider.researchApiKey, preferences.aiProvider.researchApiKey);
-  const researchProvider = aiProvider.researchProvider === "firecrawl" || aiProvider.researchProvider === "queuewrite"
-    ? aiProvider.researchProvider
+  const internalProvidersEnabled = isFirecrawlProviderEnabled();
+  const researchProvider = internalProvidersEnabled && aiProvider.researchProvider === "firecrawl"
+    ? "firecrawl"
     : preferences.aiProvider.researchProvider ?? "queuewrite";
-  const firecrawlApiKey = cleanSecret(aiProvider.firecrawlApiKey, preferences.aiProvider.firecrawlApiKey ?? "");
+  const firecrawlApiKey = internalProvidersEnabled
+    ? cleanSecret(aiProvider.firecrawlApiKey, preferences.aiProvider.firecrawlApiKey ?? "")
+    : preferences.aiProvider.firecrawlApiKey ?? "";
   const providerPreference = writerKeyEnabled || researchKeyEnabled ? "bring_your_own_key" : "platform_managed";
   const notificationsEnabled = bool(notifications.enabled, preferences.notifications.enabled);
   return {

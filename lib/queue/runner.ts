@@ -507,7 +507,7 @@ export class QueueRunner {
           timings: { ...job.timings, completed_at: nowIso() },
           pipeline: failRunningStage(job.pipeline, error.message)
         };
-        log({ stage: "research", level: "error", message: "BYOK research failed; generation was not started.", data: researchTelemetry });
+        log({ stage: "research", level: "error", message: "Research provider failed; generation was not started.", data: researchTelemetry });
         await this.store.saveJob(researchFailed);
         await this.store.saveDebug(debug, job.projectId);
         await this.markStoppedIfRequested(job.projectId);

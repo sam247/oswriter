@@ -2,6 +2,7 @@ import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetr
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
+import { toPublicWorkspacePreferences } from "@/lib/research/providers/features";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
@@ -115,7 +116,7 @@ export class WorkspaceStore {
       this.listJobs(resolvedProjectId),
       this.listArticleSummaries(resolvedProjectId)
     ]);
-    return { project, projects, settings, preferences, queueControl, jobs, articles };
+    return { project, projects, settings, preferences: toPublicWorkspacePreferences(preferences), queueControl, jobs, articles };
   }
 
   async getFullState(projectId?: string) {
@@ -127,7 +128,7 @@ export class WorkspaceStore {
       this.listJobs(resolvedProjectId),
       this.listArticles(resolvedProjectId)
     ]);
-    return { project, projects, settings, preferences, queueControl, jobs, articles };
+    return { project, projects, settings, preferences: toPublicWorkspacePreferences(preferences), queueControl, jobs, articles };
   }
 
   async getQueueStatus(projectId?: string) {

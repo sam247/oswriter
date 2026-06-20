@@ -1260,11 +1260,6 @@ function Workbench() {
                     active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
                     onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
                     onRetry={() => retryOne(job.id)}
-                    onChangeProvider={() => {
-                      setSelectedArticleId(null);
-                      setSettingsOpen(true);
-                      setProjectSettingsProjectId(null);
-                    }}
                     onAction={(action) => actOnJob(job.id, action)}
                   />
                 );
@@ -1390,7 +1385,7 @@ function Workbench() {
                     editorRef={editorRef}
                     onChange={(markdown) => updateArticleDraft(selectedArticle.id, { markdown })}
                   />
-                ) : selectedJob ? <JobPlaceholder job={selectedJob} onRetry={() => retryOne(selectedJob.id)} onChangeProvider={() => { setSelectedArticleId(null); setSettingsOpen(true); }} /> : null}
+                ) : selectedJob ? <JobPlaceholder job={selectedJob} onRetry={() => retryOne(selectedJob.id)} /> : null}
               </div>
               {selectedArticle && <ArticleMetricsRail saveState={saveState} lastSavedAt={lastSavedAt} />}
             </>
@@ -1757,15 +1752,11 @@ function SettingsPanel({
   const [draft, setDraft] = useState(state.preferences);
   const [dirty, setDirty] = useState(false);
   const writerKeyEnabled = draft.aiProvider.writerKeyEnabled;
-  const researchProvider = draft.aiProvider.researchProvider ?? "queuewrite";
-  const firecrawlConfigured = draft.aiProvider.firecrawlKeyStatus === "configured";
-  const providerLabel = researchProvider === "firecrawl" ? "Firecrawl research" : "QueueWrite Research";
   const updateDraft = (patch: WorkspacePreferencePatch) => {
     setDraft((current) => mergeWorkspacePreferences(current, patch));
     setDirty(true);
   };
   const save = async () => {
-    if (researchProvider === "firecrawl" && !draft.aiProvider.firecrawlApiKey?.trim()) return;
     const saved = await onUpdatePreferences({
       account: draft.account,
       notifications: { enabled: draft.notifications.enabled },
@@ -1780,7 +1771,7 @@ function SettingsPanel({
         <div className="mt-1 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">Settings</h1>
-            <div className="mono mt-2 text-[11px] text-ink-muted">{providerLabel}</div>
+            <div className="mono mt-2 text-[11px] text-ink-muted">QueueWrite Research</div>
           </div>
           <button onClick={onClose} className="h-8 rounded-md px-3 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">Close</button>
         </div>
@@ -1830,24 +1821,16 @@ function SettingsPanel({
               />
             )}
 
-            <SettingsSelect
-              label="Research Provider"
-              value={researchProvider}
-              options={[
-                { key: "queuewrite", label: "QueueWrite Research (Default)" },
-                { key: "firecrawl", label: "Firecrawl (Requires API Key)" }
-              ]}
-              onChange={(value) => updateDraft({ aiProvider: { researchProvider: value as "queuewrite" | "firecrawl" } })}
-            />
-            <SettingsSecretInput
-              label="Firecrawl API key"
-              saved={firecrawlConfigured}
-              onSave={(firecrawlApiKey) => firecrawlApiKey && updateDraft({ aiProvider: { firecrawlApiKey } })}
-            />
-            {researchProvider === "firecrawl" && !firecrawlConfigured && <div className="text-[11px] text-warn">Add a Firecrawl API key before activating this provider.</div>}
+            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
+              <div>
+                <div className="text-[12px] font-medium text-ink">QueueWrite Research</div>
+                <div className="mt-0.5 text-[11px] text-ink-muted">Managed source discovery and evidence extraction.</div>
+              </div>
+              <span className="mono text-[10px] uppercase tracking-[0.14em] text-success">Active</span>
+            </div>
             <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
               <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
-              <button onClick={save} disabled={!dirty || (researchProvider === "firecrawl" && !draft.aiProvider.firecrawlApiKey?.trim())} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save settings</button>
+              <button onClick={save} disabled={!dirty} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save settings</button>
             </div>
           </SettingsSection>
         </div>
@@ -2680,7 +2663,6 @@ function QueueListItem({
   active,
   onSelect,
   onRetry,
-  onChangeProvider,
   onAction
 }: {
   job: QueueJob;
@@ -2688,7 +2670,6 @@ function QueueListItem({
   active: boolean;
   onSelect: () => void;
   onRetry: () => void;
-  onChangeProvider: () => void;
   onAction: (action: "skip" | "remove" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void;
 }) {
   const displayStatus = displayStatusLabel(job, article);
@@ -2727,7 +2708,6 @@ function QueueListItem({
       {(job.status === "failed" || job.status === "research_failed") && (
         <div className="invisible absolute right-2 top-2 flex gap-1 group-hover:visible">
           <button onClick={onRetry} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink">Retry</button>
-          {job.status === "research_failed" && <button onClick={onChangeProvider} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink">Change Provider</button>}
         </div>
       )}
       {(job.status === "queued" || job.status === "processing" || job.status === "skipped") && (
@@ -3271,7 +3251,7 @@ function ExportLink({
   );
 }
 
-function JobPlaceholder({ job, onRetry, onChangeProvider }: { job: QueueJob; onRetry: () => void; onChangeProvider: () => void }) {
+function JobPlaceholder({ job, onRetry }: { job: QueueJob; onRetry: () => void }) {
   const runtime = calculatePipelineRuntime(job.pipeline);
   if (job.status !== "failed" && job.status !== "research_failed") {
     return (
@@ -3298,19 +3278,17 @@ function JobPlaceholder({ job, onRetry, onChangeProvider }: { job: QueueJob; onR
       <div className="mono text-[10px] uppercase tracking-[0.18em] text-danger">{job.status === "research_failed" ? "Research Failed" : "Failed"}</div>
       <h2 className="mt-2 text-2xl font-semibold tracking-tight text-ink">{job.title}</h2>
       <p className="mt-4 max-w-2xl text-sm leading-6 text-ink-muted">
-        {job.status === "research_failed" ? "Research stopped at the selected BYOK provider. No outline or article generation was started." : "This job has no saved article because it hit a technical failure before draft save."}
+        {job.status === "research_failed" ? "Research stopped before completion. No outline or article generation was started." : "This job has no saved article because it hit a technical failure before draft save."}
       </p>
       <div className="mt-6 grid max-w-xl grid-cols-2 gap-x-6 gap-y-2 text-xs">
         <MetricLine label="Attempt" value={job.attempts} />
         <MetricLine label="Updated" value={relativeDate(job.updatedAt)} />
         <MetricLine label="Runtime" value={formatDuration(runtime.totalMs)} />
         <MetricLine label="Failed stage" value={job.pipeline.find((step) => step.status === "failed")?.stage ?? "-"} />
-        {job.status === "research_failed" && <MetricLine label="Provider" value={researchProviderLabel(job.researchTelemetry?.actualResearchProvider)} />}
       </div>
       <pre className="mono mt-6 max-w-2xl whitespace-pre-wrap rounded-md bg-surface-2 p-3 text-xs leading-relaxed text-danger">{job.statusReason ?? job.fatalError ?? "No fatal error recorded."}</pre>
       <div className="mt-4 flex gap-2">
         <button onClick={onRetry} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white">Retry</button>
-        {job.status === "research_failed" && <button onClick={onChangeProvider} className="h-8 rounded-md bg-surface-1 px-3 text-[12px] font-medium text-ink ring-1 ring-line">Change Provider</button>}
       </div>
     </div>
   );
@@ -4274,11 +4252,6 @@ function statusLabel(status: JobStatus) {
   }[status];
 }
 
-function researchProviderLabel(provider?: string | null) {
-  if (provider === "firecrawl") return "Firecrawl";
-  return "QueueWrite Research";
-}
-
 function formatMarkdown(markdown: string, start: number, end: number, command: FormatCommand) {
   const selected = markdown.slice(start, end);
   const lineStart = markdown.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
@@ -4605,12 +4578,8 @@ function jobActionMessage(action: string) {
 function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, patch: WorkspacePreferencePatch): WorkspacePreferencesDocument {
   const notificationsEnabled = patch.notifications?.enabled ?? preferences.notifications.enabled;
   const writerKeyEnabled = patch.aiProvider?.writerKeyEnabled ?? preferences.aiProvider.writerKeyEnabled;
-  const researchKeyEnabled = patch.aiProvider?.researchKeyEnabled ?? preferences.aiProvider.researchKeyEnabled;
   const writerApiKey = patch.aiProvider?.writerApiKey ?? preferences.aiProvider.writerApiKey;
-  const researchApiKey = patch.aiProvider?.researchApiKey ?? preferences.aiProvider.researchApiKey;
-  const researchProvider = patch.aiProvider?.researchProvider ?? preferences.aiProvider.researchProvider ?? "queuewrite";
-  const firecrawlApiKey = patch.aiProvider?.firecrawlApiKey ?? preferences.aiProvider.firecrawlApiKey ?? "";
-  const providerPreference = writerKeyEnabled || researchKeyEnabled ? "bring_your_own_key" : "platform_managed";
+  const providerPreference = writerKeyEnabled ? "bring_your_own_key" : "platform_managed";
   return {
     ...preferences,
     account: {
@@ -4635,12 +4604,12 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
       writerKeyEnabled,
       writerApiKey: writerKeyEnabled ? writerApiKey : "",
       writerKeyStatus: writerKeyEnabled && writerApiKey ? "configured" : writerKeyEnabled ? "placeholder" : "not_configured",
-      researchKeyEnabled,
-      researchApiKey: researchKeyEnabled ? researchApiKey : "",
-      researchKeyStatus: researchKeyEnabled && researchApiKey ? "configured" : researchKeyEnabled ? "placeholder" : "not_configured",
-      researchProvider,
-      firecrawlApiKey,
-      firecrawlKeyStatus: firecrawlApiKey ? "configured" : "not_configured"
+      researchKeyEnabled: false,
+      researchApiKey: "",
+      researchKeyStatus: "not_configured",
+      researchProvider: "queuewrite",
+      firecrawlApiKey: "",
+      firecrawlKeyStatus: "not_configured"
     },
     operational: {
       ...preferences.operational,

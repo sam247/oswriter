@@ -2,7 +2,7 @@ import { createSign } from "node:crypto";
 import { calculateArticleScores } from "@/lib/scoring/article-scores";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import { buildDailySummaryRows, DAILY_SUMMARY_HEADERS, type DailySummaryContext } from "@/lib/telemetry/daily-summary";
-import type { ArticleDocument, GenerationTelemetryDocument, ProjectDocument, TelemetryExportStatusDocument } from "@/lib/types";
+import type { ArticleDocument, GenerationTelemetryDocument, ProjectDocument, ResearchPack, TelemetryExportStatusDocument } from "@/lib/types";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 
 export const TELEMETRY_SPREADSHEET_ID = "1G0wbTt7xPoobZZncWZ1K-Y9EP2CjvmOrKP3WZvtAC3o";
@@ -10,8 +10,32 @@ export const TELEMETRY_SPREADSHEET_ID = "1G0wbTt7xPoobZZncWZ1K-Y9EP2CjvmOrKP3WZv
 export const TELEMETRY_SHEETS = {
   dailySummary: "Daily Summary",
   articleTelemetry: "Article Telemetry",
+  providerTelemetry: "Provider Telemetry",
   anomalies: "Anomalies"
 } as const;
+
+export const PROVIDER_TELEMETRY_HEADERS = [
+  "Benchmark Run",
+  "Pair ID",
+  "Date",
+  "Article ID",
+  "Article Title",
+  "Content Profile",
+  "Research Provider",
+  "Research Cost",
+  "Research Duration (seconds)",
+  "Sources Found",
+  "Sources Accepted",
+  "Evidence Extracted",
+  "Evidence Used",
+  "Word Count",
+  "Quality Score",
+  "Research Score",
+  "Evidence Score",
+  "Generation Cost",
+  "Total Cost",
+  "Data Status"
+] as const;
 
 export interface SheetsAppendClient {
   appendRow(sheetName: string, row: TelemetryCell[]): Promise<void>;
@@ -43,6 +67,18 @@ export async function exportArticleTelemetry(store: WorkspaceStore, telemetry: G
     targetSheet: TELEMETRY_SHEETS.articleTelemetry,
     row: buildArticleTelemetryRow(context)
   });
+
+  if (article) {
+    await exportOnce(store, client, {
+      id: exportId("article", telemetry.projectId, telemetry.articleId, "provider-telemetry"),
+      exportType: "article",
+      projectId: telemetry.projectId,
+      articleId: telemetry.articleId,
+      exportKey: `${telemetry.projectId}:${telemetry.articleId}:provider`,
+      targetSheet: TELEMETRY_SHEETS.providerTelemetry,
+      row: buildProviderTelemetryRow(telemetry, article, null)
+    });
+  }
 
   for (const anomaly of evaluateAnomalies(context, history)) {
     await exportOnce(store, client, {
@@ -209,6 +245,62 @@ export function buildArticleTelemetryRow({ telemetry, article, project }: Articl
     telemetry.profileKey ?? article?.profileSnapshot?.profileKey ?? "",
     telemetry.generationCostPricingSource ?? "",
     telemetry.qualityBand ?? quality.qualityBand
+  ];
+}
+
+export function buildProviderTelemetryRow(
+  telemetry: GenerationTelemetryDocument,
+  article: ArticleDocument,
+  research: ResearchPack | null
+): TelemetryCell[] {
+  const scores = calculateArticleScores(article);
+  const provider = research?.actualResearchProvider
+    ?? research?.researchProvider
+    ?? telemetry.actualResearchProvider
+    ?? telemetry.requestedResearchProvider
+    ?? metadataString(telemetry.metadata, "researchProvider")
+    ?? "queuewrite";
+  const legacyManagedCostMissing = provider === "queuewrite"
+    && telemetry.estimatedResearchCostUsd === 0
+    && (telemetry.exaSearchRequests ?? telemetry.exaSearchCalls) === 0;
+  const generationCostMissing = !telemetry.generationCostPricingSource;
+  const researchCost: TelemetryCell = legacyManagedCostMissing
+    ? ""
+    : money(research?.researchCostUsd ?? metadataNumber(telemetry.metadata, "researchCostUsd") ?? telemetry.estimatedResearchCostUsd);
+  const generationCost: TelemetryCell = generationCostMissing
+    ? ""
+    : money(telemetry.estimatedGenerationCostUsd ?? telemetry.estimatedAiCostUsd);
+  const totalCost: TelemetryCell = researchCost === "" || generationCost === ""
+    ? ""
+    : money(telemetry.totalCostUsd);
+  const missing = [
+    legacyManagedCostMissing ? "research cost" : null,
+    generationCostMissing ? "generation cost" : null,
+    (research?.contentProfile ?? metadataString(telemetry.metadata, "contentProfile")) ? null : "content profile"
+  ].filter(Boolean);
+  const date = dateOnly(telemetry.updatedAt);
+
+  return [
+    `Provider Benchmark ${date.slice(0, 7)}`,
+    benchmarkPairId(article.title),
+    date,
+    article.id,
+    article.title,
+    research?.contentProfile ?? metadataString(telemetry.metadata, "contentProfile") ?? "Missing",
+    researchProviderLabel(provider),
+    researchCost,
+    millisecondsToSeconds(telemetry.researchDurationMs ?? research?.durationMs),
+    research?.sourcesFound ?? metadataNumber(telemetry.metadata, "sourcesFound") ?? telemetry.sourcesDiscovered,
+    research?.sources.length ?? metadataNumber(telemetry.metadata, "sourcesAccepted") ?? telemetry.sourcesAccepted,
+    research?.evidenceItemsExtracted ?? metadataNumber(telemetry.metadata, "evidenceItemsExtracted") ?? telemetry.findingsExtracted,
+    research?.evidenceItemsUsed ?? metadataNumber(telemetry.metadata, "evidenceItemsUsed") ?? telemetry.usefulFactsExtracted,
+    article.wordCount,
+    scores.quality.score,
+    scores.research.score,
+    scores.evidence.score,
+    generationCost,
+    totalCost,
+    missing.length ? `Missing ${missing.join(", ")} telemetry` : "Complete"
   ];
 }
 
@@ -502,6 +594,38 @@ function previousUtcDate() {
 
 function dateOnly(value: string) {
   return new Date(value).toISOString().slice(0, 10);
+}
+
+function millisecondsToSeconds(value: number | null | undefined): TelemetryCell {
+  return isNumber(value) ? Number((value / 1000).toFixed(3)) : "";
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string) {
+  return typeof metadata[key] === "string" && metadata[key] ? String(metadata[key]) : null;
+}
+
+function metadataNumber(metadata: Record<string, unknown>, key: string) {
+  return isNumber(metadata[key]) ? metadata[key] : null;
+}
+
+function benchmarkPairId(title: string) {
+  return title
+    .toLowerCase()
+    .replace(/\b(applications|apps)\b/g, "app")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+function researchProviderLabel(provider: string) {
+  if (provider === "queuewrite") return "QueueWrite Research (Exa)";
+  if (provider === "queuewrite_v2") return "QueueWrite Research v2";
+  if (provider === "firecrawl") return "Firecrawl BYOK";
+  return provider
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function sum(values: number[]) {

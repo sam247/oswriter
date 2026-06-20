@@ -10,7 +10,6 @@ Reliable queue-first article generation workstation.
 - Zustand-ready client architecture
 - Vercel Blob JSON document persistence
 - QueueWrite Research managed research engine
-- Firecrawl BYOK research provider
 - OpenAI-compatible AI generation, optional editor pass, and advisory validation
 
 ## Required Environment
@@ -28,7 +27,17 @@ AI_EDITOR_MODEL="deepseek-v4-flash"
 AI_VALIDATION_MODEL="deepseek-v4-flash"
 ```
 
-Firecrawl keys are stored per user from Settings and are not required for the default QueueWrite Research provider. Firecrawl cost telemetry can be converted from credits with `FIRECRAWL_COST_PER_CREDIT_USD`.
+### Internal QueueWrite Research v2 benchmark
+
+QueueWrite Research v2 is an internal-only provider. It is registered for controlled benchmarks but is intentionally absent from customer settings and is never selected by the production runtime. It keeps Exa discovery, enriches each candidate page with Crawl4AI fit markdown, then uses the existing evidence extraction and research-pack pipeline.
+
+```bash
+QUEUEWRITE_V2_CRAWL4AI_BASE_URL="http://localhost:11235"
+QUEUEWRITE_V2_CRAWL4AI_API_TOKEN="optional-internal-token"
+QUEUEWRITE_V2_CRAWL4AI_COST_PER_PAGE_USD="0"
+```
+
+The initial Crawl4AI profile uses main-content cleanup, fit markdown, pruning, noise selectors, and overlay/form removal. Deep/adaptive crawling, domain mapping, identity crawling, virtual scroll, sessions, hooks, proxies, and page authentication are not configured. Create it explicitly through `ResearchProviderRegistry.create("queuewrite_v2")`; do not add it to workspace preferences or the customer provider selector.
 
 If `WORKSPACE_PASSWORD` is unset, local development accepts `oswriter`.
 
