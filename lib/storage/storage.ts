@@ -142,7 +142,16 @@ export class WorkspaceStore {
       generated: jobs.filter((job) => job.status === "generated").length,
       review: jobs.filter((job) => job.status === "needs_review").length,
       failed: jobs.filter((job) => job.status === "failed").length,
-      ...(activeJob ? { activeJob: { id: activeJob.id, title: activeJob.title } } : {})
+      ...(activeJob ? { activeJob: {
+        id: activeJob.id,
+        title: activeJob.title,
+        articleId: activeJob.articleId,
+        status: activeJob.status,
+        attempts: activeJob.attempts,
+        pipeline: activeJob.pipeline,
+        timings: activeJob.timings,
+        updatedAt: activeJob.updatedAt
+      } } : {})
     } satisfies QueueStatus;
   }
 

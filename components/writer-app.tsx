@@ -248,7 +248,11 @@ function Workbench() {
     if (!res?.ok) return;
     const next = await res.json() as QueueStatus;
     setQueueStatus(next);
-    setState((current) => current ? reconcileQueueStatusState(current, next) : current);
+    setState((current) => {
+      if (!current) return current;
+      if (queueStatusNeedsFullRefresh(current, next)) window.setTimeout(() => void refresh(), 0);
+      return reconcileQueueStatusState(current, next);
+    });
   }
 
   useEffect(() => {
@@ -401,7 +405,7 @@ function Workbench() {
       .then((res) => res.ok ? res.json() : { research: null, debug: null })
       .then((data: Details) => setDetails(data));
     return () => controller.abort();
-  }, [selectedArticleId]);
+  }, [selectedArticleId, articles.some((article) => article.id === selectedArticleId)]);
 
   async function addTitles() {
     setBusy(true);
@@ -2916,7 +2920,7 @@ function ArticleHeader({
   if (!article && job) {
     return (
       <div className="px-6 pb-3 pt-5 lg:px-8">
-        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(job.status)}</div>
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{displayStatusLabel(job)}</div>
         <h1 className="mt-1 text-[24px] font-semibold leading-tight tracking-tight text-ink">{job.title}</h1>
         <div className="mt-2 flex items-center gap-2">
           <div className="mono text-[11px] text-ink-muted">Attempt {job.attempts}</div>
@@ -3264,7 +3268,7 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
   if (job.status !== "failed") {
     return (
       <div className="mx-auto max-w-[760px] px-8 py-10">
-        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(job.status)}</div>
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{displayStatusLabel(job)}</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight text-ink">{job.title}</h2>
         <p className="mt-4 max-w-2xl text-sm leading-6 text-ink-muted">
           {job.status === "processing"
@@ -4469,42 +4473,24 @@ function mergeOptimisticProcessingClaims(state: AppState, claims: Map<string, Qu
 }
 
 export function reconcileQueueStatusState(state: AppState, status: QueueStatus): AppState {
-  const jobs = state.jobs.map((job) => status.activeJob?.id === job.id && job.status !== "processing"
-    ? { ...job, status: "processing" as const, updatedAt: new Date().toISOString() }
-    : job);
-  const activeId = status.activeJob?.id;
-  const candidates = jobs
-    .filter((job) => job.id !== activeId && (job.status === "processing" || job.status === "queued"))
-    .sort((a, b) => Number(b.status === "processing") - Number(a.status === "processing") || a.createdAt.localeCompare(b.createdAt));
-  const targetCounts: Array<[JobStatus, number]> = [
-    ["generated", status.generated],
-    ["needs_review", status.review],
-    ["failed", status.failed]
-  ];
-  const completed = new Map<string, JobStatus>();
+  if (!status.activeJob) return state;
+  const jobs = state.jobs.map((job) => status.activeJob?.id === job.id ? {
+    ...job,
+    status: "processing" as const,
+    attempts: status.activeJob.attempts ?? job.attempts,
+    pipeline: status.activeJob.pipeline ?? job.pipeline,
+    timings: status.activeJob.timings ?? job.timings,
+    updatedAt: status.activeJob.updatedAt ?? job.updatedAt
+  } : job);
+  return jobs.every((job, index) => job === state.jobs[index]) ? state : { ...state, jobs };
+}
 
-  for (const [target, targetCount] of targetCounts) {
-    const currentCount = jobs.filter((job) => job.status === target).length;
-    for (let missing = Math.max(0, targetCount - currentCount); missing > 0; missing -= 1) {
-      const candidate = candidates.find((job) => !completed.has(job.id));
-      if (!candidate) break;
-      completed.set(candidate.id, target);
-    }
-  }
-
-  if (!completed.size && jobs.every((job, index) => job === state.jobs[index])) return state;
-  const updatedJobs = jobs.map((job) => {
-    const nextStatus = completed.get(job.id);
-    return nextStatus ? { ...job, status: nextStatus, updatedAt: new Date().toISOString() } : job;
-  });
-  const updatedArticles = state.articles.map((article) => {
-    const job = updatedJobs.find((item) => item.articleId === article.id);
-    const nextStatus = job ? completed.get(job.id) : undefined;
-    return nextStatus === "generated" || nextStatus === "needs_review" || nextStatus === "failed"
-      ? { ...article, status: nextStatus }
-      : article;
-  });
-  return { ...state, jobs: updatedJobs, articles: updatedArticles };
+function queueStatusNeedsFullRefresh(state: AppState, status: QueueStatus) {
+  if (status.activeJob) return false;
+  if (state.jobs.some((job) => job.status === "processing")) return true;
+  return state.jobs.filter((job) => job.status === "generated").length !== status.generated
+    || state.jobs.filter((job) => job.status === "needs_review").length !== status.review
+    || state.jobs.filter((job) => job.status === "failed").length !== status.failed;
 }
 
 function isInventoryArticle(article: ArticleSummary) {
@@ -4513,6 +4499,7 @@ function isInventoryArticle(article: ArticleSummary) {
 
 function currentPipelineStage(pipeline: QueueJob["pipeline"]) {
   return pipeline.find((step) => step.status === "running")?.stage
+    ?? pipeline.find((step) => step.status === "idle")?.stage
     ?? [...pipeline].reverse().find((step) => step.status === "done")?.stage
     ?? pipeline[0]?.stage
     ?? null;

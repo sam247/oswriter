@@ -146,19 +146,32 @@ export class NeonStorageProvider implements StorageProvider {
           count(*) filter (where j.status = 'generated')::int as generated,
           count(*) filter (where j.status = 'needs_review')::int as review,
           (array_agg(j.id order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_id,
-          (array_agg(j.title order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_title
+          (array_agg(j.title order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_title,
+          (array_agg(j.document order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_document
         from jobs j
         where j.project_id = ${projectId}
       `);
       const row = found[0] ?? {};
       const activeJobId = row.active_job_id ? String(row.active_job_id) : null;
+      const activeJobDocument = isRecord(row.active_job_document) ? row.active_job_document as unknown as QueueJob : null;
       return {
         queued: Number(row.queued ?? 0),
         processing: Number(row.processing ?? 0),
         generated: Number(row.generated ?? 0),
         review: Number(row.review ?? 0),
         failed: Number(row.failed ?? 0),
-        ...(activeJobId ? { activeJob: { id: activeJobId, title: String(row.active_job_title ?? "") } } : {})
+        ...(activeJobId ? { activeJob: {
+          id: activeJobId,
+          title: String(row.active_job_title ?? ""),
+          ...(activeJobDocument ? {
+            articleId: activeJobDocument.articleId,
+            status: activeJobDocument.status,
+            attempts: activeJobDocument.attempts,
+            pipeline: activeJobDocument.pipeline,
+            timings: activeJobDocument.timings,
+            updatedAt: activeJobDocument.updatedAt
+          } : {})
+        } } : {})
       };
     });
   }

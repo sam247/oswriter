@@ -564,6 +564,12 @@ export interface QueueStatus {
     id: string;
     title: string;
     progress?: number;
+    articleId?: string;
+    status?: JobStatus;
+    attempts?: number;
+    pipeline?: PipelineStep[];
+    timings?: ArticleTiming;
+    updatedAt?: string;
   };
 }
 
