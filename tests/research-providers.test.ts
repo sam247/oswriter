@@ -5,6 +5,7 @@ import { FirecrawlDiscoveryProvider } from "@/lib/research/providers/firecrawl";
 import { RESEARCH_PROVIDER_OPTIONS, ResearchProviderRegistry, WorkspaceResearchProvider } from "@/lib/research/providers/registry";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
+import type { ResearchPack } from "@/lib/types";
 
 describe("research provider architecture", () => {
   it("exposes product-safe provider labels", () => {
@@ -66,6 +67,34 @@ describe("research provider architecture", () => {
     }));
     const result = await new WorkspaceResearchProvider(store, registry).research({ title: "Test", articleId: "article_1" });
     assert.equal(result.researchProvider, "firecrawl");
+  });
+
+  it("falls back to QueueWrite Research when BYOK quota is exhausted", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const preferences = await store.getWorkspacePreferences();
+    await store.saveWorkspacePreferences({
+      ...preferences,
+      aiProvider: { ...preferences.aiProvider, researchProvider: "firecrawl", firecrawlApiKey: "fc-user-key", firecrawlKeyStatus: "configured" }
+    });
+    const pack = (provider: "queuewrite" | "firecrawl"): ResearchPack => ({ articleId: "article-1", title: "Fallback", queries: [], sources: [], rejectedSources: [], usefulFacts: [], rejectedFacts: [], questionsFound: [], headingsFound: [], authorityScore: 0, relevanceScore: 0, confidence: 0, warnings: [], requestIds: [], durationMs: 1, researchProvider: provider, createdAt: new Date(0).toISOString() });
+    const registry = new ResearchProviderRegistry()
+      .register("firecrawl", () => ({ id: "firecrawl", label: "Firecrawl", async research() { throw new Error("402 Insufficient credits"); } }))
+      .register("queuewrite", () => ({ id: "queuewrite", label: "QueueWrite Research", async research() { return pack("queuewrite"); } }));
+    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "Fallback", articleId: "article-1" });
+    assert.equal(result.researchProvider, "queuewrite");
+    assert.equal(result.providerUsage?.fallbackReason, "quota_exhausted");
+    assert.match(result.warnings[0] ?? "", /QueueWrite Research completed this run/);
+  });
+
+  it("returns a reviewable research pack instead of failing when every provider is unavailable", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const registry = new ResearchProviderRegistry().register("queuewrite", () => ({
+      id: "queuewrite", label: "QueueWrite Research", async research() { throw new Error("temporary outage"); }
+    }));
+    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "Resilient", articleId: "article-1" });
+    assert.equal(result.confidence, 0);
+    assert.equal(result.sources.length, 0);
+    assert.match(result.warnings[0] ?? "", /Generation continued/);
   });
 
   it("stores user keys separately and projects provider comparison metrics", async () => {
