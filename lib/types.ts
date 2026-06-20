@@ -96,6 +96,7 @@ export interface SettingsDocument {
 
 export type AiProviderPreference = "platform_managed" | "bring_your_own_key";
 export type PersonalApiKeyStatus = "not_configured" | "placeholder" | "configured";
+export type ResearchProviderId = "queuewrite" | "firecrawl";
 
 export interface WorkspacePreferencesDocument {
   organisationId?: string;
@@ -122,6 +123,9 @@ export interface WorkspacePreferencesDocument {
     researchKeyEnabled: boolean;
     researchKeyStatus: PersonalApiKeyStatus;
     researchApiKey: string;
+    researchProvider?: ResearchProviderId;
+    firecrawlApiKey?: string;
+    firecrawlKeyStatus?: PersonalApiKeyStatus;
   };
   operational: {
     autoStartQueueOnAdd: boolean;
@@ -233,6 +237,15 @@ export interface ResearchPack {
   runNumber?: number;
   title: string;
   contentProfile?: ContentProfile;
+  researchProvider?: ResearchProviderId;
+  sourcesFound?: number;
+  evidenceItemsExtracted?: number;
+  evidenceItemsUsed?: number;
+  researchCostUsd?: number;
+  costPerSource?: number;
+  costPerAcceptedSource?: number;
+  costPerEvidenceItem?: number;
+  providerUsage?: Record<string, number | string | null>;
   queries: string[];
   sources: ResearchSource[];
   rejectedSources: ResearchSource[];
@@ -586,6 +599,9 @@ export interface SearchResult {
 export interface SearchUsage {
   exaSearchRequests?: number;
   exaContentPages?: number;
+  provider?: ResearchProviderId;
+  creditsUsed?: number;
+  estimatedCostUsd?: number;
 }
 
 export interface SearchResponse {

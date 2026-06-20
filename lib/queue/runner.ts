@@ -14,13 +14,14 @@ import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import { resolveContentProfile, type ContentProfile } from "@/lib/content-profiles";
+import type { ResearchProvider } from "@/lib/research/providers/types";
 
 const EMERGENCY_STOP_REASON = "Emergency stopped by user.";
 
 export class QueueRunner {
   constructor(
     private readonly store: WorkspaceStore,
-    private readonly search: SearchAdapter,
+    private readonly researchProvider: SearchAdapter | ResearchProvider,
     private readonly model: ModelAdapter
   ) {}
 
@@ -366,9 +367,22 @@ export class QueueRunner {
         job = { ...job, timings: markTiming(job.timings, "research_started_at"), pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
         await this.store.saveJob(job);
         log({ stage: "research", level: "info", message: "Research started." });
-        const research = await runResearch(job.title, job.articleId, this.search, profileSnapshot, contentProfile);
+        const research = isResearchProvider(this.researchProvider)
+          ? await this.researchProvider.research({ title: job.title, articleId: job.articleId, profileSnapshot, contentProfile })
+          : await runResearch(job.title, job.articleId, this.researchProvider, profileSnapshot, contentProfile);
         await this.store.saveResearch(research, job.projectId);
-        job = { ...job, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", { sourceCount: research.sources.length, confidence: research.confidence }), updatedAt: nowIso() };
+        job = { ...job, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", {
+          provider: research.researchProvider ?? "queuewrite",
+          sourcesFound: research.sourcesFound ?? research.sources.length + research.rejectedSources.length,
+          sourcesAccepted: research.sources.length,
+          evidenceItemsExtracted: research.evidenceItemsExtracted ?? research.usefulFacts.length,
+          evidenceItemsUsed: research.evidenceItemsUsed ?? research.usefulFacts.length,
+          researchCostUsd: research.researchCostUsd ?? research.estimatedResearchCostUsd ?? 0,
+          costPerSource: research.costPerSource ?? 0,
+          costPerAcceptedSource: research.costPerAcceptedSource ?? 0,
+          costPerEvidenceItem: research.costPerEvidenceItem ?? 0,
+          confidence: research.confidence
+        }), updatedAt: nowIso() };
         await this.store.saveJob(job);
         log({ stage: "research", level: research.warnings.length ? "warn" : "info", message: "Research completed.", data: research.warnings });
         await this.store.saveDebug(debug, job.projectId);
@@ -597,6 +611,15 @@ export class QueueRunner {
         actualSections: planningDiagnostics.actualH2Count,
         planningDiagnostics,
         findingsExtracted,
+        researchProvider: research.researchProvider ?? "queuewrite",
+        sourcesFound: research.sourcesFound ?? research.sources.length + research.rejectedSources.length,
+        sourcesAccepted: research.sources.length,
+        evidenceItemsExtracted: research.evidenceItemsExtracted ?? research.usefulFacts.length,
+        evidenceItemsUsed: research.evidenceItemsUsed ?? research.usefulFacts.length,
+        researchCostUsd: research.researchCostUsd ?? research.estimatedResearchCostUsd ?? 0,
+        costPerSource: research.costPerSource ?? 0,
+        costPerAcceptedSource: research.costPerAcceptedSource ?? 0,
+        costPerEvidenceItem: research.costPerEvidenceItem ?? 0,
         contentProfile: article.resolvedContentProfile ?? research.contentProfile ?? "industry_explainer",
         profileSnapshot: article.profileSnapshot ?? null,
         profileRelevanceScore: article.profileRelevanceScore ?? null,
@@ -652,6 +675,10 @@ export class QueueRunner {
       throw new Error(EMERGENCY_STOP_REASON);
     }
   }
+}
+
+function isResearchProvider(provider: SearchAdapter | ResearchProvider): provider is ResearchProvider {
+  return "research" in provider && typeof provider.research === "function";
 }
 
 function reconciledJob(job: QueueJob, article: ArticleDocument): QueueJob {

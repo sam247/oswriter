@@ -868,23 +868,54 @@ export class NeonStorageProvider implements StorageProvider {
       from organisation_settings
       where organisation_id = ${tenant.organisationId}
     `);
+    const userFound = rows(await this.sql`
+      select preferences
+      from user_provider_preferences
+      where organisation_id = ${tenant.organisationId} and user_id = ${tenant.userId}
+    `);
     const saved = isRecord(found[0]?.preferences) ? found[0].preferences as unknown as WorkspacePreferencesDocument : null;
-    return withWorkspacePreferenceDefaults(saved, tenant);
+    const userPreferences = isRecord(userFound[0]?.preferences) ? userFound[0].preferences as Record<string, unknown> : {};
+    const normalized = withWorkspacePreferenceDefaults(saved, tenant);
+    return {
+      ...normalized,
+      aiProvider: {
+        ...normalized.aiProvider,
+        researchProvider: userPreferences.researchProvider === "firecrawl" ? "firecrawl" : normalized.aiProvider.researchProvider ?? "queuewrite",
+        firecrawlApiKey: typeof userPreferences.firecrawlApiKey === "string" ? userPreferences.firecrawlApiKey : "",
+        firecrawlKeyStatus: typeof userPreferences.firecrawlApiKey === "string" && userPreferences.firecrawlApiKey ? "configured" : "not_configured"
+      }
+    };
   }
 
   private async saveWorkspacePreferences(preferences: WorkspacePreferencesDocument) {
     const tenant = await this.ensureTenant();
     const next = withWorkspacePreferenceDefaults(preferences, tenant);
+    const workspaceDocument = {
+      ...next,
+      aiProvider: { ...next.aiProvider, firecrawlApiKey: "" }
+    };
     await this.sql`
       insert into organisation_settings (organisation_id, settings, workspace_preferences, updated_at)
       values (
         ${tenant.organisationId},
         '{}'::jsonb,
-        ${JSON.stringify(next)}::jsonb,
+        ${JSON.stringify(workspaceDocument)}::jsonb,
         ${next.updatedAt}::timestamptz
       )
       on conflict (organisation_id) do update set
-        workspace_preferences = ${JSON.stringify(next)}::jsonb,
+        workspace_preferences = ${JSON.stringify(workspaceDocument)}::jsonb,
+        updated_at = excluded.updated_at
+    `;
+    await this.sql`
+      insert into user_provider_preferences (organisation_id, user_id, preferences, updated_at)
+      values (
+        ${tenant.organisationId},
+        ${tenant.userId},
+        ${JSON.stringify({ researchProvider: next.aiProvider.researchProvider ?? "queuewrite", firecrawlApiKey: next.aiProvider.firecrawlApiKey ?? "" })}::jsonb,
+        ${next.updatedAt}::timestamptz
+      )
+      on conflict (organisation_id, user_id) do update set
+        preferences = excluded.preferences,
         updated_at = excluded.updated_at
     `;
   }

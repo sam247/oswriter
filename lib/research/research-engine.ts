@@ -1,5 +1,5 @@
 import { calculateProfileRelevanceScore } from "@/lib/project/profile";
-import type { ProjectProfileSnapshot, ResearchFactSource, ResearchPack, SearchAdapter, SearchResult } from "@/lib/types";
+import type { ProjectProfileSnapshot, ResearchFactSource, ResearchPack, ResearchProviderId, SearchAdapter, SearchResult } from "@/lib/types";
 import { buildQueryVariants, average, toResearchSource } from "@/lib/research/scoring";
 import { nowIso } from "@/lib/defaults";
 import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateResearchCostUsd } from "@/lib/telemetry/costs";
@@ -32,7 +32,7 @@ const KNOWN_CONCEPT_PATTERNS: Array<[RegExp, string]> = [
   [/\brefresh tokens?\b/i, "Refresh Tokens"]
 ];
 
-export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null, contentProfile: ContentProfile = "industry_explainer"): Promise<ResearchPack> {
+export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null, contentProfile: ContentProfile = "industry_explainer", researchProvider: ResearchProviderId = "queuewrite"): Promise<ResearchPack> {
   const started = Date.now();
   const definition = CONTENT_PROFILES[contentProfile];
   const queries = buildQueryVariants(title, profileSnapshot, contentProfile);
@@ -41,6 +41,8 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const requestIds: string[] = [];
   let exaSearchRequests = queries.length;
   let exaContentPages = 0;
+  let providerCreditsUsed = 0;
+  let providerCostUsd = 0;
 
   const responses = await Promise.allSettled(queries.map((query) => search.search(query, {
       numResults: definition.research.depth === "very_high" ? 8 : definition.research.depth === "high" ? 6 : 5,
@@ -52,6 +54,8 @@ export async function runResearch(title: string, articleId: string, search: Sear
     if (response.status === "rejected") continue;
     const { results, requestId } = response.value;
     exaContentPages += response.value.usage?.exaContentPages ?? results.filter((result) => result.text || result.summary || (result.highlights?.length ?? 0) > 0).length;
+    providerCreditsUsed += response.value.usage?.creditsUsed ?? 0;
+    providerCostUsd += response.value.usage?.estimatedCostUsd ?? 0;
     if (requestId) requestIds.push(requestId);
     for (const result of results) {
       if (!seen.has(result.url)) {
@@ -100,10 +104,26 @@ export async function runResearch(title: string, articleId: string, search: Sear
   if (confidence < 60) warnings.push("Research confidence is low.");
   if (failures.length) warnings.push(`${failures.length} research query variants failed, but generation continued.`);
 
+  const sourcesFound = scored.length;
+  const evidenceItemsExtracted = usefulFacts.length;
+  const managedSearchRequests = researchProvider === "queuewrite" ? exaSearchRequests : 0;
+  const managedContentPages = researchProvider === "queuewrite" ? exaContentPages : 0;
+  const researchCostUsd = researchProvider === "queuewrite"
+    ? estimateResearchCostUsd(managedSearchRequests, managedContentPages)
+    : providerCostUsd;
   return {
     articleId,
     title,
     contentProfile,
+    researchProvider,
+    sourcesFound,
+    evidenceItemsExtracted,
+    evidenceItemsUsed: evidenceItemsExtracted,
+    researchCostUsd,
+    costPerSource: sourcesFound ? researchCostUsd / sourcesFound : 0,
+    costPerAcceptedSource: accepted.length ? researchCostUsd / accepted.length : 0,
+    costPerEvidenceItem: evidenceItemsExtracted ? researchCostUsd / evidenceItemsExtracted : 0,
+    providerUsage: { creditsUsed: providerCreditsUsed, searchRequests: queries.length, contentPages: exaContentPages },
     queries,
     sources: accepted,
     rejectedSources: rejected,
@@ -120,13 +140,13 @@ export async function runResearch(title: string, articleId: string, search: Sear
     warnings,
     requestIds: [...new Set(requestIds)],
     durationMs: Date.now() - started,
-    exaSearchCalls: exaSearchRequests,
-    exaContentCalls: exaContentPages,
-    exaSearchRequests,
-    exaContentPages,
-    estimatedExaSearchCostUsd: estimatedExaSearchCostUsd(exaSearchRequests),
-    estimatedExaContentCostUsd: estimatedExaContentCostUsd(exaContentPages),
-    estimatedResearchCostUsd: estimateResearchCostUsd(exaSearchRequests, exaContentPages),
+    exaSearchCalls: managedSearchRequests,
+    exaContentCalls: managedContentPages,
+    exaSearchRequests: managedSearchRequests,
+    exaContentPages: managedContentPages,
+    estimatedExaSearchCostUsd: estimatedExaSearchCostUsd(managedSearchRequests),
+    estimatedExaContentCostUsd: estimatedExaContentCostUsd(managedContentPages),
+    estimatedResearchCostUsd: researchCostUsd,
     profileSnapshot,
     profileRelevanceScore,
     createdAt: nowIso()

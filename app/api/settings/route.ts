@@ -33,6 +33,11 @@ export async function PATCH(req: Request) {
     store.getSettings(),
     store.getWorkspacePreferences()
   ]);
+  const requestedResearchProvider = patch.preferences?.aiProvider?.researchProvider ?? preferences.aiProvider.researchProvider ?? "queuewrite";
+  const requestedFirecrawlKey = cleanSecret(patch.preferences?.aiProvider?.firecrawlApiKey, preferences.aiProvider.firecrawlApiKey ?? "");
+  if (requestedResearchProvider === "firecrawl" && !requestedFirecrawlKey) {
+    return NextResponse.json({ error: "Add a Firecrawl API key before selecting Firecrawl." }, { status: 400 });
+  }
   const nextPreferences = mergePreferences(preferences, patch);
   await Promise.all([
     store.saveSettings(settings),
@@ -49,6 +54,10 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
   const researchKeyEnabled = bool(aiProvider.researchKeyEnabled, preferences.aiProvider.researchKeyEnabled);
   const writerApiKey = cleanSecret(aiProvider.writerApiKey, preferences.aiProvider.writerApiKey);
   const researchApiKey = cleanSecret(aiProvider.researchApiKey, preferences.aiProvider.researchApiKey);
+  const researchProvider = aiProvider.researchProvider === "firecrawl" || aiProvider.researchProvider === "queuewrite"
+    ? aiProvider.researchProvider
+    : preferences.aiProvider.researchProvider ?? "queuewrite";
+  const firecrawlApiKey = cleanSecret(aiProvider.firecrawlApiKey, preferences.aiProvider.firecrawlApiKey ?? "");
   const providerPreference = writerKeyEnabled || researchKeyEnabled ? "bring_your_own_key" : "platform_managed";
   const notificationsEnabled = bool(notifications.enabled, preferences.notifications.enabled);
   return {
@@ -77,7 +86,10 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
       writerKeyStatus: writerKeyEnabled && writerApiKey ? "configured" : writerKeyEnabled ? "placeholder" : "not_configured",
       researchKeyEnabled,
       researchApiKey: researchKeyEnabled ? researchApiKey : "",
-      researchKeyStatus: researchKeyEnabled && researchApiKey ? "configured" : researchKeyEnabled ? "placeholder" : "not_configured"
+      researchKeyStatus: researchKeyEnabled && researchApiKey ? "configured" : researchKeyEnabled ? "placeholder" : "not_configured",
+      researchProvider,
+      firecrawlApiKey,
+      firecrawlKeyStatus: firecrawlApiKey ? "configured" : "not_configured"
     },
     operational: {
       ...preferences.operational,

@@ -1,8 +1,8 @@
 import { OpenAIModelAdapter } from "@/lib/models/openai";
 import { QueueRunner } from "@/lib/queue/runner";
-import { ExaSearchAdapter } from "@/lib/research/exa";
+import { WorkspaceResearchProvider } from "@/lib/research/providers/registry";
 import { createWorkspaceStore } from "@/lib/storage/server";
-import type { ArticleGenerationInput, EditorInput, ModelAdapter, SearchAdapter, SimilarTitleGenerationInput, ValidationInput } from "@/lib/types";
+import type { ArticleGenerationInput, EditorInput, ModelAdapter, SimilarTitleGenerationInput, ValidationInput } from "@/lib/types";
 
 export function createRuntime() {
   const store = createWorkspaceStore();
@@ -10,21 +10,8 @@ export function createRuntime() {
   return {
     store,
     model,
-    runner: new QueueRunner(store, new LazySearchAdapter(), model)
+    runner: new QueueRunner(store, new WorkspaceResearchProvider(store), model)
   };
-}
-
-class LazySearchAdapter implements SearchAdapter {
-  private adapter: ExaSearchAdapter | null = null;
-
-  search(query: string, options: Parameters<SearchAdapter["search"]>[1]) {
-    return this.instance.search(query, options);
-  }
-
-  private get instance() {
-    this.adapter ??= new ExaSearchAdapter();
-    return this.adapter;
-  }
 }
 
 class LazyModelAdapter implements ModelAdapter {

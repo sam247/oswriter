@@ -1756,8 +1756,9 @@ function SettingsPanel({
 }) {
   const preferences = state.preferences;
   const writerKeyEnabled = preferences.aiProvider.writerKeyEnabled;
-  const researchKeyEnabled = preferences.aiProvider.researchKeyEnabled;
-  const providerLabel = writerKeyEnabled || researchKeyEnabled ? "Using Personal API Key" : "Using Platform AI";
+  const researchProvider = preferences.aiProvider.researchProvider ?? "queuewrite";
+  const firecrawlConfigured = preferences.aiProvider.firecrawlKeyStatus === "configured";
+  const providerLabel = researchProvider === "firecrawl" ? "Firecrawl research" : "QueueWrite Research";
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
@@ -1815,24 +1816,21 @@ function SettingsPanel({
               />
             )}
 
-            <SettingsToggle
-              label="BYOK Research Key"
-              checked={researchKeyEnabled}
-              onChange={(researchKeyEnabled) => onUpdatePreferences({
-                aiProvider: {
-                  researchKeyEnabled,
-                  researchApiKey: researchKeyEnabled ? preferences.aiProvider.researchApiKey : ""
-                }
-              })}
-              note="Optional. Stored for future research provider routing."
+            <SettingsSelect
+              label="Research Provider"
+              value={researchProvider}
+              options={[
+                { key: "queuewrite", label: "QueueWrite Research (Default)" },
+                { key: "firecrawl", label: "Firecrawl (Requires API Key)" }
+              ]}
+              onChange={(value) => onUpdatePreferences({ aiProvider: { researchProvider: value as "queuewrite" | "firecrawl" } })}
             />
-            {researchKeyEnabled && (
-              <SettingsSecretInput
-                label="Research API key"
-                saved={preferences.aiProvider.researchKeyStatus === "configured"}
-                onSave={(researchApiKey) => researchApiKey && onUpdatePreferences({ aiProvider: { researchApiKey, researchKeyEnabled: true } })}
-              />
-            )}
+            <SettingsSecretInput
+              label="Firecrawl API key"
+              saved={firecrawlConfigured}
+              onSave={(firecrawlApiKey) => firecrawlApiKey && onUpdatePreferences({ aiProvider: { firecrawlApiKey } })}
+            />
+            {researchProvider === "firecrawl" && !firecrawlConfigured && <div className="text-[11px] text-warn">Add a Firecrawl API key before activating this provider.</div>}
           </SettingsSection>
         </div>
       </div>
@@ -4579,6 +4577,8 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
   const researchKeyEnabled = patch.aiProvider?.researchKeyEnabled ?? preferences.aiProvider.researchKeyEnabled;
   const writerApiKey = patch.aiProvider?.writerApiKey ?? preferences.aiProvider.writerApiKey;
   const researchApiKey = patch.aiProvider?.researchApiKey ?? preferences.aiProvider.researchApiKey;
+  const researchProvider = patch.aiProvider?.researchProvider ?? preferences.aiProvider.researchProvider ?? "queuewrite";
+  const firecrawlApiKey = patch.aiProvider?.firecrawlApiKey ?? preferences.aiProvider.firecrawlApiKey ?? "";
   const providerPreference = writerKeyEnabled || researchKeyEnabled ? "bring_your_own_key" : "platform_managed";
   return {
     ...preferences,
@@ -4606,7 +4606,10 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
       writerKeyStatus: writerKeyEnabled && writerApiKey ? "configured" : writerKeyEnabled ? "placeholder" : "not_configured",
       researchKeyEnabled,
       researchApiKey: researchKeyEnabled ? researchApiKey : "",
-      researchKeyStatus: researchKeyEnabled && researchApiKey ? "configured" : researchKeyEnabled ? "placeholder" : "not_configured"
+      researchKeyStatus: researchKeyEnabled && researchApiKey ? "configured" : researchKeyEnabled ? "placeholder" : "not_configured",
+      researchProvider,
+      firecrawlApiKey,
+      firecrawlKeyStatus: firecrawlApiKey ? "configured" : "not_configured"
     },
     operational: {
       ...preferences.operational,

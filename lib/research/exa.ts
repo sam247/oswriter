@@ -9,10 +9,10 @@ interface ExaResult {
 }
 
 export class ExaSearchAdapter implements SearchAdapter {
-  private readonly apiKey = process.env.EXA_API_KEY;
+  private readonly apiKey = process.env.QUEUEWRITE_RESEARCH_API_KEY ?? process.env.EXA_API_KEY;
 
   async search(query: string, options: { numResults: number; includeDomains?: string[]; excludeDomains?: string[] }) {
-    if (!this.apiKey) throw new Error("Exa API unavailable: EXA_API_KEY is not set.");
+    if (!this.apiKey) throw new Error("QueueWrite Research is not configured.");
 
     const res = await fetch("https://api.exa.ai/search", {
       method: "POST",
@@ -36,7 +36,7 @@ export class ExaSearchAdapter implements SearchAdapter {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Exa search unavailable: ${res.status} ${body.slice(0, 200)}`);
+      throw new Error(`QueueWrite Research unavailable: ${res.status} ${body.slice(0, 200)}`);
     }
 
     const data = await res.json() as { results?: ExaResult[]; requestId?: string };
