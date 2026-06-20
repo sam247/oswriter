@@ -3,6 +3,7 @@ import type { ProjectProfileSnapshot, ResearchFactSource, ResearchPack, SearchAd
 import { buildQueryVariants, average, toResearchSource } from "@/lib/research/scoring";
 import { nowIso } from "@/lib/defaults";
 import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateResearchCostUsd } from "@/lib/telemetry/costs";
+import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
 
 const EXCLUDE_DOMAINS = [
   "dictionary.com",
@@ -31,9 +32,10 @@ const KNOWN_CONCEPT_PATTERNS: Array<[RegExp, string]> = [
   [/\brefresh tokens?\b/i, "Refresh Tokens"]
 ];
 
-export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null): Promise<ResearchPack> {
+export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null, contentProfile: ContentProfile = "industry_explainer"): Promise<ResearchPack> {
   const started = Date.now();
-  const queries = buildQueryVariants(title, profileSnapshot);
+  const definition = CONTENT_PROFILES[contentProfile];
+  const queries = buildQueryVariants(title, profileSnapshot, contentProfile);
   const seen = new Set<string>();
   const raw: SearchResult[] = [];
   const requestIds: string[] = [];
@@ -41,7 +43,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
   let exaContentPages = 0;
 
   const responses = await Promise.allSettled(queries.map((query) => search.search(query, {
-      numResults: 5,
+      numResults: definition.research.depth === "very_high" ? 8 : definition.research.depth === "high" ? 6 : 5,
       excludeDomains: EXCLUDE_DOMAINS
     })));
 
@@ -70,7 +72,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const accepted = scored
     .filter((source) => source.accepted)
     .sort((a, b) => (b.authorityScore + b.relevanceScore) - (a.authorityScore + a.relevanceScore))
-    .slice(0, 12)
+    .slice(0, Math.max(12, definition.research.minimumSources))
     .map((source) => ({ ...source, accepted: true, rejectionReason: undefined }));
   const acceptedUrls = new Set(accepted.map((source) => source.url));
   const rejected = scored
@@ -93,12 +95,15 @@ export async function runResearch(title: string, articleId: string, search: Sear
 
   if (accepted.length < 2) warnings.push("Research found fewer than 2 usable sources.");
   else if (accepted.length < 4) warnings.push("Research source coverage is below the preferred 4+ usable sources.");
+  if (accepted.length < definition.research.minimumSources) warnings.push(`${definition.label} research has ${accepted.length} of ${definition.research.minimumSources} recommended sources.`);
+  if (usefulFacts.length < definition.research.minimumEvidenceItems) warnings.push(`${definition.label} research has ${usefulFacts.length} of ${definition.research.minimumEvidenceItems} recommended evidence items.`);
   if (confidence < 60) warnings.push("Research confidence is low.");
   if (failures.length) warnings.push(`${failures.length} research query variants failed, but generation continued.`);
 
   return {
     articleId,
     title,
+    contentProfile,
     queries,
     sources: accepted,
     rejectedSources: rejected,

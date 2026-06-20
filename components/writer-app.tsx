@@ -16,6 +16,7 @@ import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSe
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
+import { CONTENT_PROFILES, PROJECT_CONTENT_PROFILE_OPTIONS, normalizeContentProfile, resolveContentProfile, type ContentProfile } from "@/lib/content-profiles";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
@@ -105,6 +106,7 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
 function Workbench() {
   const [state, setState] = useState<AppState | null>(null);
   const [titles, setTitles] = useState("");
+  const [newTitlesContentProfile, setNewTitlesContentProfile] = useState<ContentProfile | "">("");
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -406,7 +408,7 @@ function Workbench() {
     const res = await fetch("/api/jobs/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ titles: titles.split("\n") })
+      body: JSON.stringify({ titles: titles.split("\n"), contentProfile: newTitlesContentProfile || undefined })
     });
     const data = await res.json().catch(() => ({})) as { state?: AppState; jobs?: QueueJob[]; error?: string };
     setBusy(false);
@@ -611,6 +613,35 @@ function Workbench() {
     }
   }
 
+  async function updateDefaultContentProfile(defaultContentProfile: ContentProfile, projectId = state?.project.id) {
+    if (!state || !projectId) return;
+    const res = await fetch("/api/project", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, defaultContentProfile })
+    });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
+    if (res.ok && data.state) applyServerState(data.state, "project-content-profile");
+    setMessage(res.ok ? "Default content profile saved." : data.error ?? "Content profile save failed.");
+  }
+
+  async function updateSelectedContentProfile(value: string) {
+    const contentProfile = normalizeContentProfile(value) ?? null;
+    if (selectedArticle) {
+      const res = await fetch(`/api/articles/${selectedArticle.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contentProfile }) });
+      const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; error?: string };
+      if (res.ok && data.article) setSelectedArticle(data.article);
+      setMessage(res.ok ? "Article content profile updated for its next regeneration." : data.error ?? "Content profile update failed.");
+      return;
+    }
+    if (selectedJob) {
+      const res = await fetch(`/api/jobs/${selectedJob.id}/action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_content_profile", contentProfile }) });
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      if (res.ok) await refresh();
+      setMessage(res.ok ? "Queued article content profile updated." : data.error ?? "Content profile update failed.");
+    }
+  }
+
   async function updateProjectKnowledgeBase(knowledgeBase: ProjectKnowledgeBase, projectId = state?.project.id) {
     if (!state) return;
     const targetProjectId = projectId ?? state.project.id;
@@ -664,11 +695,17 @@ function Workbench() {
   async function createProject() {
     const name = window.prompt("New project name", "Untitled Project")?.trim();
     if (!name) return;
+    const requestedProfile = window.prompt(
+      `Default content profile (${PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => option.value).join(", ")})`,
+      "industry_explainer"
+    );
+    if (requestedProfile === null) return;
+    const defaultContentProfile = normalizeContentProfile(requestedProfile.trim()) ?? "industry_explainer";
     if (!window.confirm("Create a new project in the current workspace? Existing projects and their articles will be kept.")) return;
     const res = await fetch("/api/project", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, defaultContentProfile })
     });
     const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string };
     setProjectMenuOpen(false);
@@ -1292,6 +1329,10 @@ function Workbench() {
               rows={3}
               className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
             />
+            <select value={newTitlesContentProfile} onChange={(event) => setNewTitlesContentProfile(event.target.value as ContentProfile | "")} className="mt-1.5 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none" aria-label="Content profile for new titles">
+              <option value="">Inherit project profile ({CONTENT_PROFILES[resolveContentProfile(undefined, state?.project.defaultContentProfile)].label})</option>
+              {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
             <div className="mt-1.5 flex gap-1">
               <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
                 <Upload className="size-3.5" /> Add
@@ -1308,6 +1349,7 @@ function Workbench() {
               settingsBlockedReason={projectSettingsProject.id === state.project.id ? settingsBlockedReason : null}
               onClose={() => setProjectSettingsProjectId(null)}
               onUpdateProjectProfile={(patch) => updateProjectProfile(patch, projectSettingsProject.id)}
+              onUpdateDefaultContentProfile={(contentProfile) => updateDefaultContentProfile(contentProfile, projectSettingsProject.id)}
               onUpdateKnowledgeBase={(knowledgeBase) => updateProjectKnowledgeBase(knowledgeBase, projectSettingsProject.id)}
             />
           ) : settingsOpen && state ? (
@@ -1324,6 +1366,8 @@ function Workbench() {
                 research={details.research}
                 title={selectedTitle}
                 onTitleChange={(title) => selectedArticle && updateArticleDraft(selectedArticle.id, { title })}
+                projectDefaultContentProfile={state?.project.defaultContentProfile}
+                onContentProfileChange={updateSelectedContentProfile}
                 onReviewClick={() => {
                   setTab("validation");
                   setHighlightWarnings(true);
@@ -1802,6 +1846,7 @@ function ProjectSettingsPanel({
   settingsBlockedReason,
   onClose,
   onUpdateProjectProfile,
+  onUpdateDefaultContentProfile,
   onUpdateKnowledgeBase
 }: {
   project: ProjectDocument;
@@ -1809,6 +1854,7 @@ function ProjectSettingsPanel({
   settingsBlockedReason: string | null;
   onClose: () => void;
   onUpdateProjectProfile: (patch: ProjectProfilePatch) => void;
+  onUpdateDefaultContentProfile: (contentProfile: ContentProfile) => void;
   onUpdateKnowledgeBase: (knowledgeBase: ProjectKnowledgeBase) => void;
 }) {
   const profile = normalizeProjectProfile(project.profile, fallbackTargetWords);
@@ -1840,6 +1886,7 @@ function ProjectSettingsPanel({
               onChange={(industryKey) => onUpdateProjectProfile({ industryKey, audienceKey: defaultAudienceForIndustry(industryKey) })}
             />
             <SettingsSelect label="Audience" value={profile.audienceKey} options={audienceOptionsForIndustry(profile.industryKey)} onChange={(audienceKey) => onUpdateProjectProfile({ audienceKey })} />
+            <SettingsSelect label="Default content profile" value={project.defaultContentProfile ?? "industry_explainer"} options={PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => ({ key: option.value, label: option.label }))} onChange={(value) => onUpdateDefaultContentProfile(value as ContentProfile)} />
             <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
               <span className="text-ink-muted">Default target words</span>
               <input
@@ -2833,6 +2880,8 @@ function ArticleHeader({
   research,
   title,
   onTitleChange,
+  projectDefaultContentProfile,
+  onContentProfileChange,
   onReviewClick
 }: {
   article: ArticleDocument | null;
@@ -2840,6 +2889,8 @@ function ArticleHeader({
   research: ResearchPack | null;
   title: string;
   onTitleChange: (title: string) => void;
+  projectDefaultContentProfile?: ContentProfile;
+  onContentProfileChange: (profile: string) => void;
   onReviewClick: () => void;
 }) {
   const [openScore, setOpenScore] = useState<keyof ArticleScores | null>(null);
@@ -2848,7 +2899,10 @@ function ArticleHeader({
       <div className="px-6 pb-3 pt-5 lg:px-8">
         <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(job.status)}</div>
         <h1 className="mt-1 text-[24px] font-semibold leading-tight tracking-tight text-ink">{job.title}</h1>
-        <div className="mono mt-2 text-[11px] text-ink-muted">Attempt {job.attempts}</div>
+        <div className="mt-2 flex items-center gap-2">
+          <div className="mono text-[11px] text-ink-muted">Attempt {job.attempts}</div>
+          <ContentProfileSelect value={job.contentProfile ?? ""} projectDefault={projectDefaultContentProfile} onChange={onContentProfileChange} disabled={job.status !== "queued"} />
+        </div>
       </div>
     );
   }
@@ -2872,6 +2926,7 @@ function ArticleHeader({
         </div>
       </div>
       <div className="mono mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-muted">
+        <ContentProfileSelect value={article.contentProfile ?? ""} projectDefault={projectDefaultContentProfile} onChange={onContentProfileChange} />
         <ScoreMetricButton score={scores.quality} active={openScore === "quality"} onClick={() => setOpenScore(openScore === "quality" ? null : "quality")} />
         <ScoreMetricButton score={scores.research} active={openScore === "research"} onClick={() => setOpenScore(openScore === "research" ? null : "research")} />
         <ScoreMetricButton score={scores.evidence} active={openScore === "evidence"} onClick={() => setOpenScore(openScore === "evidence" ? null : "evidence")} />
@@ -2887,6 +2942,15 @@ function ArticleHeader({
       </div>
       {selectedScore && <ScoreDetailPanel score={selectedScore} />}
     </div>
+  );
+}
+
+function ContentProfileSelect({ value, projectDefault, onChange, disabled = false }: { value: ContentProfile | ""; projectDefault?: ContentProfile; onChange: (value: string) => void; disabled?: boolean }) {
+  return (
+    <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="h-7 rounded border border-line bg-surface-1 px-2 text-[11px] text-ink outline-none disabled:opacity-60" aria-label="Article content profile">
+      <option value="">Inherit: {CONTENT_PROFILES[resolveContentProfile(undefined, projectDefault)].label}</option>
+      {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
   );
 }
 

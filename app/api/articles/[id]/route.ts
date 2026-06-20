@@ -22,7 +22,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   const hasMarkdown = typeof body.markdown === "string";
   const hasTitle = typeof body.title === "string";
   const hasPinned = typeof body.isPinned === "boolean";
-  if (!hasMarkdown && !hasTitle && !hasPinned) {
+  const hasContentProfile = typeof body.contentProfile === "string" || body.contentProfile === null;
+  if (!hasMarkdown && !hasTitle && !hasPinned && !hasContentProfile) {
     return NextResponse.json({ error: "Missing article changes." }, { status: 400 });
   }
 

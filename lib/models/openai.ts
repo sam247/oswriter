@@ -7,6 +7,7 @@ import { cleanJsonText } from "@/lib/text";
 import { estimateGenerationCost } from "@/lib/telemetry/costs";
 import { pricingForModel } from "@/lib/telemetry/pricing";
 import { heuristicValidation } from "@/lib/validation/heuristics";
+import { CONTENT_PROFILES } from "@/lib/content-profiles";
 
 export class OpenAIModelAdapter implements ModelAdapter {
   private readonly client = new OpenAI({
@@ -19,7 +20,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
     const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
-    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.knowledgeBase);
+    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.knowledgeBase, input.contentProfile);
     const response = await this.client.chat.completions.create({
       model,
       messages: promptToMessages(
@@ -136,7 +137,8 @@ function normaliseBaseUrl(value: string | undefined) {
     .replace(/\/v1$/i, "");
 }
 
-export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, plan = buildArticleGenerationPlan(controls, profileSnapshot, knowledgeBase) }: ArticleGenerationInput) {
+export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, contentProfile = "industry_explainer", plan = buildArticleGenerationPlan(controls, profileSnapshot, knowledgeBase, contentProfile) }: ArticleGenerationInput) {
+  const contentDefinition = CONTENT_PROFILES[contentProfile];
   const projectContext = profileContextLines(profileSnapshot);
   const knowledgeContext = projectKnowledgeContextLines(knowledgeBase);
   const projectContextBlock = projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : "";
@@ -153,6 +155,12 @@ Non-negotiable:
 
 Title: ${title}
 ${projectContextBlock}${knowledgeContextBlock}
+Content profile: ${contentDefinition.label}
+Purpose: ${contentDefinition.purpose}
+Required outline pattern: ${contentDefinition.outline.join(" -> ")}
+Profile-specific instructions:
+${contentDefinition.writingInstructions.map((instruction) => `- ${instruction}`).join("\n")}
+Evidence expectations: ${contentDefinition.research.citationExpectations}
 Style profile: ${controls.styleProfile}
 Tone: ${controls.targetTone}
 Target length: about ${plan.targetWords} words (${plan.minimumWords}-${plan.maximumWords} acceptable)
@@ -196,8 +204,9 @@ ${markdown}
 Return only the improved Markdown.`;
 }
 
-function buildValidationPrompt({ title, markdown, research, profileSnapshot }: ValidationInput) {
+function buildValidationPrompt({ title, markdown, research, profileSnapshot, contentProfile = "industry_explainer" }: ValidationInput) {
   const projectContext = profileContextLines(profileSnapshot);
+  const contentDefinition = CONTENT_PROFILES[contentProfile];
   return `Validate this article. Validation is advisory and must never block saving.
 
 Return strict JSON with:
@@ -213,6 +222,7 @@ Return strict JSON with:
 }
 
 Check research quality, intent match, heading quality, FAQ quality, duplicate sections, duplicate FAQs, source leakage, research-process language, repetition, readability, completeness, and SEO basics.
+For this ${contentDefinition.label} profile, also check: ${contentDefinition.validation.join(", ")}.
 Use project context to judge relevance and expected complexity without contaminating the core quality score.
 
 Title: ${title}

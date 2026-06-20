@@ -1,8 +1,9 @@
 import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
 import { calculateProfileRelevanceScore } from "@/lib/project/profile";
 import type { ValidationInput, ValidationResult } from "@/lib/types";
+import { CONTENT_PROFILES } from "@/lib/content-profiles";
 
-export function heuristicValidation({ markdown, research, controls, targetWords, profileSnapshot }: ValidationInput): ValidationResult {
+export function heuristicValidation({ markdown, research, controls, targetWords, profileSnapshot, contentProfile = "industry_explainer" }: ValidationInput): ValidationResult {
   const warnings: string[] = [];
   const advisories: string[] = [];
   const needsReviewReasons: string[] = [];
@@ -10,7 +11,8 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   const hasFaq = /faq|frequently asked/i.test(markdown);
   const hasLeakage = /according to (the|this) source|research process|sources say/i.test(markdown);
   const wordCount = markdown.trim().split(/\s+/).filter(Boolean).length;
-  const plan = controls ? buildArticleGenerationPlan(controls, profileSnapshot) : null;
+  const plan = controls ? buildArticleGenerationPlan(controls, profileSnapshot, null, contentProfile) : null;
+  const contentDefinition = CONTENT_PROFILES[contentProfile];
   const effectiveTargetWords = targetWords ?? plan?.targetWords ?? null;
   const minimumWords = effectiveTargetWords ? Math.round(effectiveTargetWords * 0.8) : 650;
   const expectedH2Count = plan?.h2SectionCount ?? 4;
@@ -35,6 +37,11 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   if (wordCount < minimumWords) {
     warnings.push(effectiveTargetWords ? `Article is below 80% of the ${effectiveTargetWords}-word target.` : "Article is shorter than expected.");
     needsReviewReasons.push("Completeness needs review.");
+  }
+  const missingProfileRequirements = profileRequirementWarnings(contentProfile, markdown);
+  for (const warning of missingProfileRequirements) {
+    warnings.push(warning);
+    needsReviewReasons.push(`${contentDefinition.label} format needs review.`);
   }
   if (
     planningDiagnostics
@@ -66,4 +73,24 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
     faqScore,
     seoScore
   };
+}
+
+function profileRequirementWarnings(profile: ValidationInput["contentProfile"], markdown: string) {
+  const normalized = markdown.toLowerCase();
+  const has = (patterns: string[]) => patterns.some((pattern) => normalized.includes(pattern));
+  const warnings: string[] = [];
+  if (profile === "comparison" || profile === "best_of") {
+    if (!has(["strengths", "pros"]) || !has(["weaknesses", "cons", "limitations"])) warnings.push("Profile requires explicit strengths and weaknesses.");
+    if (!has(["recommendation", "who should choose", "best for"])) warnings.push("Profile requires a qualified recommendation section.");
+  }
+  if (profile === "best_of" && !has(["comparison table", "| feature", "| product"])) warnings.push("Best Of profile requires a comparison table.");
+  if (profile === "buying_guide" && !has(["budget", "cost"])) warnings.push("Buying Guide profile requires budget or cost factors.");
+  if (profile === "how_to") {
+    const steps = (markdown.match(/^##+\s+(?:step\s+\d+|\d+[.)])/gim) ?? []).length;
+    if (steps < 3) warnings.push("How-To profile requires at least three clearly ordered steps.");
+    if (!has(["prerequisite", "before you begin", "what you need"])) warnings.push("How-To profile requires prerequisites.");
+  }
+  if (profile === "industry_explainer" && !has(["what is", "definition", "refers to", "means"])) warnings.push("Industry Explainer profile requires a clear definition.");
+  if (["white_paper", "industry_report", "market_analysis", "research_report"].includes(profile ?? "") && !has(["executive summary", "abstract"])) warnings.push("Research profile requires an executive summary or abstract.");
+  return warnings;
 }

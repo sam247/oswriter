@@ -1,6 +1,7 @@
 import { clampTargetWords, planningPrioritiesForProfile } from "@/lib/project/profile";
 import { knowledgeBasePlanningPriorities, projectKnowledgeContextLines } from "@/lib/project/knowledge-base";
 import type { ContentControls, ProjectKnowledgeBase, ProjectProfileSnapshot, ResearchPack } from "@/lib/types";
+import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
 
 const MIN_OUTPUT_TOKENS = 3200;
 const MAX_OUTPUT_TOKENS = 8000;
@@ -40,10 +41,11 @@ export interface PlanningDiagnostics {
   breadthStatus: BreadthStatus;
 }
 
-export function buildArticleGenerationPlan(controls: ContentControls, profileSnapshot?: ProjectProfileSnapshot | null, knowledgeBase?: ProjectKnowledgeBase | null): ArticleGenerationPlan {
+export function buildArticleGenerationPlan(controls: ContentControls, profileSnapshot?: ProjectProfileSnapshot | null, knowledgeBase?: ProjectKnowledgeBase | null, contentProfile?: ContentProfile): ArticleGenerationPlan {
   const targetWords = clampTargetWords(profileSnapshot?.targetWords ?? controls.lengthTargetWords);
   const density = sectionDensityForAudience(profileSnapshot?.audience);
-  const h2SectionCount = clamp(Math.round(targetWords / density), 4, 12);
+  const contentDefinition = CONTENT_PROFILES[contentProfile ?? "industry_explainer"];
+  const h2SectionCount = clamp(Math.max(contentDefinition.outline.length, Math.round(targetWords / density)), 4, 12);
   const expectedDepth = expectedDepthForProfile(profileSnapshot, targetWords);
   const h3SectionCount = plannedH3CountForDepth(h2SectionCount, expectedDepth);
   const knowledgeContext = projectKnowledgeContextLines(knowledgeBase);
@@ -56,7 +58,15 @@ export function buildArticleGenerationPlan(controls: ContentControls, profileSna
     expectedDepth,
     wordsPerSection: Math.max(120, Math.round(targetWords / h2SectionCount)),
     maxOutputTokens: clamp(Math.ceil(targetWords * 2), MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS),
-    planningPriorities: [...planningPrioritiesForProfile(profileSnapshot), ...knowledgeBasePlanningPriorities(knowledgeBase)],
+    planningPriorities: [
+      ...(contentProfile ? [
+        `Use the ${contentDefinition.label} format`,
+        `Outline strategy: ${contentDefinition.outline.join("; ")}`,
+        ...contentDefinition.writingInstructions
+      ] : []),
+      ...planningPrioritiesForProfile(profileSnapshot),
+      ...knowledgeBasePlanningPriorities(knowledgeBase)
+    ],
     ...(knowledgeContext.length ? { knowledgeContext } : {})
   };
 }

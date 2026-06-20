@@ -13,6 +13,7 @@ import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/projec
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
+import { resolveContentProfile, type ContentProfile } from "@/lib/content-profiles";
 
 const EMERGENCY_STOP_REASON = "Emergency stopped by user.";
 
@@ -23,7 +24,7 @@ export class QueueRunner {
     private readonly model: ModelAdapter
   ) {}
 
-  async addTitles(titles: string[], projectId?: string) {
+  async addTitles(titles: string[], projectId?: string, contentProfile?: ContentProfile) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const clean = titles.map((title) => title.trim()).filter(Boolean);
     const existingJobs = await this.store.listJobs(resolvedProjectId);
@@ -37,6 +38,7 @@ export class QueueRunner {
         projectId: resolvedProjectId,
         articleId,
         title,
+        ...(contentProfile ? { contentProfile } : {}),
         status: "queued",
         createdAt,
         updatedAt: createdAt,
@@ -63,7 +65,7 @@ export class QueueRunner {
     return jobs;
   }
 
-  async addUniqueTitles(titles: string[], projectId?: string) {
+  async addUniqueTitles(titles: string[], projectId?: string, contentProfile?: ContentProfile) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const [articles, jobs] = await Promise.all([
       this.store.listArticles(resolvedProjectId),
@@ -76,14 +78,14 @@ export class QueueRunner {
       blocked.add(key);
       return true;
     });
-    return this.addTitles(unique, resolvedProjectId);
+    return this.addTitles(unique, resolvedProjectId, contentProfile);
   }
 
   async regenerateArticle(articleId: string, projectId?: string) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const article = await this.store.getArticle(articleId, resolvedProjectId);
     if (!article) throw new Error(`Article not found: ${articleId}`);
-    const [job] = await this.addTitles([article.title], resolvedProjectId);
+    const [job] = await this.addTitles([article.title], resolvedProjectId, article.contentProfile);
     const updatedArticle: ArticleDocument = {
       ...article,
       status: "needs_review",
@@ -179,6 +181,16 @@ export class QueueRunner {
     if (job.status !== "queued") throw new Error("Only queued jobs can be removed.");
     await this.store.deleteJob(jobId, resolvedProjectId);
     return jobId;
+  }
+
+  async setJobContentProfile(jobId: string, contentProfile: ContentProfile | undefined, projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
+    const job = await this.store.getJob(jobId, resolvedProjectId);
+    if (!job) throw new Error(`Job not found: ${jobId}`);
+    if (job.status !== "queued") throw new Error("Only queued articles can change content profile.");
+    const updated = { ...job, contentProfile, updatedAt: nowIso() };
+    await this.store.saveJob(updated);
+    return updated;
   }
 
   async regenerateLater(jobId: string, projectId?: string) {
@@ -345,15 +357,16 @@ export class QueueRunner {
       const { project, settings } = await this.store.ensureProject(job.projectId);
       const projectProfile = projectProfileFromControls(project.profile, settings.controls);
       const profileSnapshot = snapshotProjectProfile(projectProfile);
+      const contentProfile = resolveContentProfile(job.contentProfile, project.defaultContentProfile);
       const knowledgeBase = normalizeProjectKnowledgeBase(project.knowledgeBase);
-      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, knowledgeBase);
+      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, knowledgeBase, contentProfile);
 
       if (!stageDone(job, "research")) {
         await this.throwIfEmergencyStopped(job.projectId);
         job = { ...job, timings: markTiming(job.timings, "research_started_at"), pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
         await this.store.saveJob(job);
         log({ stage: "research", level: "info", message: "Research started." });
-        const research = await runResearch(job.title, job.articleId, this.search, profileSnapshot);
+        const research = await runResearch(job.title, job.articleId, this.search, profileSnapshot, contentProfile);
         await this.store.saveResearch(research, job.projectId);
         job = { ...job, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", { sourceCount: research.sources.length, confidence: research.confidence }), updatedAt: nowIso() };
         await this.store.saveJob(job);
@@ -369,7 +382,8 @@ export class QueueRunner {
           ...job,
           timings: markTiming(job.timings, "outline_completed_at"),
           pipeline: completeStage(job.pipeline, "outline", {
-            strategy: "target-guided",
+            strategy: contentProfile,
+            contentProfile,
             targetWords: plan.targetWords,
             h2SectionCount: plan.h2SectionCount,
             h3SectionCount: plan.h3SectionCount,
@@ -390,7 +404,7 @@ export class QueueRunner {
       await this.throwIfEmergencyStopped(job.projectId);
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot, knowledgeBase }));
+      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot, knowledgeBase, contentProfile }));
       await this.throwIfEmergencyStopped(job.projectId);
       const markdown = generation.markdown;
       job = {
@@ -410,7 +424,7 @@ export class QueueRunner {
       job = { ...job, timings: markTiming(job.timings, "save_started_at"), pipeline: startStage(job.pipeline, "save", "Saving generated article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
       const needsReview = [...research.warnings];
-      const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords, profileSnapshot });
+      const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords, profileSnapshot, contentProfile });
       const planningDiagnostics = buildPlanningDiagnostics(plan, markdown, research);
       needsReview.push(...validation.needsReviewReasons);
       const uniqueReasons = [...new Set(needsReview)];
@@ -442,7 +456,7 @@ export class QueueRunner {
       };
 
       const costTelemetry = buildArticleCostTelemetry(job, markdown, research, generation, plan, planningDiagnostics);
-      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics, costTelemetry);
+      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics, costTelemetry, contentProfile);
       await this.store.saveArticle(article);
       await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
@@ -583,6 +597,7 @@ export class QueueRunner {
         actualSections: planningDiagnostics.actualH2Count,
         planningDiagnostics,
         findingsExtracted,
+        contentProfile: article.resolvedContentProfile ?? research.contentProfile ?? "industry_explainer",
         profileSnapshot: article.profileSnapshot ?? null,
         profileRelevanceScore: article.profileRelevanceScore ?? null,
         costTelemetry
@@ -790,7 +805,8 @@ function createArticle(
   targetWords?: number,
   profileSnapshot?: ArticleDocument["profileSnapshot"],
   planningDiagnostics?: ArticleDocument["planningDiagnostics"],
-  costTelemetry?: ArticleDocument["costTelemetry"]
+  costTelemetry?: ArticleDocument["costTelemetry"],
+  contentProfile?: ContentProfile
 ): ArticleDocument {
   const now = nowIso();
   const sources = research.sources;
@@ -799,6 +815,8 @@ function createArticle(
     projectId: job.projectId,
     jobId: job.id,
     title: job.title,
+    contentProfile: job.contentProfile,
+    resolvedContentProfile: contentProfile,
     status: job.status === "processing" ? statusFromReviewReasons(needsReviewReasons) : job.status,
     isPinned: false,
     markdown,

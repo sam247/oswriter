@@ -3,6 +3,8 @@ export type QueueControlMode = "running" | "paused" | "stop_after_current" | "st
 export type PipelineStageName = "research" | "outline" | "generation" | "save" | "editor" | "validation" | "export";
 export type PipelineStatus = "idle" | "running" | "done" | "failed" | "skipped";
 export type StyleProfile = "standard" | "technical" | "developer" | "homeowner" | "commercial" | "authority" | "local-seo";
+export type { ContentProfile } from "@/lib/content-profiles";
+import type { ContentProfile } from "@/lib/content-profiles";
 
 export interface ContentControls {
   includeTldr: boolean;
@@ -58,6 +60,7 @@ export interface ProjectDocument {
   slug?: string;
   profile?: ProjectProfile;
   knowledgeBase?: ProjectKnowledgeBase;
+  defaultContentProfile?: ContentProfile;
   createdByUserId?: string;
   createdAt: string;
   updatedAt: string;
@@ -175,6 +178,7 @@ export interface QueueJob {
   projectId: string;
   articleId: string;
   title: string;
+  contentProfile?: ContentProfile;
   status: JobStatus;
   statusReason?: string | null;
   createdAt: string;
@@ -228,6 +232,7 @@ export interface ResearchPack {
   jobId?: string;
   runNumber?: number;
   title: string;
+  contentProfile?: ContentProfile;
   queries: string[];
   sources: ResearchSource[];
   rejectedSources: ResearchSource[];
@@ -327,6 +332,8 @@ export interface ArticleDocument {
   projectId: string;
   jobId: string;
   title: string;
+  contentProfile?: ContentProfile;
+  resolvedContentProfile?: ContentProfile;
   status: JobStatus;
   statusReason?: string | null;
   isPinned?: boolean;
@@ -613,6 +620,7 @@ export interface ArticleGenerationInput {
   plan?: import("@/lib/generation/plan").ArticleGenerationPlan;
   profileSnapshot?: ProjectProfileSnapshot | null;
   knowledgeBase?: ProjectKnowledgeBase | null;
+  contentProfile?: ContentProfile;
 }
 
 export interface EditorInput {
@@ -628,4 +636,5 @@ export interface ValidationInput {
   controls?: ContentControls;
   targetWords?: number;
   profileSnapshot?: ProjectProfileSnapshot | null;
+  contentProfile?: ContentProfile;
 }

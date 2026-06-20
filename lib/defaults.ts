@@ -22,6 +22,7 @@ export function createDefaultProject(): ProjectDocument {
   return {
     id: DEFAULT_PROJECT_ID,
     name: "Default Project",
+    defaultContentProfile: "industry_explainer",
     profile: createDefaultProjectProfile(DEFAULT_CONTROLS.lengthTargetWords),
     knowledgeBase: EMPTY_PROJECT_KNOWLEDGE_BASE,
     createdAt: now,

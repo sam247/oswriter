@@ -1,5 +1,6 @@
 import { profileSourcePreference } from "@/lib/project/profile";
 import type { ProjectProfileSnapshot, ResearchSource, SearchResult } from "@/lib/types";
+import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
 import { domainFromUrl } from "@/lib/text";
 
 const AUTHORITY_DOMAINS = [
@@ -30,7 +31,7 @@ const BAD_URL_PATTERNS = [
   /glossary/i
 ];
 
-export function buildQueryVariants(title: string, profileSnapshot?: ProjectProfileSnapshot | null) {
+export function buildQueryVariants(title: string, profileSnapshot?: ProjectProfileSnapshot | null, contentProfile: ContentProfile = "industry_explainer") {
   const cleaned = title
     .replace(/\b(explained|guide|complete guide|ultimate guide)\b/gi, "")
     .replace(/\s+/g, " ")
@@ -43,6 +44,11 @@ export function buildQueryVariants(title: string, profileSnapshot?: ProjectProfi
     `${cleaned} standard`,
     `${cleaned} legislation`
   ];
+  const definition = CONTENT_PROFILES[contentProfile];
+  if (definition.research.comparisonRequired) variants.push(`${cleaned} features pricing pros cons comparison`);
+  if (contentProfile === "best_of") variants.push(`${cleaned} alternatives reviews evaluation criteria`);
+  if (contentProfile === "buying_guide") variants.push(`${cleaned} buying criteria risks costs checklist`);
+  if (contentProfile === "how_to") variants.push(`${cleaned} official documentation steps common mistakes`);
   if (profileSnapshot?.region === "united_kingdom") variants.push(`${cleaned} UK`);
   if (profileSnapshot?.region === "united_states") variants.push(`${cleaned} US`);
   if (profileSnapshot?.region === "europe") variants.push(`${cleaned} EU`);
