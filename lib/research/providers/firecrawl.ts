@@ -25,25 +25,35 @@ export class FirecrawlDiscoveryProvider implements SourceDiscoveryProvider {
 
   async search(query: string, options: { numResults: number; includeDomains?: string[]; excludeDomains?: string[] }) {
     if (!this.apiKey.trim()) throw new Error("Firecrawl API key is required.");
+    try {
+      return await this.performSearch(query, options, true);
+    } catch (error) {
+      if (!isTimeoutError(error)) throw error;
+      return this.performSearch(query, options, false);
+    }
+  }
+
+  private async performSearch(query: string, options: { numResults: number; includeDomains?: string[]; excludeDomains?: string[] }, includeContent: boolean) {
+    const timeoutMs = includeContent ? 35_000 : 12_000;
     const res = await this.fetcher("https://api.firecrawl.dev/v2/search", {
       method: "POST",
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey.trim()}` },
       body: JSON.stringify({
         query,
-        limit: options.numResults,
+        limit: Math.min(options.numResults, 5),
         sources: ["web"],
         ...(options.includeDomains?.length ? { includeDomains: options.includeDomains } : {}),
         ...(options.excludeDomains?.length ? { excludeDomains: options.excludeDomains } : {}),
         ignoreInvalidURLs: true,
-        timeout: 18_000,
-        scrapeOptions: {
+        timeout: includeContent ? 32_000 : 10_000,
+        ...(includeContent ? { scrapeOptions: {
           formats: [{ type: "markdown" }],
           onlyMainContent: true,
-          onlyCleanContent: true,
+          onlyCleanContent: false,
           removeBase64Images: true,
           blockAds: true
-        }
+        } } : {})
       })
     });
     if (!res.ok) {
@@ -88,4 +98,9 @@ function markdownHighlights(markdown: string) {
     .map((part) => part.replace(/^#+\s*/g, "").replace(/\s+/g, " ").trim())
     .filter((part) => part.length >= 50 && part.length <= 500)
     .slice(0, 4);
+}
+
+function isTimeoutError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.name === "TimeoutError" || error.name === "AbortError" || /aborted|timeout/i.test(error.message);
 }

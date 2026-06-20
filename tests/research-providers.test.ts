@@ -32,7 +32,21 @@ describe("research provider architecture", () => {
     assert.equal(result.results[0]?.text?.startsWith("# Guide"), true);
     assert.equal(result.usage?.provider, "firecrawl");
     assert.equal(body.scrapeOptions.onlyMainContent, true);
-    assert.equal(body.scrapeOptions.onlyCleanContent, true);
+    assert.equal(body.scrapeOptions.onlyCleanContent, false);
+  });
+
+  it("falls back to discovery-only results when Firecrawl content scraping times out", async () => {
+    let calls = 0;
+    const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.scrapeOptions, undefined);
+      return new Response(JSON.stringify({ success: true, data: { web: [{ title: "Result", url: "https://example.com", description: "Useful discovery result" }] } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    const result = await new FirecrawlDiscoveryProvider("fc-test", fetcher).search("test", { numResults: 5 });
+    assert.equal(calls, 2);
+    assert.equal(result.results.length, 1);
   });
 
   it("resolves the selected provider per stored workspace user preference", async () => {

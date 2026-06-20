@@ -579,25 +579,25 @@ function Workbench() {
     }
   }
 
-  async function updateProjectProfile(profilePatch: ProjectProfilePatch, projectId = state?.project.id) {
-    if (!state) return;
+  async function updateProjectProfile(profilePatch: ProjectProfilePatch, projectId = state?.project.id, defaultContentProfile?: ContentProfile) {
+    if (!state) return false;
     const targetProjectId = projectId ?? state.project.id;
     const targetProject = projects.find((project) => project.id === targetProjectId) ?? state.project;
     const isActiveProject = targetProjectId === state.project.id;
     if (isActiveProject && settingsBlockedReason) {
       setMessage(settingsBlockedReason);
-      return;
+      return false;
     }
     const nextProfile = normalizeProjectProfile({ ...targetProject.profile, ...profilePatch }, state.settings.controls.lengthTargetWords);
     setState((current) => current ? {
       ...current,
-      project: current.project.id === targetProjectId ? { ...current.project, profile: nextProfile, updatedAt: new Date().toISOString() } : current.project,
-      projects: (current.projects ?? []).map((project) => project.id === targetProjectId ? { ...project, profile: nextProfile, updatedAt: new Date().toISOString() } : project)
+      project: current.project.id === targetProjectId ? { ...current.project, profile: nextProfile, ...(defaultContentProfile ? { defaultContentProfile } : {}), updatedAt: new Date().toISOString() } : current.project,
+      projects: (current.projects ?? []).map((project) => project.id === targetProjectId ? { ...project, profile: nextProfile, ...(defaultContentProfile ? { defaultContentProfile } : {}), updatedAt: new Date().toISOString() } : project)
     } : current);
     const res = await fetch("/api/project", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: targetProjectId, profile: profilePatch })
+      body: JSON.stringify({ projectId: targetProjectId, profile: profilePatch, ...(defaultContentProfile ? { defaultContentProfile } : {}) })
     });
     const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string };
     if (res.ok && data.state) {
@@ -610,19 +610,9 @@ function Workbench() {
     } else {
       setMessage(data.error ?? "Project settings save failed.");
       await refresh();
+      return false;
     }
-  }
-
-  async function updateDefaultContentProfile(defaultContentProfile: ContentProfile, projectId = state?.project.id) {
-    if (!state || !projectId) return;
-    const res = await fetch("/api/project", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, defaultContentProfile })
-    });
-    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
-    if (res.ok && data.state) applyServerState(data.state, "project-content-profile");
-    setMessage(res.ok ? "Default content profile saved." : data.error ?? "Content profile save failed.");
+    return true;
   }
 
   async function updateSelectedContentProfile(value: string) {
@@ -1041,7 +1031,7 @@ function Workbench() {
   }
 
   async function updatePreferences(patch: WorkspacePreferencePatch) {
-    if (!state) return;
+    if (!state) return false;
     const nextPreferences = mergeWorkspacePreferences(state.preferences, patch);
     setState((current) => current ? { ...current, preferences: nextPreferences } : current);
     const res = await fetch("/api/settings", {
@@ -1053,12 +1043,13 @@ function Workbench() {
     if (!res.ok) {
       setMessage(data.error ?? "Settings save failed.");
       await refresh();
-      return;
+      return false;
     }
     setMessage("Settings saved.");
     if (data.settings && data.preferences) {
       setState((current) => current ? { ...current, settings: data.settings!, preferences: data.preferences! } : current);
     }
+    return true;
   }
 
   function openSearchResult(result: GlobalSearchResult) {
@@ -1344,12 +1335,12 @@ function Workbench() {
         <section className="flex min-h-0 flex-col bg-background">
           {projectSettingsProject && state ? (
             <ProjectSettingsPanel
+              key={projectSettingsProject.id}
               project={projectSettingsProject}
               fallbackTargetWords={state.settings.controls.lengthTargetWords}
               settingsBlockedReason={projectSettingsProject.id === state.project.id ? settingsBlockedReason : null}
               onClose={() => setProjectSettingsProjectId(null)}
-              onUpdateProjectProfile={(patch) => updateProjectProfile(patch, projectSettingsProject.id)}
-              onUpdateDefaultContentProfile={(contentProfile) => updateDefaultContentProfile(contentProfile, projectSettingsProject.id)}
+              onSaveProjectSettings={(patch, contentProfile) => updateProjectProfile(patch, projectSettingsProject.id, contentProfile)}
               onUpdateKnowledgeBase={(knowledgeBase) => updateProjectKnowledgeBase(knowledgeBase, projectSettingsProject.id)}
             />
           ) : settingsOpen && state ? (
@@ -1752,13 +1743,27 @@ function SettingsPanel({
 }: {
   state: AppState;
   onClose: () => void;
-  onUpdatePreferences: (patch: WorkspacePreferencePatch) => void;
+  onUpdatePreferences: (patch: WorkspacePreferencePatch) => Promise<boolean>;
 }) {
-  const preferences = state.preferences;
-  const writerKeyEnabled = preferences.aiProvider.writerKeyEnabled;
-  const researchProvider = preferences.aiProvider.researchProvider ?? "queuewrite";
-  const firecrawlConfigured = preferences.aiProvider.firecrawlKeyStatus === "configured";
+  const [draft, setDraft] = useState(state.preferences);
+  const [dirty, setDirty] = useState(false);
+  const writerKeyEnabled = draft.aiProvider.writerKeyEnabled;
+  const researchProvider = draft.aiProvider.researchProvider ?? "queuewrite";
+  const firecrawlConfigured = draft.aiProvider.firecrawlKeyStatus === "configured";
   const providerLabel = researchProvider === "firecrawl" ? "Firecrawl research" : "QueueWrite Research";
+  const updateDraft = (patch: WorkspacePreferencePatch) => {
+    setDraft((current) => mergeWorkspacePreferences(current, patch));
+    setDirty(true);
+  };
+  const save = async () => {
+    if (researchProvider === "firecrawl" && !draft.aiProvider.firecrawlApiKey?.trim()) return;
+    const saved = await onUpdatePreferences({
+      account: draft.account,
+      notifications: { enabled: draft.notifications.enabled },
+      aiProvider: draft.aiProvider
+    });
+    if (saved) setDirty(false);
+  };
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
@@ -1775,9 +1780,9 @@ function SettingsPanel({
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-5xl">
           <SettingsSection title="Settings">
-            <SettingsTextInput label="Name" value={preferences.account.name} onSave={(name) => onUpdatePreferences({ account: { name } })} />
-            <SettingsTextInput label="Email address" value={preferences.account.email} type="email" onSave={(email) => onUpdatePreferences({ account: { email } })} />
-            <SettingsTextInput label="Workspace Name" value={preferences.account.workspaceName} onSave={(workspaceName) => onUpdatePreferences({ account: { workspaceName } })} />
+            <SettingsTextInput label="Name" value={draft.account.name} onSave={(name) => updateDraft({ account: { name } })} />
+            <SettingsTextInput label="Email address" value={draft.account.email} type="email" onSave={(email) => updateDraft({ account: { email } })} />
+            <SettingsTextInput label="Workspace Name" value={draft.account.workspaceName} onSave={(workspaceName) => updateDraft({ account: { workspaceName } })} />
 
             <a href="/settings/billing" className="mt-3 flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3 text-sm text-ink hover:border-line-strong hover:bg-surface-3">
               <span>
@@ -1791,8 +1796,8 @@ function SettingsPanel({
 
             <SettingsToggle
               label="Notifications"
-              checked={preferences.notifications.enabled}
-              onChange={(enabled) => onUpdatePreferences({ notifications: { enabled } })}
+              checked={draft.notifications.enabled}
+              onChange={(enabled) => updateDraft({ notifications: { enabled } })}
             />
 
             <div className="my-3 h-px bg-line" />
@@ -1800,10 +1805,10 @@ function SettingsPanel({
             <SettingsToggle
               label="BYOK Writer Key"
               checked={writerKeyEnabled}
-              onChange={(writerKeyEnabled) => onUpdatePreferences({
+              onChange={(writerKeyEnabled) => updateDraft({
                 aiProvider: {
                   writerKeyEnabled,
-                  writerApiKey: writerKeyEnabled ? preferences.aiProvider.writerApiKey : ""
+                  writerApiKey: writerKeyEnabled ? draft.aiProvider.writerApiKey : ""
                 }
               })}
               note="Optional. Platform AI remains the fallback until personal keys are wired into generation."
@@ -1811,8 +1816,8 @@ function SettingsPanel({
             {writerKeyEnabled && (
               <SettingsSecretInput
                 label="Writer API key"
-                saved={preferences.aiProvider.writerKeyStatus === "configured"}
-                onSave={(writerApiKey) => writerApiKey && onUpdatePreferences({ aiProvider: { writerApiKey, writerKeyEnabled: true } })}
+                saved={draft.aiProvider.writerKeyStatus === "configured"}
+                onSave={(writerApiKey) => writerApiKey && updateDraft({ aiProvider: { writerApiKey, writerKeyEnabled: true } })}
               />
             )}
 
@@ -1823,14 +1828,18 @@ function SettingsPanel({
                 { key: "queuewrite", label: "QueueWrite Research (Default)" },
                 { key: "firecrawl", label: "Firecrawl (Requires API Key)" }
               ]}
-              onChange={(value) => onUpdatePreferences({ aiProvider: { researchProvider: value as "queuewrite" | "firecrawl" } })}
+              onChange={(value) => updateDraft({ aiProvider: { researchProvider: value as "queuewrite" | "firecrawl" } })}
             />
             <SettingsSecretInput
               label="Firecrawl API key"
               saved={firecrawlConfigured}
-              onSave={(firecrawlApiKey) => firecrawlApiKey && onUpdatePreferences({ aiProvider: { firecrawlApiKey } })}
+              onSave={(firecrawlApiKey) => firecrawlApiKey && updateDraft({ aiProvider: { firecrawlApiKey } })}
             />
             {researchProvider === "firecrawl" && !firecrawlConfigured && <div className="text-[11px] text-warn">Add a Firecrawl API key before activating this provider.</div>}
+            <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
+              <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
+              <button onClick={save} disabled={!dirty || (researchProvider === "firecrawl" && !draft.aiProvider.firecrawlApiKey?.trim())} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save settings</button>
+            </div>
           </SettingsSection>
         </div>
       </div>
@@ -1843,19 +1852,27 @@ function ProjectSettingsPanel({
   fallbackTargetWords,
   settingsBlockedReason,
   onClose,
-  onUpdateProjectProfile,
-  onUpdateDefaultContentProfile,
+  onSaveProjectSettings,
   onUpdateKnowledgeBase
 }: {
   project: ProjectDocument;
   fallbackTargetWords: number;
   settingsBlockedReason: string | null;
   onClose: () => void;
-  onUpdateProjectProfile: (patch: ProjectProfilePatch) => void;
-  onUpdateDefaultContentProfile: (contentProfile: ContentProfile) => void;
+  onSaveProjectSettings: (patch: ProjectProfilePatch, contentProfile: ContentProfile) => Promise<boolean>;
   onUpdateKnowledgeBase: (knowledgeBase: ProjectKnowledgeBase) => void;
 }) {
-  const profile = normalizeProjectProfile(project.profile, fallbackTargetWords);
+  const initialProfile = normalizeProjectProfile(project.profile, fallbackTargetWords);
+  const [profile, setProfile] = useState(initialProfile);
+  const [contentProfile, setContentProfile] = useState<ContentProfile>(project.defaultContentProfile ?? "industry_explainer");
+  const [dirty, setDirty] = useState(false);
+  const updateProfile = (patch: ProjectProfilePatch) => {
+    setProfile((current) => normalizeProjectProfile({ ...current, ...patch }, fallbackTargetWords));
+    setDirty(true);
+  };
+  const save = async () => {
+    if (await onSaveProjectSettings(profile, contentProfile)) setDirty(false);
+  };
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
@@ -1876,15 +1893,15 @@ function ProjectSettingsPanel({
               <div className="text-[13px] font-medium text-ink">Generation context</div>
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
             </div>
-            <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => onUpdateProjectProfile({ regionKey })} />
+            <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => updateProfile({ regionKey })} />
             <SettingsSelect
               label="Industry"
               value={profile.industryKey}
               options={INDUSTRY_OPTIONS}
-              onChange={(industryKey) => onUpdateProjectProfile({ industryKey, audienceKey: defaultAudienceForIndustry(industryKey) })}
+              onChange={(industryKey) => updateProfile({ industryKey, audienceKey: defaultAudienceForIndustry(industryKey) })}
             />
-            <SettingsSelect label="Audience" value={profile.audienceKey} options={audienceOptionsForIndustry(profile.industryKey)} onChange={(audienceKey) => onUpdateProjectProfile({ audienceKey })} />
-            <SettingsSelect label="Default content profile" value={project.defaultContentProfile ?? "industry_explainer"} options={PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => ({ key: option.value, label: option.label }))} onChange={(value) => onUpdateDefaultContentProfile(value as ContentProfile)} />
+            <SettingsSelect label="Audience" value={profile.audienceKey} options={audienceOptionsForIndustry(profile.industryKey)} onChange={(audienceKey) => updateProfile({ audienceKey })} />
+            <SettingsSelect label="Default content profile" value={contentProfile} options={PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => ({ key: option.value, label: option.label }))} onChange={(value) => { setContentProfile(value as ContentProfile); setDirty(true); }} />
             <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
               <span className="text-ink-muted">Default target words</span>
               <input
@@ -1892,14 +1909,18 @@ function ProjectSettingsPanel({
                 min={300}
                 max={5000}
                 step={100}
-                defaultValue={profile.defaultTargetWords}
+                value={profile.defaultTargetWords}
                 disabled={Boolean(settingsBlockedReason)}
                 title={settingsBlockedReason ?? "Project default target words"}
-                onBlur={(event) => onUpdateProjectProfile({ defaultTargetWords: Number(event.currentTarget.value) })}
+                onChange={(event) => updateProfile({ defaultTargetWords: Number(event.currentTarget.value) })}
                 className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
               />
             </label>
             {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
+            <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
+              <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
+              <button onClick={save} disabled={!dirty || Boolean(settingsBlockedReason)} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save project settings</button>
+            </div>
           </SettingsSection>
           <KnowledgeBaseSettings
             knowledgeBase={project.knowledgeBase}
