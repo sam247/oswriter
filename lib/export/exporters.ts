@@ -20,7 +20,7 @@ export interface ProjectManifest {
 export function createProjectManifest(project: ProjectDocument, articles: ArticleDocument[], jobs: QueueJob[], researchPacks: ResearchPack[]): ProjectManifest {
   const generatedCount = articles.filter((article) => article.status === "generated").length;
   const reviewCount = articles.filter((article) => article.status === "needs_review").length;
-  const failedCount = jobs.filter((job) => job.status === "failed").length;
+  const failedCount = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const totalWords = articles.reduce((sum, article) => sum + article.wordCount, 0);
   return {
     projectName: project.name,

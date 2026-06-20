@@ -15,6 +15,7 @@ import { heuristicValidation } from "@/lib/validation/heuristics";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import { resolveContentProfile, type ContentProfile } from "@/lib/content-profiles";
 import type { ResearchProvider } from "@/lib/research/providers/types";
+import { ResearchProviderError } from "@/lib/research/providers/registry";
 
 const EMERGENCY_STOP_REASON = "Emergency stopped by user.";
 
@@ -108,6 +109,7 @@ export class QueueRunner {
       updatedAt: nowIso(),
       queuePosition: await this.nextQueuePosition(resolvedProjectId),
       fatalError: undefined,
+      researchTelemetry: undefined,
       statusReason: null,
       needsReviewReasons: [],
       pipeline: createPipeline(),
@@ -120,7 +122,7 @@ export class QueueRunner {
   async retryFailed(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const jobs = await this.store.listJobs(resolvedProjectId);
-    const failed = jobs.filter((job) => job.status === "failed");
+    const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed");
     await Promise.all(failed.map((job) => this.retryJob(job.id, resolvedProjectId)));
     return failed.length;
   }
@@ -164,7 +166,7 @@ export class QueueRunner {
     const job = await this.store.getJob(jobId, resolvedProjectId);
     if (!job) throw new Error(`Job not found: ${jobId}`);
     if (job.status === "processing") throw new Error("Cannot skip the article that is currently processing.");
-    if (job.status !== "queued" && job.status !== "failed") throw new Error("Only queued or failed jobs can be skipped.");
+    if (job.status !== "queued" && job.status !== "failed" && job.status !== "research_failed") throw new Error("Only queued or failed jobs can be skipped.");
     const skipped: QueueJob = {
       ...job,
       status: "skipped",
@@ -199,7 +201,7 @@ export class QueueRunner {
     const job = await this.store.getJob(jobId, resolvedProjectId);
     if (!job) throw new Error(`Job not found: ${jobId}`);
     if (job.status === "processing") throw new Error("Cannot move the article that is currently processing.");
-    if (job.status !== "queued" && job.status !== "failed" && job.status !== "skipped") throw new Error("Only queued, failed or skipped jobs can be regenerated later.");
+    if (job.status !== "queued" && job.status !== "failed" && job.status !== "research_failed" && job.status !== "skipped") throw new Error("Only queued, failed or skipped jobs can be regenerated later.");
     const now = nowIso();
     const next: QueueJob = {
       ...job,
@@ -208,6 +210,7 @@ export class QueueRunner {
       queuePosition: await this.nextQueuePosition(resolvedProjectId),
       updatedAt: now,
       fatalError: undefined,
+      researchTelemetry: undefined,
       timings: { ...job.timings, queued_at: now }
     };
     await this.store.saveJob(next);
@@ -371,8 +374,15 @@ export class QueueRunner {
           ? await this.researchProvider.research({ title: job.title, articleId: job.articleId, profileSnapshot, contentProfile })
           : await runResearch(job.title, job.articleId, this.researchProvider, profileSnapshot, contentProfile);
         await this.store.saveResearch(research, job.projectId);
-        job = { ...job, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", {
+        const researchTelemetry = {
+          requestedResearchProvider: research.requestedResearchProvider ?? research.researchProvider ?? "queuewrite",
+          actualResearchProvider: research.actualResearchProvider ?? research.researchProvider ?? "queuewrite",
+          fallbackUsed: research.fallbackUsed ?? false,
+          fallbackReason: research.fallbackReason ?? null
+        };
+        job = { ...job, researchTelemetry, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", {
           provider: research.researchProvider ?? "queuewrite",
+          ...researchTelemetry,
           sourcesFound: research.sourcesFound ?? research.sources.length + research.rejectedSources.length,
           sourcesAccepted: research.sources.length,
           evidenceItemsExtracted: research.evidenceItemsExtracted ?? research.usefulFacts.length,
@@ -480,6 +490,30 @@ export class QueueRunner {
       await this.markStoppedIfQueueEmpty(job.projectId);
       return job;
     } catch (error) {
+      if (error instanceof ResearchProviderError) {
+        const researchTelemetry = {
+          requestedResearchProvider: error.provider,
+          actualResearchProvider: error.provider,
+          fallbackUsed: false,
+          fallbackReason: error.reason
+        };
+        const researchFailed: QueueJob = {
+          ...job,
+          status: "research_failed",
+          statusReason: error.message,
+          fatalError: error.message,
+          researchTelemetry,
+          updatedAt: nowIso(),
+          timings: { ...job.timings, completed_at: nowIso() },
+          pipeline: failRunningStage(job.pipeline, error.message)
+        };
+        log({ stage: "research", level: "error", message: "BYOK research failed; generation was not started.", data: researchTelemetry });
+        await this.store.saveJob(researchFailed);
+        await this.store.saveDebug(debug, job.projectId);
+        await this.markStoppedIfRequested(job.projectId);
+        await this.markStoppedIfQueueEmpty(job.projectId);
+        return researchFailed;
+      }
       const message = error instanceof Error ? error.message : String(error);
       const failed: QueueJob = {
         ...job,
@@ -538,6 +572,10 @@ export class QueueRunner {
       generationProvider: costTelemetry.generationProvider,
       model: costTelemetry.generationModel,
       generationModel: costTelemetry.generationModel,
+      requestedResearchProvider: research.requestedResearchProvider ?? research.researchProvider ?? "queuewrite",
+      actualResearchProvider: research.actualResearchProvider ?? research.researchProvider ?? "queuewrite",
+      fallbackUsed: research.fallbackUsed ?? false,
+      fallbackReason: research.fallbackReason ?? null,
       targetWords: plan.targetWords,
       actualWords: article.wordCount,
       plannedSections: plan.h2SectionCount,

@@ -175,7 +175,7 @@ function Workbench() {
     const article = articles.find((item) => item.id === job.articleId);
     return article ? { ...job, status: article.status } : job;
   }), [articles, jobs]);
-  const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter);
+  const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter || (filter === "failed" && job.status === "research_failed"));
   const queueJobs = visibleJobs.filter(isQueueJobVisible);
   const libraryArticles = inventoryArticles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
   const pinnedLibraryArticles = libraryArticles.filter((article) => pinnedArticleIds.has(article.id));
@@ -185,7 +185,7 @@ function Workbench() {
     processing: displayJobs.filter((job) => job.status === "processing").length,
     generated: inventoryArticles.filter((article) => article.status === "generated").length,
     needs_review: inventoryArticles.filter((article) => article.status === "needs_review").length,
-    failed: displayJobs.filter((job) => job.status === "failed").length,
+    failed: displayJobs.filter((job) => job.status === "failed" || job.status === "research_failed").length,
     skipped: displayJobs.filter((job) => job.status === "skipped").length
   }), [displayJobs, inventoryArticles]);
   const stats = queueStatus ? {
@@ -478,7 +478,7 @@ function Workbench() {
       optimisticClaimsRef.current.delete(data.job.id);
       if (traceJobIdRef.current === data.job.id) recordTransitionTrace("process-next-response", data.job);
       upsertJob(data.job);
-      if (data.job.status !== "failed") setSelectedArticleId(data.job.articleId);
+      if (data.job.status !== "failed" && data.job.status !== "research_failed") setSelectedArticleId(data.job.articleId);
     } else {
       optimisticClaimsRef.current.clear();
     }
@@ -1260,6 +1260,11 @@ function Workbench() {
                     active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
                     onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
                     onRetry={() => retryOne(job.id)}
+                    onChangeProvider={() => {
+                      setSelectedArticleId(null);
+                      setSettingsOpen(true);
+                      setProjectSettingsProjectId(null);
+                    }}
                     onAction={(action) => actOnJob(job.id, action)}
                   />
                 );
@@ -1385,7 +1390,7 @@ function Workbench() {
                     editorRef={editorRef}
                     onChange={(markdown) => updateArticleDraft(selectedArticle.id, { markdown })}
                   />
-                ) : selectedJob ? <JobPlaceholder job={selectedJob} /> : null}
+                ) : selectedJob ? <JobPlaceholder job={selectedJob} onRetry={() => retryOne(selectedJob.id)} onChangeProvider={() => { setSelectedArticleId(null); setSettingsOpen(true); }} /> : null}
               </div>
               {selectedArticle && <ArticleMetricsRail saveState={saveState} lastSavedAt={lastSavedAt} />}
             </>
@@ -2034,7 +2039,7 @@ function ProjectInsights({
   const warnings = 0;
   const reviewReasons = articles.filter((article) => article.status === "needs_review").length;
   const scoreAverages = summaryScoreAverages(articles);
-  const failed = jobs.filter((job) => job.status === "failed").slice(0, 5);
+  const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").slice(0, 5);
   const topDomains = buildTopDomains(articles);
 
   return (
@@ -2339,7 +2344,7 @@ function StatusDistribution({ jobs }: { jobs: QueueJob[] }) {
   const segments: { label: string; value: number; className: string }[] = [
     { label: "Generated", value: jobs.filter((job) => job.status === "generated").length, className: "bg-success" },
     { label: "Review", value: jobs.filter((job) => job.status === "needs_review").length, className: "bg-warn" },
-    { label: "Failed", value: jobs.filter((job) => job.status === "failed").length, className: "bg-danger" },
+    { label: "Failed", value: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length, className: "bg-danger" },
     { label: "Writing", value: jobs.filter((job) => job.status === "processing").length, className: "bg-info" },
     { label: "Queued", value: jobs.filter((job) => job.status === "queued").length, className: "bg-ink-subtle" },
     { label: "Skipped", value: jobs.filter((job) => job.status === "skipped").length, className: "bg-line-strong" }
@@ -2371,7 +2376,7 @@ function AttentionList({ articles, jobs }: { articles: ArticleSummary[]; jobs: Q
         tone: "warn" as const
       })),
     ...jobs
-      .filter((job) => job.status === "failed")
+      .filter((job) => job.status === "failed" || job.status === "research_failed")
       .map((job) => ({
         id: job.id,
         title: job.title,
@@ -2415,7 +2420,7 @@ function SourceDomainList({ domains }: { domains: SourceDomainSummary[] }) {
 function ProjectExportReadiness({ articles, jobs, metrics }: { articles: ArticleSummary[]; jobs: QueueJob[]; metrics: QueueMetrics }) {
   const generated = articles.filter((article) => article.status === "generated").length;
   const needsReview = articles.filter((article) => article.status === "needs_review").length;
-  const failed = jobs.filter((job) => job.status === "failed").length;
+  const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const exportable = articles.length > 0;
 
   return (
@@ -2675,6 +2680,7 @@ function QueueListItem({
   active,
   onSelect,
   onRetry,
+  onChangeProvider,
   onAction
 }: {
   job: QueueJob;
@@ -2682,6 +2688,7 @@ function QueueListItem({
   active: boolean;
   onSelect: () => void;
   onRetry: () => void;
+  onChangeProvider: () => void;
   onAction: (action: "skip" | "remove" | "regenerate_later" | "move_up" | "move_down" | "move_top" | "move_bottom") => void;
 }) {
   const displayStatus = displayStatusLabel(job, article);
@@ -2714,13 +2721,14 @@ function QueueListItem({
               </span>
             ))}
           </span>
-          {summary && <span className={cn("mt-1 block truncate text-[11px]", job.status === "failed" ? "text-danger" : "text-warn")}>{summary}</span>}
+          {summary && <span className={cn("mt-1 block truncate text-[11px]", job.status === "failed" || job.status === "research_failed" ? "text-danger" : "text-warn")}>{summary}</span>}
         </span>
       </button>
-      {job.status === "failed" && (
-        <button onClick={onRetry} className="invisible absolute right-2 top-2 rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink group-hover:visible">
-          Retry
-        </button>
+      {(job.status === "failed" || job.status === "research_failed") && (
+        <div className="invisible absolute right-2 top-2 flex gap-1 group-hover:visible">
+          <button onClick={onRetry} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink">Retry</button>
+          {job.status === "research_failed" && <button onClick={onChangeProvider} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted shadow-sm ring-1 ring-line hover:text-ink">Change Provider</button>}
+        </div>
       )}
       {(job.status === "queued" || job.status === "processing" || job.status === "skipped") && (
         <QueueItemActions job={job} onAction={onAction} />
@@ -3263,9 +3271,9 @@ function ExportLink({
   );
 }
 
-function JobPlaceholder({ job }: { job: QueueJob }) {
+function JobPlaceholder({ job, onRetry, onChangeProvider }: { job: QueueJob; onRetry: () => void; onChangeProvider: () => void }) {
   const runtime = calculatePipelineRuntime(job.pipeline);
-  if (job.status !== "failed") {
+  if (job.status !== "failed" && job.status !== "research_failed") {
     return (
       <div className="mx-auto max-w-[760px] px-8 py-10">
         <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{displayStatusLabel(job)}</div>
@@ -3287,18 +3295,23 @@ function JobPlaceholder({ job }: { job: QueueJob }) {
 
   return (
     <div className="mx-auto max-w-[760px] px-8 py-10">
-      <div className="mono text-[10px] uppercase tracking-[0.18em] text-danger">Failed</div>
+      <div className="mono text-[10px] uppercase tracking-[0.18em] text-danger">{job.status === "research_failed" ? "Research Failed" : "Failed"}</div>
       <h2 className="mt-2 text-2xl font-semibold tracking-tight text-ink">{job.title}</h2>
       <p className="mt-4 max-w-2xl text-sm leading-6 text-ink-muted">
-        This job has no saved article because it hit a technical failure before draft save.
+        {job.status === "research_failed" ? "Research stopped at the selected BYOK provider. No outline or article generation was started." : "This job has no saved article because it hit a technical failure before draft save."}
       </p>
       <div className="mt-6 grid max-w-xl grid-cols-2 gap-x-6 gap-y-2 text-xs">
         <MetricLine label="Attempt" value={job.attempts} />
         <MetricLine label="Updated" value={relativeDate(job.updatedAt)} />
         <MetricLine label="Runtime" value={formatDuration(runtime.totalMs)} />
         <MetricLine label="Failed stage" value={job.pipeline.find((step) => step.status === "failed")?.stage ?? "-"} />
+        {job.status === "research_failed" && <MetricLine label="Provider" value={researchProviderLabel(job.researchTelemetry?.actualResearchProvider)} />}
       </div>
-      <pre className="mono mt-6 max-w-2xl whitespace-pre-wrap rounded-md bg-surface-2 p-3 text-xs leading-relaxed text-danger">{job.fatalError ?? "No fatal error recorded."}</pre>
+      <pre className="mono mt-6 max-w-2xl whitespace-pre-wrap rounded-md bg-surface-2 p-3 text-xs leading-relaxed text-danger">{job.statusReason ?? job.fatalError ?? "No fatal error recorded."}</pre>
+      <div className="mt-4 flex gap-2">
+        <button onClick={onRetry} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white">Retry</button>
+        {job.status === "research_failed" && <button onClick={onChangeProvider} className="h-8 rounded-md bg-surface-1 px-3 text-[12px] font-medium text-ink ring-1 ring-line">Change Provider</button>}
+      </div>
     </div>
   );
 }
@@ -4219,6 +4232,7 @@ function statusColor(status: JobStatus) {
     processing: "bg-info",
     generated: "bg-success",
     needs_review: "bg-warn",
+    research_failed: "bg-danger",
     failed: "bg-danger",
     skipped: "bg-ink-subtle"
   }[status];
@@ -4230,6 +4244,7 @@ function statusBadgeTone(status: JobStatus) {
     processing: "bg-info/10 text-info",
     generated: "bg-success/10 text-success",
     needs_review: "bg-warn/10 text-warn",
+    research_failed: "bg-danger/10 text-danger",
     failed: "bg-danger/10 text-danger",
     skipped: "bg-surface-3 text-ink-subtle"
   }[status];
@@ -4241,6 +4256,7 @@ function statusTextTone(status: JobStatus) {
     processing: "text-info",
     generated: "text-success",
     needs_review: "text-warn",
+    research_failed: "text-danger",
     failed: "text-danger",
     skipped: "text-ink-subtle"
   }[status];
@@ -4252,9 +4268,15 @@ function statusLabel(status: JobStatus) {
     processing: "Generating",
     generated: "Generated",
     needs_review: "Needs review",
+    research_failed: "Research Failed",
     failed: "Failed",
     skipped: "Skipped"
   }[status];
+}
+
+function researchProviderLabel(provider?: string | null) {
+  if (provider === "firecrawl") return "Firecrawl";
+  return "QueueWrite Research";
 }
 
 function formatMarkdown(markdown: string, start: number, end: number, command: FormatCommand) {
@@ -4447,7 +4469,7 @@ function displayStatusLabel(job: QueueJob, article?: ArticleSummary | ArticleDoc
 }
 
 function isQueueJobVisible(job: QueueJob) {
-  return job.status === "queued" || job.status === "processing" || job.status === "failed" || job.status === "skipped";
+  return job.status === "queued" || job.status === "processing" || job.status === "research_failed" || job.status === "failed" || job.status === "skipped";
 }
 
 function mergeOptimisticProcessingClaims(state: AppState, claims: Map<string, QueueJob>): AppState {
@@ -4490,7 +4512,7 @@ function queueStatusNeedsFullRefresh(state: AppState, status: QueueStatus) {
   if (state.jobs.some((job) => job.status === "processing")) return true;
   return state.jobs.filter((job) => job.status === "generated").length !== status.generated
     || state.jobs.filter((job) => job.status === "needs_review").length !== status.review
-    || state.jobs.filter((job) => job.status === "failed").length !== status.failed;
+    || state.jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length !== status.failed;
 }
 
 function isInventoryArticle(article: ArticleSummary) {
@@ -4512,6 +4534,7 @@ function filterLabel(filter: Filter) {
     processing: "Writing",
     generated: "Generated",
     needs_review: "Review",
+    research_failed: "Research Failed",
     failed: "Failed",
     skipped: "Skipped"
   }[filter];
@@ -4526,7 +4549,7 @@ interface QueueStateDescription {
 function describeQueueState(mode: QueueControlMode, jobs: QueueJob[]): QueueStateDescription {
   const processing = jobs.find((job) => job.status === "processing");
   const queued = jobs.filter((job) => job.status === "queued").length;
-  const failed = jobs.filter((job) => job.status === "failed").length;
+  const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   if (mode === "stop_after_current") {
     if (!processing && queued === 0) return { mode: "stopped", label: "Stopped", detail: "No active article is processing." };
     return {
@@ -4808,11 +4831,12 @@ function calculateProjectSummary(state: AppState, analytics: ProjectAnalyticsSum
   const scoreAverages = summaryScoreAverages(articles);
   const generatedCount = articles.filter((article) => article.status === "generated").length;
   const reviewCount = articles.filter((article) => article.status === "needs_review").length;
-  const failedCount = articles.filter((article) => article.status === "failed").length;
+  const failedCount = state.jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const completedAssets = generatedCount + reviewCount + failedCount;
   const timestamps = [
     state.project.updatedAt,
-    ...articles.map((article) => article.updatedAt)
+    ...articles.map((article) => article.updatedAt),
+    ...state.jobs.map((job) => job.updatedAt)
   ].filter(Boolean).sort();
 
   return {
@@ -4869,7 +4893,7 @@ function buildRunHistory(jobs: QueueJob[], _articles: ArticleSummary[]): RunSumm
       total: run.length,
       generated: run.filter((job) => job.status === "generated").length,
       needsReview: run.filter((job) => job.status === "needs_review").length,
-      failed: run.filter((job) => job.status === "failed").length,
+      failed: run.filter((job) => job.status === "failed" || job.status === "research_failed").length,
       averageRuntimeMs: runtimes.length ? Math.round(runtimes.reduce((sum, runtime) => sum + runtime, 0) / runtimes.length) : null
     };
   });
@@ -4879,7 +4903,7 @@ function calculateQueueMetrics(jobs: QueueJob[], _articles: ArticleSummary[], no
   const total = jobs.length;
   const generated = jobs.filter((job) => job.status === "generated").length;
   const needsReview = jobs.filter((job) => job.status === "needs_review").length;
-  const failed = jobs.filter((job) => job.status === "failed").length;
+  const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const skipped = jobs.filter((job) => job.status === "skipped").length;
   const processingJobs = jobs.filter((job) => job.status === "processing");
   const processingCount = processingJobs.length;

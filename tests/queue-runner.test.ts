@@ -6,6 +6,8 @@ import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGenerationResult, SearchAdapter, ValidationInput, ValidationResult } from "@/lib/types";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
+import { ResearchProviderError } from "@/lib/research/providers/registry";
+import type { ResearchProvider } from "@/lib/research/providers/types";
 
 class FakeSearch implements SearchAdapter {
   constructor(private readonly mode: "strong" | "weak" | "down" = "strong") {}
@@ -858,6 +860,44 @@ describe("QueueRunner", () => {
     const state = await store.getFullState();
     assert.notEqual(state.jobs[0].status, "failed");
     assert.equal(state.articles.length, 1);
+  });
+
+  it("stops at Research Failed without generation or managed fallback for BYOK quota errors", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    let generationCalls = 0;
+    const provider: ResearchProvider = {
+      id: "firecrawl",
+      label: "Firecrawl",
+      async research() {
+        throw new ResearchProviderError("firecrawl", "quota_exhausted", 402, "Quota exceeded (HTTP 402)");
+      }
+    };
+    const model: ModelAdapter = {
+      async generateArticle() { generationCalls += 1; return "must not generate"; },
+      async editArticle(input) { return input.markdown; },
+      async validateArticle(input) { return new FakeModel().validateArticle(input); }
+    };
+    const runner = new QueueRunner(store, provider, model);
+    const [created] = await runner.addTitles(["BYOK quota failure"]);
+    await runner.resumeQueue();
+    const result = await runner.processNext();
+
+    assert.equal(result.job?.status, "research_failed");
+    assert.equal(result.job?.statusReason, "Quota exceeded (HTTP 402)");
+    assert.deepEqual(result.job?.researchTelemetry, {
+      requestedResearchProvider: "firecrawl",
+      actualResearchProvider: "firecrawl",
+      fallbackUsed: false,
+      fallbackReason: "quota_exhausted"
+    });
+    assert.equal(result.job?.pipeline.find((step) => step.stage === "research")?.status, "failed");
+    assert.equal(result.job?.pipeline.find((step) => step.stage === "generation")?.status, "idle");
+    assert.equal(generationCalls, 0);
+    assert.equal((await store.getFullState()).articles.length, 0);
+
+    const retried = await runner.retryJob(created.id);
+    assert.equal(retried.status, "queued");
+    assert.equal(retried.researchTelemetry, undefined);
   });
 });
 

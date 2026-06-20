@@ -141,7 +141,7 @@ export class WorkspaceStore {
       processing: jobs.filter((job) => job.status === "processing").length,
       generated: jobs.filter((job) => job.status === "generated").length,
       review: jobs.filter((job) => job.status === "needs_review").length,
-      failed: jobs.filter((job) => job.status === "failed").length,
+      failed: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length,
       ...(activeJob ? { activeJob: {
         id: activeJob.id,
         title: activeJob.title,
@@ -169,7 +169,7 @@ export class WorkspaceStore {
       article_count: completed.length,
       generated_count: completed.filter((article) => article.status === "generated").length,
       review_count: completed.filter((article) => article.status === "needs_review").length,
-      failed_count: jobs.filter((job) => job.status === "failed").length,
+      failed_count: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length,
       average_quality: average(completed.map((article) => article.qualityScore)),
       average_research: average(completed.map((article) => article.researchScore)),
       average_evidence: average(completed.map((article) => article.evidenceScore)),
@@ -250,7 +250,7 @@ export class WorkspaceStore {
   async clearQueueData(projectId?: string) {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
     const jobs = await this.listJobs(resolvedProjectId);
-    const queueJobs = jobs.filter((job) => job.status === "queued" || job.status === "failed" || job.status === "skipped");
+    const queueJobs = jobs.filter((job) => job.status === "queued" || job.status === "failed" || job.status === "research_failed" || job.status === "skipped");
     await Promise.all(queueJobs.map((job) => this.storage.deletePath(jobPath(job.id, resolvedProjectId))));
     return queueJobs.length;
   }
@@ -283,7 +283,7 @@ export class WorkspaceStore {
       processing: jobs.filter((job) => job.status === "processing").length,
       generated: jobs.filter((job) => job.status === "generated").length,
       needsReview: jobs.filter((job) => job.status === "needs_review").length,
-      failed: jobs.filter((job) => job.status === "failed").length
+      failed: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length
     };
   }
 

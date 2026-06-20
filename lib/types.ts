@@ -1,4 +1,4 @@
-export type JobStatus = "queued" | "processing" | "generated" | "needs_review" | "failed" | "skipped";
+export type JobStatus = "queued" | "processing" | "generated" | "needs_review" | "research_failed" | "failed" | "skipped";
 export type QueueControlMode = "running" | "paused" | "stop_after_current" | "stopped";
 export type PipelineStageName = "research" | "outline" | "generation" | "save" | "editor" | "validation" | "export";
 export type PipelineStatus = "idle" | "running" | "done" | "failed" | "skipped";
@@ -192,6 +192,7 @@ export interface QueueJob {
   queuePosition?: number;
   needsReviewReasons: string[];
   fatalError?: string;
+  researchTelemetry?: ResearchProviderTelemetry;
   pipeline: PipelineStep[];
   timings?: ArticleTiming;
 }
@@ -238,6 +239,10 @@ export interface ResearchPack {
   title: string;
   contentProfile?: ContentProfile;
   researchProvider?: ResearchProviderId;
+  requestedResearchProvider?: ResearchProviderId;
+  actualResearchProvider?: ResearchProviderId;
+  fallbackUsed?: boolean;
+  fallbackReason?: string | null;
   sourcesFound?: number;
   evidenceItemsExtracted?: number;
   evidenceItemsUsed?: number;
@@ -245,7 +250,7 @@ export interface ResearchPack {
   costPerSource?: number;
   costPerAcceptedSource?: number;
   costPerEvidenceItem?: number;
-  providerUsage?: Record<string, number | string | null>;
+  providerUsage?: Record<string, number | string | boolean | null>;
   queries: string[];
   sources: ResearchSource[];
   rejectedSources: ResearchSource[];
@@ -272,6 +277,13 @@ export interface ResearchPack {
   profileSnapshot?: ProjectProfileSnapshot | null;
   profileRelevanceScore?: number | null;
   createdAt: string;
+}
+
+export interface ResearchProviderTelemetry {
+  requestedResearchProvider: ResearchProviderId;
+  actualResearchProvider: ResearchProviderId;
+  fallbackUsed: boolean;
+  fallbackReason: string | null;
 }
 
 export interface ResearchRun {
@@ -427,6 +439,10 @@ export interface GenerationTelemetryDocument {
   generationProvider?: string | null;
   model?: string | null;
   generationModel?: string | null;
+  requestedResearchProvider?: ResearchProviderId | null;
+  actualResearchProvider?: ResearchProviderId | null;
+  fallbackUsed?: boolean;
+  fallbackReason?: string | null;
   targetWords: number;
   actualWords: number;
   plannedSections: number;

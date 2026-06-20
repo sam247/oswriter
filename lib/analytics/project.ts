@@ -122,7 +122,7 @@ export function buildProjectAnalytics({
     { key: "visibility_delay_ms", label: "Visibility Delay", average_ms: averageMetric(recent, "visibility_delay_ms") }
   ];
   const successfulJobs = jobs.filter((job) => job.status === "generated" || job.status === "needs_review").length;
-  const failedJobs = jobs.filter((job) => job.status === "failed").length;
+  const failedJobs = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const completedJobs = successfulJobs + failedJobs;
   const throughputWindowMs = projectWindowMs(metrics);
   const queueBreakdownAverages = buildQueueBreakdownAverages(recent, averageMetric(recent, "queue_wait_ms"));

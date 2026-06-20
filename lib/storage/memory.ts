@@ -57,7 +57,7 @@ export class MemoryStorageAdapter implements StorageProvider {
       processing: jobs.filter((job) => job.status === "processing").length,
       generated: jobs.filter((job) => job.status === "generated").length,
       needsReview: jobs.filter((job) => job.status === "needs_review").length,
-      failed: jobs.filter((job) => job.status === "failed").length
+      failed: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length
     };
   }
 

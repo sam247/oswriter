@@ -142,7 +142,7 @@ export class NeonStorageProvider implements StorageProvider {
         select
           count(*) filter (where j.status = 'queued')::int as queued,
           count(*) filter (where j.status = 'processing')::int as processing,
-          count(*) filter (where j.status = 'failed')::int as failed,
+          count(*) filter (where j.status in ('failed', 'research_failed'))::int as failed,
           count(*) filter (where j.status = 'generated')::int as generated,
           count(*) filter (where j.status = 'needs_review')::int as review,
           (array_agg(j.id order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_id,
@@ -202,7 +202,7 @@ export class NeonStorageProvider implements StorageProvider {
           count(*) filter (where status = 'processing')::int as processing,
           count(*) filter (where status = 'generated')::int as generated,
           count(*) filter (where status = 'needs_review')::int as needs_review,
-          count(*) filter (where status = 'failed')::int as failed
+          count(*) filter (where status in ('failed', 'research_failed'))::int as failed
         from jobs
         where organisation_id = ${tenant.organisationId} and project_id = ${projectId}
       `);
@@ -390,7 +390,7 @@ export class NeonStorageProvider implements StorageProvider {
           where project_id = ${projectId}
             and status in ('generated', 'needs_review')
         ), job_metrics as (
-          select count(*) filter (where status = 'failed')::int as failed_count
+          select count(*) filter (where status in ('failed', 'research_failed'))::int as failed_count
           from jobs where project_id = ${projectId}
         )
         select article_metrics.*, job_metrics.failed_count
@@ -1339,6 +1339,7 @@ export class NeonStorageProvider implements StorageProvider {
     await this.sql`
       insert into generation_telemetry (
         id, organisation_id, project_id, article_id, job_id, created_by_user_id, generation_provider, model, generation_model,
+        requested_research_provider, actual_research_provider, fallback_used, fallback_reason,
         target_words, actual_words, planned_sections, actual_sections, finish_reason, review_status,
         planned_h2_count, planned_h3_count, expected_depth, actual_h2_count, actual_h3_count, actual_depth,
         h2_achievement_percent, h3_achievement_percent, target_achievement_percent, planner_outcome,
@@ -1355,6 +1356,7 @@ export class NeonStorageProvider implements StorageProvider {
       values (
         ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.jobId ?? null}, ${next.createdByUserId ?? null},
         ${next.generationProvider ?? null}, ${next.model ?? null}, ${next.generationModel ?? next.model ?? null},
+        ${next.requestedResearchProvider ?? null}, ${next.actualResearchProvider ?? null}, ${Boolean(next.fallbackUsed)}, ${next.fallbackReason ?? null},
         ${next.targetWords}, ${next.actualWords}, ${next.plannedSections}, ${next.actualSections},
         ${next.finishReason ?? null}, ${next.reviewStatus}, ${next.plannedH2Count ?? 0}, ${next.plannedH3Count ?? 0},
         ${next.expectedDepth ?? null}, ${next.actualH2Count ?? 0}, ${next.actualH3Count ?? 0}, ${next.actualDepth ?? null},
@@ -1380,6 +1382,10 @@ export class NeonStorageProvider implements StorageProvider {
         generation_provider = excluded.generation_provider,
         model = excluded.model,
         generation_model = excluded.generation_model,
+        requested_research_provider = excluded.requested_research_provider,
+        actual_research_provider = excluded.actual_research_provider,
+        fallback_used = excluded.fallback_used,
+        fallback_reason = excluded.fallback_reason,
         target_words = excluded.target_words,
         actual_words = excluded.actual_words,
         planned_sections = excluded.planned_sections,
@@ -2054,6 +2060,10 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
     generationProvider: nullableString(row.generation_provider),
     model: nullableString(row.model),
     generationModel: nullableString(row.generation_model) ?? nullableString(row.model),
+    requestedResearchProvider: nullableString(row.requested_research_provider) as GenerationTelemetryDocument["requestedResearchProvider"],
+    actualResearchProvider: nullableString(row.actual_research_provider) as GenerationTelemetryDocument["actualResearchProvider"],
+    fallbackUsed: Boolean(row.fallback_used),
+    fallbackReason: nullableString(row.fallback_reason),
     targetWords: Number(row.target_words ?? 0),
     actualWords: Number(row.actual_words ?? 0),
     plannedSections: Number(row.planned_sections ?? 0),

@@ -2,10 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { FirecrawlDiscoveryProvider } from "@/lib/research/providers/firecrawl";
-import { RESEARCH_PROVIDER_OPTIONS, ResearchProviderRegistry, WorkspaceResearchProvider } from "@/lib/research/providers/registry";
+import { RESEARCH_PROVIDER_OPTIONS, ResearchProviderError, ResearchProviderRegistry, WorkspaceResearchProvider } from "@/lib/research/providers/registry";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
-import type { ResearchPack } from "@/lib/types";
 
 describe("research provider architecture", () => {
   it("exposes product-safe provider labels", () => {
@@ -69,21 +68,25 @@ describe("research provider architecture", () => {
     assert.equal(result.researchProvider, "firecrawl");
   });
 
-  it("falls back to QueueWrite Research when BYOK quota is exhausted", async () => {
+  it("does not fall back to managed research when BYOK quota is exhausted", async () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     const preferences = await store.getWorkspacePreferences();
     await store.saveWorkspacePreferences({
       ...preferences,
       aiProvider: { ...preferences.aiProvider, researchProvider: "firecrawl", firecrawlApiKey: "fc-user-key", firecrawlKeyStatus: "configured" }
     });
-    const pack = (provider: "queuewrite" | "firecrawl"): ResearchPack => ({ articleId: "article-1", title: "Fallback", queries: [], sources: [], rejectedSources: [], usefulFacts: [], rejectedFacts: [], questionsFound: [], headingsFound: [], authorityScore: 0, relevanceScore: 0, confidence: 0, warnings: [], requestIds: [], durationMs: 1, researchProvider: provider, createdAt: new Date(0).toISOString() });
+    let managedCalls = 0;
     const registry = new ResearchProviderRegistry()
       .register("firecrawl", () => ({ id: "firecrawl", label: "Firecrawl", async research() { throw new Error("402 Insufficient credits"); } }))
-      .register("queuewrite", () => ({ id: "queuewrite", label: "QueueWrite Research", async research() { return pack("queuewrite"); } }));
-    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "Fallback", articleId: "article-1" });
-    assert.equal(result.researchProvider, "queuewrite");
-    assert.equal(result.providerUsage?.fallbackReason, "quota_exhausted");
-    assert.match(result.warnings[0] ?? "", /QueueWrite Research completed this run/);
+      .register("queuewrite", () => ({ id: "queuewrite", label: "QueueWrite Research", async research() { managedCalls += 1; throw new Error("must not run"); } }));
+    await assert.rejects(
+      () => new WorkspaceResearchProvider(store, registry).research({ title: "Fallback", articleId: "article-1" }),
+      (error) => error instanceof ResearchProviderError
+        && error.provider === "firecrawl"
+        && error.reason === "quota_exhausted"
+        && error.message === "Quota exceeded (HTTP 402)"
+    );
+    assert.equal(managedCalls, 0);
   });
 
   it("returns a reviewable research pack instead of failing when every provider is unavailable", async () => {
@@ -103,5 +106,14 @@ describe("research provider architecture", () => {
     assert.match(sql, /research_provider text/);
     assert.match(sql, /cost_per_accepted_source numeric/);
     assert.match(sql, /cost_per_evidence_item numeric/);
+  });
+
+  it("defines provider outcome telemetry for successful and failed research", async () => {
+    const sql = await readFile(new URL("../db/migrations/0016_research_provider_outcomes.sql", import.meta.url), "utf8");
+    assert.match(sql, /research_failed/);
+    assert.match(sql, /requested_research_provider/);
+    assert.match(sql, /actual_research_provider/);
+    assert.match(sql, /fallback_used/);
+    assert.match(sql, /fallback_reason/);
   });
 });
