@@ -75,7 +75,8 @@ export function createDefaultWorkspacePreferences(input: Partial<WorkspacePrefer
       researchKeyEnabled: false,
       researchKeyStatus: "not_configured",
       researchApiKey: "",
-      researchProvider: "queuewrite"
+      researchProvider: "queuewrite",
+      byokResearchProvider: "tavily"
     },
     operational: {
       autoStartQueueOnAdd: false,

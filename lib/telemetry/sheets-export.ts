@@ -34,7 +34,10 @@ export const PROVIDER_TELEMETRY_HEADERS = [
   "Evidence Score",
   "Generation Cost",
   "Total Cost",
-  "Data Status"
+  "Data Status",
+  "Provider Type",
+  "Provider Credits",
+  "Provider Cost Pricing Source"
 ] as const;
 
 export interface SheetsAppendClient {
@@ -260,11 +263,26 @@ export function buildProviderTelemetryRow(
     ?? telemetry.requestedResearchProvider
     ?? metadataString(telemetry.metadata, "researchProvider")
     ?? "queuewrite";
+  const providerName = research?.providerUsage?.providerName
+    ?? metadataString(telemetry.metadata, "researchProviderName")
+    ?? researchProviderLabel(provider);
+  const providerType = research?.providerUsage?.providerType
+    ?? metadataString(telemetry.metadata, "researchProviderType")
+    ?? researchProviderType(provider);
+  const providerCostKnown = research?.providerUsage?.providerCostKnown
+    ?? metadataBoolean(telemetry.metadata, "providerCostKnown")
+    ?? true;
+  const providerCredits = numberOrNull(research?.providerUsage?.creditsUsed)
+    ?? numberOrNull(metadataNumber(telemetry.metadata, "providerCreditsUsed"))
+    ?? "";
+  const providerCostPricingSource = research?.providerUsage?.providerCostPricingSource
+    ?? metadataString(telemetry.metadata, "providerCostPricingSource")
+    ?? "";
   const legacyManagedCostMissing = provider === "queuewrite"
     && telemetry.estimatedResearchCostUsd === 0
     && (telemetry.exaSearchRequests ?? telemetry.exaSearchCalls) === 0;
   const generationCostMissing = !telemetry.generationCostPricingSource;
-  const researchCost: TelemetryCell = legacyManagedCostMissing
+  const researchCost: TelemetryCell = legacyManagedCostMissing || !providerCostKnown
     ? ""
     : money(research?.researchCostUsd ?? metadataNumber(telemetry.metadata, "researchCostUsd") ?? telemetry.estimatedResearchCostUsd);
   const generationCost: TelemetryCell = generationCostMissing
@@ -275,6 +293,7 @@ export function buildProviderTelemetryRow(
     : money(telemetry.totalCostUsd);
   const missing = [
     legacyManagedCostMissing ? "research cost" : null,
+    !providerCostKnown ? "provider cost" : null,
     generationCostMissing ? "generation cost" : null,
     (research?.contentProfile ?? metadataString(telemetry.metadata, "contentProfile")) ? null : "content profile"
   ].filter(Boolean);
@@ -287,7 +306,7 @@ export function buildProviderTelemetryRow(
     article.id,
     article.title,
     research?.contentProfile ?? metadataString(telemetry.metadata, "contentProfile") ?? "Missing",
-    researchProviderLabel(provider),
+    String(providerName),
     researchCost,
     millisecondsToSeconds(telemetry.researchDurationMs ?? research?.durationMs),
     research?.sourcesFound ?? metadataNumber(telemetry.metadata, "sourcesFound") ?? telemetry.sourcesDiscovered,
@@ -300,7 +319,10 @@ export function buildProviderTelemetryRow(
     scores.evidence.score,
     generationCost,
     totalCost,
-    missing.length ? `Missing ${missing.join(", ")} telemetry` : "Complete"
+    missing.length ? `Missing ${missing.join(", ")} telemetry` : "Complete",
+    String(providerType),
+    providerCredits,
+    String(providerCostPricingSource)
   ];
 }
 
@@ -608,6 +630,14 @@ function metadataNumber(metadata: Record<string, unknown>, key: string) {
   return isNumber(metadata[key]) ? metadata[key] : null;
 }
 
+function numberOrNull(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function metadataBoolean(metadata: Record<string, unknown>, key: string) {
+  return typeof metadata[key] === "boolean" ? metadata[key] : null;
+}
+
 function benchmarkPairId(title: string) {
   return title
     .toLowerCase()
@@ -626,6 +656,12 @@ function researchProviderLabel(provider: string) {
     .filter(Boolean)
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function researchProviderType(provider: string) {
+  if (provider === "queuewrite") return "Production";
+  if (provider === "queuewrite_experimental") return "Experimental";
+  return "BYOK";
 }
 
 function sum(values: number[]) {

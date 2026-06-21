@@ -43,6 +43,10 @@ export async function runResearch(title: string, articleId: string, search: Sear
   let exaContentPages = 0;
   let providerCreditsUsed = 0;
   let providerCostUsd = 0;
+  let providerCostReports = 0;
+  let providerName: string | null = null;
+  let providerType: "Production" | "Experimental" | "BYOK" | null = null;
+  let providerCostPricingSource: string | null = null;
   let managedResearchCostUsd = 0;
   let managedResearchCostReports = 0;
 
@@ -57,7 +61,13 @@ export async function runResearch(title: string, articleId: string, search: Sear
     const { results, requestId } = response.value;
     exaContentPages += response.value.usage?.exaContentPages ?? results.filter((result) => result.text || result.summary || (result.highlights?.length ?? 0) > 0).length;
     providerCreditsUsed += response.value.usage?.creditsUsed ?? 0;
-    providerCostUsd += response.value.usage?.estimatedCostUsd ?? 0;
+    if (typeof response.value.usage?.estimatedCostUsd === "number") {
+      providerCostUsd += response.value.usage.estimatedCostUsd;
+      providerCostReports += 1;
+    }
+    providerName = response.value.usage?.providerName ?? providerName;
+    providerType = response.value.usage?.providerType ?? providerType;
+    providerCostPricingSource = response.value.usage?.providerCostPricingSource ?? providerCostPricingSource;
     if (typeof response.value.usage?.managedResearchCostUsd === "number") {
       managedResearchCostUsd += response.value.usage.managedResearchCostUsd;
       managedResearchCostReports += 1;
@@ -117,6 +127,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const managedContentPages = isManagedExaProvider ? exaContentPages : 0;
   const reportedManagedCostIsComplete = researchProvider === "queuewrite_experimental"
     && managedResearchCostReports === responses.length;
+  const providerCostIsKnown = isManagedExaProvider || providerCostReports === responses.length;
   const researchCostUsd = isManagedExaProvider
     ? (reportedManagedCostIsComplete
         ? managedResearchCostUsd
@@ -130,14 +141,20 @@ export async function runResearch(title: string, articleId: string, search: Sear
     sourcesFound,
     evidenceItemsExtracted,
     evidenceItemsUsed: evidenceItemsExtracted,
-    researchCostUsd,
-    costPerSource: sourcesFound ? researchCostUsd / sourcesFound : 0,
-    costPerAcceptedSource: accepted.length ? researchCostUsd / accepted.length : 0,
-    costPerEvidenceItem: evidenceItemsExtracted ? researchCostUsd / evidenceItemsExtracted : 0,
+    ...(providerCostIsKnown ? {
+      researchCostUsd,
+      costPerSource: sourcesFound ? researchCostUsd / sourcesFound : 0,
+      costPerAcceptedSource: accepted.length ? researchCostUsd / accepted.length : 0,
+      costPerEvidenceItem: evidenceItemsExtracted ? researchCostUsd / evidenceItemsExtracted : 0
+    } : {}),
     providerUsage: {
       creditsUsed: providerCreditsUsed,
       searchRequests: queries.length,
       contentPages: exaContentPages,
+      providerName: providerName ?? (researchProvider === "queuewrite" ? "QueueWrite Research" : researchProvider === "queuewrite_experimental" ? "QueueWrite Research Experimental" : "BYOK Research"),
+      providerType: providerType ?? (researchProvider === "queuewrite" ? "Production" : researchProvider === "queuewrite_experimental" ? "Experimental" : "BYOK"),
+      providerCostKnown: providerCostIsKnown,
+      ...(providerCostPricingSource ? { providerCostPricingSource } : {}),
       ...(reportedManagedCostIsComplete ? { reportedResearchCostUsd: managedResearchCostUsd } : {})
     },
     queries,
@@ -162,7 +179,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
     exaContentPages: managedContentPages,
     estimatedExaSearchCostUsd: estimatedExaSearchCostUsd(managedSearchRequests),
     estimatedExaContentCostUsd: estimatedExaContentCostUsd(managedContentPages),
-    estimatedResearchCostUsd: researchCostUsd,
+    ...(providerCostIsKnown ? { estimatedResearchCostUsd: researchCostUsd } : {}),
     profileSnapshot,
     profileRelevanceScore,
     createdAt: nowIso()

@@ -1,15 +1,17 @@
+import type { WorkspaceStore } from "@/lib/storage/storage";
 import type { ResearchProvider, ResearchProviderInput } from "@/lib/research/providers/types";
+import { createByokResearchProvider } from "@/lib/research/providers/byok";
 import { createQueueWriteResearchProvider } from "@/lib/research/providers/queuewrite";
 import { createQueueWriteResearchExperimentalProvider } from "@/lib/research/providers/queuewrite-experimental";
 import type { ResearchPack, ResearchProviderId, ResearchProviderTelemetry } from "@/lib/types";
 
 export const RESEARCH_PROVIDER_OPTIONS: ReadonlyArray<{ id: ResearchProviderId; label: string; requiresApiKey: boolean }> = [
-  { id: "queuewrite", label: "QueueWrite Research", requiresApiKey: false }
+  { id: "queuewrite", label: "QueueWrite Research", requiresApiKey: false },
+  { id: "byok", label: "BYOK Experimental (Tavily)", requiresApiKey: true }
 ];
 
 export const INTERNAL_RESEARCH_PROVIDER_OPTIONS: ReadonlyArray<{ id: ResearchProviderId; label: string }> = [
-  { id: "queuewrite_experimental", label: "QueueWrite Research Experimental" },
-  { id: "byok", label: "BYOK Research (not configured)" }
+  { id: "queuewrite_experimental", label: "QueueWrite Research Experimental" }
 ];
 
 export class ResearchProviderRegistry {
@@ -18,7 +20,7 @@ export class ResearchProviderRegistry {
   constructor() {
     this.register("queuewrite", () => createQueueWriteResearchProvider());
     this.register("queuewrite_experimental", () => createQueueWriteResearchExperimentalProvider());
-    this.register("byok", () => createByokPlaceholderProvider());
+    this.register("byok", (apiKey) => createByokResearchProvider(apiKey ?? ""));
   }
 
   register(id: ResearchProviderId, factory: (apiKey?: string) => ResearchProvider) {
@@ -38,10 +40,25 @@ export class WorkspaceResearchProvider implements ResearchProvider {
   readonly label = "QueueWrite Research";
 
   constructor(
+    private readonly store: WorkspaceStore,
     private readonly registry = new ResearchProviderRegistry()
   ) {}
 
   async research(input: ResearchProviderInput): Promise<ResearchPack> {
+    const preferences = await this.store.getWorkspacePreferences();
+    if (preferences.aiProvider.researchProvider === "byok") {
+      try {
+        if (!preferences.aiProvider.researchApiKey.trim()) throw new Error("Tavily API key is required.");
+        return withProviderTelemetry(await this.registry.create("byok", preferences.aiProvider.researchApiKey).research(input), {
+          requestedResearchProvider: "byok",
+          actualResearchProvider: "byok",
+          fallbackUsed: false,
+          fallbackReason: null
+        });
+      } catch (error) {
+        throw ResearchProviderError.from("byok", error);
+      }
+    }
     try {
       return withProviderTelemetry(await this.registry.create("queuewrite").research(input), {
         requestedResearchProvider: "queuewrite",
@@ -53,16 +70,6 @@ export class WorkspaceResearchProvider implements ResearchProvider {
       return unavailableResearchPack(input, "QueueWrite Research was temporarily unavailable. Generation continued with limited evidence.", providerFailureReason(error));
     }
   }
-}
-
-function createByokPlaceholderProvider(): ResearchProvider {
-  return {
-    id: "byok",
-    label: "BYOK Research",
-    async research() {
-      throw new ResearchProviderError("byok", "provider_unavailable", null, "BYOK Research is not configured.");
-    }
-  };
 }
 
 export class ResearchProviderError extends Error {

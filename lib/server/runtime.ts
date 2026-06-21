@@ -10,7 +10,7 @@ export function createRuntime() {
   return {
     store,
     model,
-    runner: new QueueRunner(store, new WorkspaceResearchProvider(), model)
+    runner: new QueueRunner(store, new WorkspaceResearchProvider(store), model)
   };
 }
 

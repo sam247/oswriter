@@ -881,9 +881,17 @@ export class NeonStorageProvider implements StorageProvider {
       from organisation_settings
       where organisation_id = ${tenant.organisationId}
     `);
+    const userFound = rows(await this.sql`
+      select preferences
+      from user_provider_preferences
+      where organisation_id = ${tenant.organisationId} and user_id = ${tenant.userId}
+    `);
     const saved = isRecord(found[0]?.preferences) ? found[0].preferences as unknown as WorkspacePreferencesDocument : null;
+    const userPreferences = isRecord(userFound[0]?.preferences) ? userFound[0].preferences as Record<string, unknown> : {};
     const normalized = withWorkspacePreferenceDefaults(saved, tenant);
     const aiProvider = normalized.aiProvider;
+    const researchApiKey = typeof userPreferences.researchApiKey === "string" ? userPreferences.researchApiKey : "";
+    const researchProvider = userPreferences.researchProvider === "byok" && researchApiKey ? "byok" : "queuewrite";
     return {
       ...normalized,
       aiProvider: {
@@ -892,10 +900,11 @@ export class NeonStorageProvider implements StorageProvider {
         writerKeyEnabled: aiProvider.writerKeyEnabled,
         writerKeyStatus: aiProvider.writerKeyStatus,
         writerApiKey: aiProvider.writerApiKey,
-        researchProvider: "queuewrite",
-        researchKeyEnabled: false,
-        researchKeyStatus: "not_configured",
-        researchApiKey: ""
+        researchProvider,
+        researchKeyEnabled: Boolean(researchApiKey),
+        researchKeyStatus: researchApiKey ? "configured" : "not_configured",
+        researchApiKey,
+        byokResearchProvider: "tavily"
       }
     };
   }
@@ -915,7 +924,8 @@ export class NeonStorageProvider implements StorageProvider {
         researchProvider: "queuewrite",
         researchKeyEnabled: false,
         researchKeyStatus: "not_configured",
-        researchApiKey: ""
+        researchApiKey: "",
+        byokResearchProvider: "tavily"
       }
     };
     await this.sql`
@@ -935,7 +945,11 @@ export class NeonStorageProvider implements StorageProvider {
       values (
         ${tenant.organisationId},
         ${tenant.userId},
-        ${JSON.stringify({ researchProvider: "queuewrite" })}::jsonb,
+        ${JSON.stringify({
+          researchProvider: next.aiProvider.researchProvider === "byok" && next.aiProvider.researchApiKey ? "byok" : "queuewrite",
+          byokResearchProvider: "tavily",
+          researchApiKey: next.aiProvider.researchApiKey ?? ""
+        })}::jsonb,
         ${next.updatedAt}::timestamptz
       )
       on conflict (organisation_id, user_id) do update set

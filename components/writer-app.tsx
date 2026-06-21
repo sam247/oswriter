@@ -1752,6 +1752,7 @@ function SettingsPanel({
   const [draft, setDraft] = useState(state.preferences);
   const [dirty, setDirty] = useState(false);
   const writerKeyEnabled = draft.aiProvider.writerKeyEnabled;
+  const tavilyKeyConfigured = draft.aiProvider.researchKeyStatus === "configured";
   const updateDraft = (patch: WorkspacePreferencePatch) => {
     setDraft((current) => mergeWorkspacePreferences(current, patch));
     setDirty(true);
@@ -1820,6 +1821,32 @@ function SettingsPanel({
                 onSave={(writerApiKey) => writerApiKey && updateDraft({ aiProvider: { writerApiKey, writerKeyEnabled: true } })}
               />
             )}
+
+            <div className="my-3 h-px bg-line" />
+
+            <SettingsSecretInput
+              label="Tavily API Key"
+              saved={tavilyKeyConfigured}
+              onSave={(researchApiKey) => researchApiKey && updateDraft({
+                aiProvider: {
+                  researchApiKey,
+                  researchKeyEnabled: true,
+                  researchKeyStatus: "configured",
+                  byokResearchProvider: "tavily"
+                }
+              })}
+            />
+            <div className="mt-3">
+              <SettingsSelect
+                label="Research provider"
+                value={draft.aiProvider.researchProvider ?? "queuewrite"}
+                options={[
+                  { key: "queuewrite", label: "QueueWrite Research" },
+                  ...(tavilyKeyConfigured ? [{ key: "byok", label: "BYOK Experimental (Tavily)" }] : [])
+                ]}
+                onChange={(researchProvider) => updateDraft({ aiProvider: { researchProvider: researchProvider as "queuewrite" | "byok" } })}
+              />
+            </div>
 
             <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
               <div>
@@ -4579,6 +4606,9 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
   const notificationsEnabled = patch.notifications?.enabled ?? preferences.notifications.enabled;
   const writerKeyEnabled = patch.aiProvider?.writerKeyEnabled ?? preferences.aiProvider.writerKeyEnabled;
   const writerApiKey = patch.aiProvider?.writerApiKey ?? preferences.aiProvider.writerApiKey;
+  const replacementResearchKey = patch.aiProvider?.researchApiKey;
+  const researchKeyConfigured = Boolean(replacementResearchKey?.trim()) || preferences.aiProvider.researchKeyStatus === "configured";
+  const requestedResearchProvider = patch.aiProvider?.researchProvider ?? preferences.aiProvider.researchProvider ?? "queuewrite";
   const providerPreference = writerKeyEnabled ? "bring_your_own_key" : "platform_managed";
   return {
     ...preferences,
@@ -4604,10 +4634,11 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
       writerKeyEnabled,
       writerApiKey: writerKeyEnabled ? writerApiKey : "",
       writerKeyStatus: writerKeyEnabled && writerApiKey ? "configured" : writerKeyEnabled ? "placeholder" : "not_configured",
-      researchKeyEnabled: false,
-      researchApiKey: "",
-      researchKeyStatus: "not_configured",
-      researchProvider: "queuewrite"
+      researchKeyEnabled: researchKeyConfigured,
+      researchApiKey: replacementResearchKey ?? preferences.aiProvider.researchApiKey,
+      researchKeyStatus: researchKeyConfigured ? "configured" : "not_configured",
+      researchProvider: requestedResearchProvider === "byok" && researchKeyConfigured ? "byok" : "queuewrite",
+      byokResearchProvider: "tavily"
     },
     operational: {
       ...preferences.operational,

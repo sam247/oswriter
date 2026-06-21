@@ -97,6 +97,7 @@ export interface SettingsDocument {
 export type AiProviderPreference = "platform_managed" | "bring_your_own_key";
 export type PersonalApiKeyStatus = "not_configured" | "placeholder" | "configured";
 export type ResearchProviderId = "queuewrite" | "queuewrite_experimental" | "byok";
+export type ByokResearchProviderId = "tavily";
 
 export interface WorkspacePreferencesDocument {
   organisationId?: string;
@@ -124,6 +125,7 @@ export interface WorkspacePreferencesDocument {
     researchKeyStatus: PersonalApiKeyStatus;
     researchApiKey: string;
     researchProvider?: ResearchProviderId;
+    byokResearchProvider?: ByokResearchProviderId;
   };
   operational: {
     autoStartQueueOnAdd: boolean;
@@ -623,6 +625,10 @@ export interface SearchUsage {
   creditsUsed?: number;
   estimatedCostUsd?: number;
   managedResearchCostUsd?: number;
+  providerName?: string;
+  providerType?: "Production" | "Experimental" | "BYOK";
+  providerCostKnown?: boolean;
+  providerCostPricingSource?: string;
 }
 
 export interface SearchResponse {

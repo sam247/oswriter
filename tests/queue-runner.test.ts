@@ -597,7 +597,8 @@ describe("QueueRunner", () => {
     assert.equal(state.preferences.aiProvider.preference, "bring_your_own_key");
     assert.equal(state.preferences.aiProvider.writerKeyEnabled, true);
     assert.equal(internalPreferences.aiProvider.researchKeyStatus, "configured");
-    assert.equal(state.preferences.aiProvider.researchKeyStatus, "not_configured");
+    assert.equal(state.preferences.aiProvider.researchKeyStatus, "configured");
+    assert.equal(state.preferences.aiProvider.researchApiKey, "");
     assert.equal(state.preferences.operational.autoStartQueueOnAdd, true);
     assert.equal(state.preferences.operational.defaultTargetWordCount, 1800);
   });

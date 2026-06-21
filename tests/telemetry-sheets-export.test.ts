@@ -92,6 +92,9 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(providerRow?.[11], 8);
     assert.equal(providerRow?.[12], 5);
     assert.equal(providerRow?.[19], "Complete");
+    assert.equal(providerRow?.[20], "Experimental");
+    assert.equal(providerRow?.[21], "");
+    assert.equal(providerRow?.[22], "");
     assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 4);
     assert.equal(client.replacements.at(-1)?.sheetName, TELEMETRY_SHEETS.dailySummary);
     assert.deepEqual(client.replacements.at(-1)?.rows[0], Array.from(DAILY_SUMMARY_HEADERS));

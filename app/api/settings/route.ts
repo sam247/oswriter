@@ -4,6 +4,7 @@ import { createRuntime } from "@/lib/server/runtime";
 import { nowIso } from "@/lib/defaults";
 import type { WorkspacePreferencesDocument } from "@/lib/types";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
+import { validateTavilyApiKey } from "@/lib/research/providers/tavily";
 
 type SettingsPatch = {
   preferences?: Partial<{
@@ -34,7 +35,14 @@ export async function PATCH(req: Request) {
     store.getSettings(),
     store.getWorkspacePreferences()
   ]);
+  const replacementResearchKey = patch.preferences?.aiProvider?.researchApiKey?.trim();
+  if (replacementResearchKey && !await validateTavilyApiKey(replacementResearchKey)) {
+    return NextResponse.json({ error: "Tavily API key could not be validated." }, { status: 400 });
+  }
   const nextPreferences = mergePreferences(preferences, patch);
+  if (patch.preferences?.aiProvider?.researchProvider === "byok" && nextPreferences.aiProvider.researchKeyStatus !== "configured") {
+    return NextResponse.json({ error: "Configure a valid Tavily API key before selecting BYOK Experimental." }, { status: 400 });
+  }
   await Promise.all([
     store.saveSettings(settings),
     store.saveWorkspacePreferences(nextPreferences)
@@ -48,6 +56,10 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
   const aiProvider = patch.preferences?.aiProvider ?? {};
   const writerKeyEnabled = bool(aiProvider.writerKeyEnabled, preferences.aiProvider.writerKeyEnabled);
   const writerApiKey = cleanSecret(aiProvider.writerApiKey, preferences.aiProvider.writerApiKey);
+  const researchApiKey = cleanReplacementSecret(aiProvider.researchApiKey, preferences.aiProvider.researchApiKey);
+  const researchKeyConfigured = Boolean(researchApiKey);
+  const requestedResearchProvider = aiProvider.researchProvider ?? preferences.aiProvider.researchProvider ?? "queuewrite";
+  const researchProvider = requestedResearchProvider === "byok" && researchKeyConfigured ? "byok" : "queuewrite";
   const providerPreference = writerKeyEnabled ? "bring_your_own_key" : "platform_managed";
   const notificationsEnabled = bool(notifications.enabled, preferences.notifications.enabled);
   return {
@@ -73,10 +85,11 @@ function mergePreferences(preferences: WorkspacePreferencesDocument, patch: Sett
       writerKeyEnabled,
       writerApiKey: writerKeyEnabled ? writerApiKey : "",
       writerKeyStatus: writerKeyEnabled && writerApiKey ? "configured" : writerKeyEnabled ? "placeholder" : "not_configured",
-      researchKeyEnabled: false,
-      researchApiKey: "",
-      researchKeyStatus: "not_configured",
-      researchProvider: "queuewrite"
+      researchKeyEnabled: researchKeyConfigured,
+      researchApiKey,
+      researchKeyStatus: researchKeyConfigured ? "configured" : "not_configured",
+      researchProvider,
+      byokResearchProvider: "tavily"
     },
     operational: {
       ...preferences.operational,
@@ -97,6 +110,10 @@ function cleanString(value: unknown, fallback: string) {
 
 function cleanSecret(value: unknown, fallback: string) {
   return typeof value === "string" ? value.trim().slice(0, 500) : fallback;
+}
+
+function cleanReplacementSecret(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 500) : fallback;
 }
 
 function bool(value: unknown, fallback: boolean) {

@@ -382,6 +382,11 @@ export class QueueRunner {
         };
         job = { ...job, researchTelemetry, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", {
           provider: research.researchProvider ?? "queuewrite",
+          providerName: research.providerUsage?.providerName ?? null,
+          providerType: research.providerUsage?.providerType ?? null,
+          providerCreditsUsed: research.providerUsage?.creditsUsed ?? 0,
+          providerCostKnown: research.providerUsage?.providerCostKnown ?? true,
+          providerCostPricingSource: research.providerUsage?.providerCostPricingSource ?? null,
           ...researchTelemetry,
           sourcesFound: research.sourcesFound ?? research.sources.length + research.rejectedSources.length,
           sourcesAccepted: research.sources.length,
@@ -650,6 +655,11 @@ export class QueueRunner {
         planningDiagnostics,
         findingsExtracted,
         researchProvider: research.researchProvider ?? "queuewrite",
+        researchProviderName: research.providerUsage?.providerName ?? null,
+        researchProviderType: research.providerUsage?.providerType ?? null,
+        providerCreditsUsed: research.providerUsage?.creditsUsed ?? 0,
+        providerCostKnown: research.providerUsage?.providerCostKnown ?? true,
+        providerCostPricingSource: research.providerUsage?.providerCostPricingSource ?? null,
         sourcesFound: research.sourcesFound ?? research.sources.length + research.rejectedSources.length,
         sourcesAccepted: research.sources.length,
         evidenceItemsExtracted: research.evidenceItemsExtracted ?? research.usefulFacts.length,

@@ -31,7 +31,11 @@ AI_VALIDATION_MODEL="deepseek-v4-flash"
 
 QueueWrite Research is the customer-facing production lane and uses Exa's default search. QueueWrite Research Experimental is registered for controlled internal benchmarks only and uses Exa Deep Search with the same evidence extraction, generation, and scoring pipeline.
 
-Create the challenger explicitly through `ResearchProviderRegistry.create("queuewrite_experimental")`. It is not available through workspace preferences or customer UI. A BYOK research lane remains as an inactive provider placeholder until a provider is selected.
+Create the challenger explicitly through `ResearchProviderRegistry.create("queuewrite_experimental")`. It is not available through workspace preferences or customer UI.
+
+Tavily is the first BYOK Experimental provider. A user saves and validates their own Tavily key in Settings before the BYOK option becomes selectable. The saved key is never returned to the browser after persistence, Tavily failures do not fall back to managed research, and the provider-neutral BYOK registry can replace Tavily later without changing the workspace preference contract.
+
+The application deliberately does not read a platform `TAVILY_API_KEY`: doing so would turn customer BYOK requests into platform-funded traffic. Tavily Search starts at Basic depth. Reported credits are priced at $0.008 each (Basic: 1 credit/query; Advanced: 2 credits/query), and both credits and calculated USD provider cost are recorded. Cost remains missing if Tavily omits credit usage.
 
 If `WORKSPACE_PASSWORD` is unset, local development accepts `oswriter`.
 
