@@ -12,7 +12,7 @@ import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTION
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -33,6 +33,13 @@ type WorkspacePreferencePatch = {
   operational?: Partial<WorkspacePreferencesDocument["operational"]>;
 };
 type ProjectProfilePatch = Partial<ProjectProfile>;
+type WordPressConnectionDraft = {
+  siteUrl: string;
+  username: string;
+  applicationPassword: string;
+  defaultPostStatus: WordPressPostStatus;
+  defaultCategory: string;
+};
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -668,6 +675,69 @@ function Workbench() {
       setMessage(data.error ?? "Knowledge base save failed.");
       await refresh();
     }
+  }
+
+  async function testProjectWordPressConnection(connection: WordPressConnectionDraft, projectId = state?.project.id) {
+    if (!state) return false;
+    const targetProjectId = projectId ?? state.project.id;
+    setBusy(true);
+    const res = await fetch("/api/project/wordpress/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: targetProjectId, ...connection })
+    });
+    const data = await res.json().catch(() => ({})) as { error?: string };
+    setBusy(false);
+    setMessage(res.ok ? "WordPress connection succeeded." : data.error ?? "WordPress connection failed.");
+    return res.ok;
+  }
+
+  async function saveProjectWordPressConnection(connection: WordPressConnectionDraft, projectId = state?.project.id) {
+    if (!state) return false;
+    const targetProjectId = projectId ?? state.project.id;
+    setBusy(true);
+    const res = await fetch("/api/project/wordpress", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: targetProjectId, ...connection })
+    });
+    const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string; message?: string };
+    setBusy(false);
+    if (res.ok && data.state) {
+      setMessage(data.message ?? "WordPress connection saved.");
+      applyServerState({
+        ...data.state,
+        projects: (data.state.projects ?? []).map((project) => data.project && project.id === data.project.id ? data.project : project),
+        project: data.project && data.state.project.id === data.project.id ? data.project : data.state.project
+      }, "project-wordpress");
+      return true;
+    }
+    setMessage(data.error ?? "WordPress connection save failed.");
+    await refresh();
+    return false;
+  }
+
+  async function publishSelectedArticle(status: WordPressPostStatus) {
+    if (!selectedArticle) return false;
+    setBusy(true);
+    const res = await fetch(`/api/articles/${selectedArticle.id}/publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status })
+    });
+    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; error?: string; message?: string };
+    setBusy(false);
+    if (!res.ok || !data.article) {
+      setMessage(data.error ?? "WordPress publish failed.");
+      return false;
+    }
+    setSelectedArticle(data.article);
+    setState((current) => current ? {
+      ...current,
+      articles: current.articles.map((article) => article.id === data.article?.id ? toArticleSummary(data.article) : article)
+    } : current);
+    setMessage(data.message ?? (status === "draft" ? "Draft published successfully" : "Article published successfully"));
+    return true;
   }
 
   async function renameProject() {
@@ -1346,6 +1416,8 @@ function Workbench() {
               onClose={() => setProjectSettingsProjectId(null)}
               onSaveProjectSettings={(patch, contentProfile) => updateProjectProfile(patch, projectSettingsProject.id, contentProfile)}
               onUpdateKnowledgeBase={(knowledgeBase) => updateProjectKnowledgeBase(knowledgeBase, projectSettingsProject.id)}
+              onTestWordPressConnection={(connection) => testProjectWordPressConnection(connection, projectSettingsProject.id)}
+              onSaveWordPressConnection={(connection) => saveProjectWordPressConnection(connection, projectSettingsProject.id)}
             />
           ) : settingsOpen && state ? (
             <SettingsPanel
@@ -1376,6 +1448,14 @@ function Workbench() {
                 onViewModeChange={setArticleViewMode}
                 onFormat={applyFormat}
                 onCopyAll={copySelectedArticle}
+              />
+              <ArticlePublishingBar
+                article={selectedArticle}
+                connection={state?.project.publishing?.wordpress}
+                busy={busy}
+                onConnectWordPress={() => setProjectSettingsProjectId(state?.project.id ?? null)}
+                onPublishDraft={() => void publishSelectedArticle("draft")}
+                onPublishNow={() => void publishSelectedArticle("publish")}
               />
               <div className="min-h-0 flex-1">
                 {selectedArticle ? (
@@ -1872,7 +1952,9 @@ function ProjectSettingsPanel({
   settingsBlockedReason,
   onClose,
   onSaveProjectSettings,
-  onUpdateKnowledgeBase
+  onUpdateKnowledgeBase,
+  onTestWordPressConnection,
+  onSaveWordPressConnection
 }: {
   project: ProjectDocument;
   fallbackTargetWords: number;
@@ -1880,17 +1962,61 @@ function ProjectSettingsPanel({
   onClose: () => void;
   onSaveProjectSettings: (patch: ProjectProfilePatch, contentProfile: ContentProfile) => Promise<boolean>;
   onUpdateKnowledgeBase: (knowledgeBase: ProjectKnowledgeBase) => void;
+  onTestWordPressConnection: (connection: WordPressConnectionDraft) => Promise<boolean>;
+  onSaveWordPressConnection: (connection: WordPressConnectionDraft) => Promise<boolean>;
 }) {
   const initialProfile = normalizeProjectProfile(project.profile, fallbackTargetWords);
+  const savedWordPress = project.publishing?.wordpress;
   const [profile, setProfile] = useState(initialProfile);
   const [contentProfile, setContentProfile] = useState<ContentProfile>(project.defaultContentProfile ?? "industry_explainer");
   const [dirty, setDirty] = useState(false);
+  const [wordpress, setWordpress] = useState<WordPressConnectionDraft>({
+    siteUrl: savedWordPress?.siteUrl ?? "",
+    username: savedWordPress?.username ?? "",
+    applicationPassword: "",
+    defaultPostStatus: savedWordPress?.defaultPostStatus ?? "draft",
+    defaultCategory: savedWordPress?.defaultCategory ?? ""
+  });
+  const [wordpressStatus, setWordpressStatus] = useState<WordPressConnectionStatus>(savedWordPress?.connectionStatus ?? "not_connected");
+  const [wordpressLastError, setWordpressLastError] = useState<string | null>(savedWordPress?.lastError ?? null);
+  const [wordpressLastValidatedAt, setWordpressLastValidatedAt] = useState<string | null>(savedWordPress?.lastValidatedAt ?? null);
+  const [wordpressBusy, setWordpressBusy] = useState<"idle" | "testing" | "saving">("idle");
   const updateProfile = (patch: ProjectProfilePatch) => {
     setProfile((current) => normalizeProjectProfile({ ...current, ...patch }, fallbackTargetWords));
     setDirty(true);
   };
   const save = async () => {
     if (await onSaveProjectSettings(profile, contentProfile)) setDirty(false);
+  };
+  const savedPasswordConfigured = savedWordPress?.applicationPasswordConfigured ?? false;
+  const canSubmitWordPress = Boolean(wordpress.siteUrl.trim() && wordpress.username.trim() && (wordpress.applicationPassword.trim() || savedPasswordConfigured));
+  const updateWordpress = (patch: Partial<WordPressConnectionDraft>) => {
+    setWordpress((current) => ({ ...current, ...patch }));
+  };
+  const testWordPress = async () => {
+    setWordpressBusy("testing");
+    const ok = await onTestWordPressConnection(wordpress);
+    setWordpressBusy("idle");
+    setWordpressStatus(ok ? "connected" : "failed");
+    if (ok) {
+      setWordpressLastError(null);
+      setWordpressLastValidatedAt(new Date().toISOString());
+    } else {
+      setWordpressLastError("Most recent WordPress connection check failed.");
+    }
+  };
+  const saveWordPress = async () => {
+    setWordpressBusy("saving");
+    const ok = await onSaveWordPressConnection(wordpress);
+    setWordpressBusy("idle");
+    setWordpressStatus(ok ? "connected" : "failed");
+    if (!ok) {
+      setWordpressLastError("Could not save this WordPress connection.");
+      return;
+    }
+    setWordpress((current) => ({ ...current, applicationPassword: "" }));
+    setWordpressLastError(null);
+    setWordpressLastValidatedAt(new Date().toISOString());
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1946,6 +2072,88 @@ function ProjectSettingsPanel({
             disabledReason={settingsBlockedReason}
             onSave={onUpdateKnowledgeBase}
           />
+          <SettingsSection title="Publishing">
+            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
+              <div>
+                <div className="text-[13px] font-medium text-ink">WordPress Connection</div>
+                <div className="mt-0.5 text-[11px] text-ink-muted">Store the publishing destination on this project only.</div>
+              </div>
+              <WordPressConnectionStatusBadge status={wordpressStatus} />
+            </div>
+            <label className="block text-[12px] text-ink-muted">
+              <span>Site URL</span>
+              <input
+                type="url"
+                value={wordpress.siteUrl}
+                onChange={(event) => updateWordpress({ siteUrl: event.currentTarget.value })}
+                placeholder="https://example.com"
+                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+              />
+            </label>
+            <label className="block text-[12px] text-ink-muted">
+              <span>Username</span>
+              <input
+                type="text"
+                value={wordpress.username}
+                onChange={(event) => updateWordpress({ username: event.currentTarget.value })}
+                placeholder="wordpress-username"
+                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+              />
+            </label>
+            <label className="block rounded-md border border-line bg-surface-2 p-3 text-[12px] text-ink-muted">
+              <span>Application Password</span>
+              <input
+                type="password"
+                value={wordpress.applicationPassword}
+                onChange={(event) => updateWordpress({ applicationPassword: event.currentTarget.value })}
+                placeholder={savedPasswordConfigured ? "Saved. Enter a new password to replace it." : "Enter application password"}
+                autoComplete="off"
+                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+              />
+              <div className="mt-1 text-[10.5px] text-ink-subtle">Saved passwords are encrypted and never shown again.</div>
+            </label>
+            <SettingsSelect
+              label="Default post status"
+              value={wordpress.defaultPostStatus}
+              options={[
+                { key: "draft", label: "Draft" },
+                { key: "publish", label: "Publish" }
+              ]}
+              onChange={(value) => updateWordpress({ defaultPostStatus: value as WordPressPostStatus })}
+            />
+            <label className="block text-[12px] text-ink-muted">
+              <span>Default Category</span>
+              <input
+                type="text"
+                value={wordpress.defaultCategory}
+                onChange={(event) => updateWordpress({ defaultCategory: event.currentTarget.value })}
+                placeholder="Optional, for a later phase"
+                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+              />
+            </label>
+            {wordpressLastValidatedAt && (
+              <div className="text-[11px] text-ink-subtle">Last validated {formatDate(wordpressLastValidatedAt)}</div>
+            )}
+            {wordpressStatus === "failed" && (
+              <div className="text-[11px] text-danger">{wordpressLastError ?? "Most recent WordPress connection check failed."}</div>
+            )}
+            <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
+              <button
+                onClick={() => void testWordPress()}
+                disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
+                className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
+              >
+                {wordpressBusy === "testing" ? "Testing..." : "Test Connection"}
+              </button>
+              <button
+                onClick={() => void saveWordPress()}
+                disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
+                className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+              >
+                {wordpressBusy === "saving" ? "Saving..." : "Save Connection"}
+              </button>
+            </div>
+          </SettingsSection>
         </div>
       </div>
     </div>
@@ -2030,6 +2238,16 @@ function SettingsToggle({ label, checked, onChange, disabled = false, note }: { 
       </span>
     </label>
   );
+}
+
+function WordPressConnectionStatusBadge({ status }: { status: WordPressConnectionStatus }) {
+  const label = status === "connected" ? "Connected" : status === "failed" ? "Failed" : "Not Connected";
+  const tone = status === "connected"
+    ? "bg-success/10 text-success"
+    : status === "failed"
+      ? "bg-danger/10 text-danger"
+      : "bg-surface-3 text-ink-subtle";
+  return <span className={cn("mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", tone)}>{label}</span>;
 }
 
 function ProjectInsights({
@@ -2908,6 +3126,68 @@ function ArticleToolbar({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ArticlePublishingBar({
+  article,
+  connection,
+  busy,
+  onConnectWordPress,
+  onPublishDraft,
+  onPublishNow
+}: {
+  article: ArticleDocument | null;
+  connection?: ProjectWordPressConnection;
+  busy: boolean;
+  onConnectWordPress: () => void;
+  onPublishDraft: () => void;
+  onPublishNow: () => void;
+}) {
+  if (!article) return null;
+  const publishable = article.status === "generated" || article.status === "needs_review" || Boolean(article.publishing?.wordpress);
+  if (!publishable) return null;
+  const published = article.publishing?.wordpress;
+  const connected = connection?.applicationPasswordConfigured && connection.connectionStatus === "connected";
+  return (
+    <div className="hairline-b bg-surface-2/35 px-5 py-3 lg:px-7">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[13px] font-medium text-ink">Publishing Actions</div>
+          <div className="mt-0.5 text-[11px] text-ink-muted">
+            {connected ? "Publish directly to this project's WordPress site." : "Connect WordPress in Project Settings to publish without leaving QueueWrite."}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {connected ? (
+            <>
+              <button onClick={onPublishDraft} disabled={busy} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40">
+                Publish Draft
+              </button>
+              <button onClick={onPublishNow} disabled={busy} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
+                Publish Now
+              </button>
+            </>
+          ) : (
+            <button onClick={onConnectWordPress} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white">
+              Connect WordPress
+            </button>
+          )}
+        </div>
+      </div>
+      {published && (
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <MetricLine label="Published Status" value={published.status === "draft" ? "Draft" : "Published"} />
+          <MetricLine label="WordPress Post ID" value={published.postId} />
+          <MetricLine label="Published Date" value={formatDate(published.publishedAt)} />
+          <span className="text-ink-subtle">WordPress URL</span>
+          <a href={published.url} target="_blank" rel="noreferrer" className="flex items-center justify-end gap-1 text-right text-ink hover:underline">
+            <span className="truncate">{published.url}</span>
+            <ExternalLink className="size-3 shrink-0" />
+          </a>
+        </div>
+      )}
     </div>
   );
 }

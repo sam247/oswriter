@@ -7,7 +7,7 @@ import { errorMessage, logStorageError } from "@/lib/storage/logging";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
 import type { WorkerObservationTimings } from "@/lib/storage/storage";
-import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 
@@ -332,6 +332,63 @@ export class NeonStorageProvider implements StorageProvider {
           document = ${JSON.stringify(persistedDocument)}::jsonb,
           updated_at = ${article.updatedAt}::timestamptz
         where id = ${article.id}
+      `;
+    });
+  }
+
+  async getProjectWordPressConnection(projectId: string): Promise<ProjectWordPressConnectionSecret | null> {
+    return this.withFailureLogging("getProjectWordPressConnection", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select document
+        from project_wordpress_connections
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+      `);
+      return found[0]?.document as ProjectWordPressConnectionSecret | null ?? null;
+    });
+  }
+
+  async saveProjectWordPressConnection(connection: ProjectWordPressConnectionSecret): Promise<void> {
+    return this.withFailureLogging("saveProjectWordPressConnection", connection.projectId, async () => {
+      const tenant = await this.ensureTenant();
+      await this.ensureProjectRows(connection.projectId);
+      const next = withProjectWordPressConnectionDefaults(connection, tenant);
+      await this.sql`
+        insert into project_wordpress_connections (
+          project_id, organisation_id, created_by_user_id, site_url, username, encrypted_application_password,
+          connection_status, default_post_status, default_category, last_validated_at, last_error, document, created_at, updated_at
+        )
+        values (
+          ${next.projectId}, ${next.organisationId}, ${next.createdByUserId}, ${next.siteUrl}, ${next.username}, ${next.encryptedApplicationPassword},
+          ${next.connectionStatus}, ${next.defaultPostStatus}, ${next.defaultCategory ?? null},
+          ${next.lastValidatedAt ?? null}::timestamptz, ${next.lastError ?? null}, ${JSON.stringify(next)}::jsonb,
+          ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+        )
+        on conflict (project_id) do update set
+          organisation_id = excluded.organisation_id,
+          created_by_user_id = excluded.created_by_user_id,
+          site_url = excluded.site_url,
+          username = excluded.username,
+          encrypted_application_password = excluded.encrypted_application_password,
+          connection_status = excluded.connection_status,
+          default_post_status = excluded.default_post_status,
+          default_category = excluded.default_category,
+          last_validated_at = excluded.last_validated_at,
+          last_error = excluded.last_error,
+          document = excluded.document,
+          updated_at = excluded.updated_at
+      `;
+    });
+  }
+
+  async deleteProjectWordPressConnection(projectId: string): Promise<void> {
+    return this.withFailureLogging("deleteProjectWordPressConnection", projectId, async () => {
+      const tenant = await this.ensureTenant();
+      await this.sql`
+        delete from project_wordpress_connections
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
       `;
     });
   }
@@ -1688,6 +1745,14 @@ function withProjectDefaults(project: ProjectDocument, tenant: TenantSeed): Proj
     slug: project.slug ?? slugify(project.name || project.id),
     createdByUserId: project.createdByUserId ?? tenant.userId,
     profile: normalizeProjectProfile(project.profile)
+  };
+}
+
+function withProjectWordPressConnectionDefaults(connection: ProjectWordPressConnectionSecret, tenant: TenantSeed): ProjectWordPressConnectionSecret {
+  return {
+    ...connection,
+    organisationId: connection.organisationId ?? tenant.organisationId,
+    createdByUserId: connection.createdByUserId ?? tenant.userId
   };
 }
 

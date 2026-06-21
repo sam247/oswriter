@@ -73,7 +73,7 @@ export function exportFullProjectPackage(project: ProjectDocument, articles: Art
 }
 
 export function articleToHtml(article: ArticleDocument) {
-  const body = markdownToHtml(article.markdown);
+  const body = articleBodyHtml(article);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -92,6 +92,10 @@ export function articleToHtml(article: ArticleDocument) {
 ${body}
 </body>
 </html>`;
+}
+
+export function articleBodyHtml(article: Pick<ArticleDocument, "markdown">) {
+  return markdownToHtml(article.markdown);
 }
 
 export function articleToDocx(article: ArticleDocument) {

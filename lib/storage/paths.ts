@@ -5,6 +5,7 @@ export const activeProjectPath = () => "workspace/active-project.json";
 export const workspacePreferencesPath = () => "workspace/preferences.json";
 export const workspacePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/workspace.json`;
 export const settingsPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/settings.json`;
+export const wordpressConnectionPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/publishing/wordpress.json`;
 export const queueControlPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/queue/control.json`;
 export const jobPath = (jobId: string, projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/jobs/${jobId}.json`;
 export const jobsPrefix = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/jobs/`;

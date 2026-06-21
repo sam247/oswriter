@@ -25,6 +25,7 @@ AI_BASE_URL="https://api.deepseek.com"
 AI_GENERATION_MODEL="deepseek-v4-flash"
 AI_EDITOR_MODEL="deepseek-v4-flash"
 AI_VALIDATION_MODEL="deepseek-v4-flash"
+OSW_SECRETS_KEY="replace-with-a-long-random-secret"
 ```
 
 ### Internal research benchmark
@@ -58,3 +59,5 @@ The queue contract is deliberately simple: article-quality concerns become `need
 `AI_BASE_URL` should be the provider root, not the full chat endpoint. For DeepSeek use `https://api.deepseek.com`.
 
 Article length is a configurable target stored in `settings.json`. It is not used as a hidden reliability lever; queue reliability comes from resumable processing and time-bounded stages.
+
+`OSW_SECRETS_KEY` is used to encrypt project-scoped WordPress application passwords before persistence. Local development falls back to `WORKSPACE_PASSWORD` if this secret is unset, but production should always set a dedicated value.

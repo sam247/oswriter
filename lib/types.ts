@@ -53,6 +53,25 @@ export interface ProjectKnowledgeBase {
   preferredCTA: string;
 }
 
+export type WordPressConnectionStatus = "not_connected" | "connected" | "failed";
+export type WordPressPostStatus = "draft" | "publish";
+
+export interface ProjectWordPressConnection {
+  siteUrl: string;
+  username: string;
+  applicationPasswordConfigured: boolean;
+  connectionStatus: WordPressConnectionStatus;
+  defaultPostStatus: WordPressPostStatus;
+  defaultCategory?: string | null;
+  lastValidatedAt?: string | null;
+  lastError?: string | null;
+  updatedAt: string;
+}
+
+export interface ProjectPublishing {
+  wordpress?: ProjectWordPressConnection;
+}
+
 export interface ProjectDocument {
   id: string;
   organisationId?: string;
@@ -60,8 +79,25 @@ export interface ProjectDocument {
   slug?: string;
   profile?: ProjectProfile;
   knowledgeBase?: ProjectKnowledgeBase;
+  publishing?: ProjectPublishing;
   defaultContentProfile?: ContentProfile;
   createdByUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectWordPressConnectionSecret {
+  projectId: string;
+  organisationId?: string;
+  createdByUserId?: string;
+  siteUrl: string;
+  username: string;
+  encryptedApplicationPassword: string;
+  connectionStatus: WordPressConnectionStatus;
+  defaultPostStatus: WordPressPostStatus;
+  defaultCategory?: string | null;
+  lastValidatedAt?: string | null;
+  lastError?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -377,6 +413,14 @@ export interface ArticleDocument {
   costTelemetry?: ArticleCostTelemetry | null;
   qualityScore: number;
   researchSummary: string;
+  publishing?: {
+    wordpress?: {
+      postId: number;
+      url: string;
+      status: WordPressPostStatus;
+      publishedAt: string;
+    };
+  };
   validation: ValidationResult;
   pipeline: PipelineStep[];
   sources: ResearchSource[];

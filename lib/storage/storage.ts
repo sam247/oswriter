@@ -1,11 +1,11 @@
-import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
@@ -22,6 +22,9 @@ export interface StorageProvider {
   getProjectAnalytics?(projectId: string): Promise<ProjectAnalyticsSummary>;
   getArticleById?(articleId: string): Promise<ArticleDocument | null>;
   updateArticle?(article: ArticleDocument): Promise<void>;
+  getProjectWordPressConnection?(projectId: string): Promise<ProjectWordPressConnectionSecret | null>;
+  saveProjectWordPressConnection?(connection: ProjectWordPressConnectionSecret): Promise<void>;
+  deleteProjectWordPressConnection?(projectId: string): Promise<void>;
   getProjectQueueScan?(): Promise<{ projectsChecked: number; projectIds: string[] }>;
   getCompactJobCounts?(projectId: string): Promise<CompactJobCounts>;
   getQueueCandidate?(projectId: string): Promise<QueueJob | null>;
@@ -191,6 +194,27 @@ export class WorkspaceStore {
     return this.storage.getJson<ProjectDocument>(workspacePath(projectId));
   }
 
+  async getProjectWordPressConnection(projectId: string) {
+    if (this.storage.getProjectWordPressConnection) {
+      return this.storage.getProjectWordPressConnection(projectId);
+    }
+    return this.storage.getJson<ProjectWordPressConnectionSecret>(wordpressConnectionPath(projectId));
+  }
+
+  async saveProjectWordPressConnection(connection: ProjectWordPressConnectionSecret) {
+    if (this.storage.saveProjectWordPressConnection) {
+      return this.storage.saveProjectWordPressConnection(connection);
+    }
+    await this.storage.putJson(wordpressConnectionPath(connection.projectId), connection);
+  }
+
+  async deleteProjectWordPressConnection(projectId: string) {
+    if (this.storage.deleteProjectWordPressConnection) {
+      return this.storage.deleteProjectWordPressConnection(projectId);
+    }
+    await this.storage.deletePath(wordpressConnectionPath(projectId));
+  }
+
   async listProjects() {
     if (this.storage.listProjects) {
       const projects = await this.storage.listProjects();
@@ -231,6 +255,7 @@ export class WorkspaceStore {
       const project = createDefaultProject();
       await this.saveProject(project);
       await this.saveSettings(createDefaultSettings());
+      await this.deleteProjectWordPressConnection(projectId);
       await this.saveQueueControl(createDefaultQueueControl(projectId));
       await this.setActiveProjectId(DEFAULT_PROJECT_ID);
       return { project, deleted: count };
