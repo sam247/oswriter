@@ -16,7 +16,7 @@ export const DAILY_SUMMARY_HEADERS = [
   "Articles Failed",
   "Success Rate %",
   "Average Word Count",
-  "Average Quality Score",
+  "Average Telemetry Quality Score",
   "Average Research Score",
   "Average Evidence Score",
   "Average Target Achievement %",

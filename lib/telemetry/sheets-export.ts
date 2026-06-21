@@ -29,7 +29,7 @@ export const PROVIDER_TELEMETRY_HEADERS = [
   "Evidence Extracted",
   "Evidence Used",
   "Word Count",
-  "Quality Score",
+  "Article Quality Score",
   "Research Score",
   "Evidence Score",
   "Generation Cost",
@@ -53,7 +53,7 @@ interface ArticleTelemetryContext {
   project: ProjectDocument | null;
 }
 
-export async function exportArticleTelemetry(store: WorkspaceStore, telemetry: GenerationTelemetryDocument, client = createGoogleSheetsAppendClient()) {
+export async function exportArticleTelemetry(store: WorkspaceStore, telemetry: GenerationTelemetryDocument, client = createGoogleSheetsAppendClient(), research: ResearchPack | null = null) {
   const [article, project, history] = await Promise.all([
     store.getArticle(telemetry.articleId, telemetry.projectId),
     store.getProject(telemetry.projectId),
@@ -79,7 +79,7 @@ export async function exportArticleTelemetry(store: WorkspaceStore, telemetry: G
       articleId: telemetry.articleId,
       exportKey: `${telemetry.projectId}:${telemetry.articleId}:provider`,
       targetSheet: TELEMETRY_SHEETS.providerTelemetry,
-      row: buildProviderTelemetryRow(telemetry, article, null)
+      row: buildProviderTelemetryRow(telemetry, article, research)
     });
   }
 
@@ -256,7 +256,7 @@ export function buildProviderTelemetryRow(
   article: ArticleDocument,
   research: ResearchPack | null
 ): TelemetryCell[] {
-  const scores = calculateArticleScores(article);
+  const scores = calculateArticleScores(article, research);
   const provider = research?.actualResearchProvider
     ?? research?.researchProvider
     ?? telemetry.actualResearchProvider
@@ -264,18 +264,22 @@ export function buildProviderTelemetryRow(
     ?? metadataString(telemetry.metadata, "researchProvider")
     ?? "queuewrite";
   const providerName = research?.providerUsage?.providerName
+    ?? telemetry.researchProviderName
     ?? metadataString(telemetry.metadata, "researchProviderName")
     ?? researchProviderLabel(provider);
   const providerType = research?.providerUsage?.providerType
+    ?? telemetry.researchProviderType
     ?? metadataString(telemetry.metadata, "researchProviderType")
     ?? researchProviderType(provider);
   const providerCostKnown = research?.providerUsage?.providerCostKnown
     ?? metadataBoolean(telemetry.metadata, "providerCostKnown")
     ?? true;
   const providerCredits = numberOrNull(research?.providerUsage?.creditsUsed)
+    ?? telemetry.providerCredits
     ?? numberOrNull(metadataNumber(telemetry.metadata, "providerCreditsUsed"))
     ?? "";
   const providerCostPricingSource = research?.providerUsage?.providerCostPricingSource
+    ?? telemetry.providerCostPricingSource
     ?? metadataString(telemetry.metadata, "providerCostPricingSource")
     ?? "";
   const legacyManagedCostMissing = provider === "queuewrite"
@@ -300,12 +304,12 @@ export function buildProviderTelemetryRow(
   const date = dateOnly(telemetry.updatedAt);
 
   return [
-    `Provider Benchmark ${date.slice(0, 7)}`,
-    benchmarkPairId(article.title),
+    telemetry.benchmarkRun ?? benchmarkRunLabel(date),
+    telemetry.benchmarkPairId ?? benchmarkPairId(article.title),
     date,
     article.id,
     article.title,
-    research?.contentProfile ?? metadataString(telemetry.metadata, "contentProfile") ?? "Missing",
+    research?.contentProfile ?? telemetry.contentProfile ?? metadataString(telemetry.metadata, "contentProfile") ?? "Missing",
     String(providerName),
     researchCost,
     millisecondsToSeconds(telemetry.researchDurationMs ?? research?.durationMs),
@@ -638,7 +642,11 @@ function metadataBoolean(metadata: Record<string, unknown>, key: string) {
   return typeof metadata[key] === "boolean" ? metadata[key] : null;
 }
 
-function benchmarkPairId(title: string) {
+export function benchmarkRunLabel(value: string) {
+  return `Provider Benchmark ${dateOnly(value).slice(0, 7)}`;
+}
+
+export function benchmarkPairId(title: string) {
   return title
     .toLowerCase()
     .replace(/\b(applications|apps)\b/g, "app")

@@ -443,6 +443,13 @@ export interface GenerationTelemetryDocument {
   actualResearchProvider?: ResearchProviderId | null;
   fallbackUsed?: boolean;
   fallbackReason?: string | null;
+  contentProfile?: ContentProfile | null;
+  benchmarkRun?: string | null;
+  benchmarkPairId?: string | null;
+  researchProviderName?: string | null;
+  researchProviderType?: "Production" | "Experimental" | "BYOK" | null;
+  providerCredits?: number | null;
+  providerCostPricingSource?: string | null;
   targetWords: number;
   actualWords: number;
   plannedSections: number;

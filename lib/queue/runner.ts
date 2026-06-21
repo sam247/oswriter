@@ -7,7 +7,7 @@ import { runResearch } from "@/lib/research/research-engine";
 import { statusFromReviewReasons } from "@/lib/status";
 import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateGenerationCost, estimateResearchCostUsd, roundUsd } from "@/lib/telemetry/costs";
 import { pricingForModel } from "@/lib/telemetry/pricing";
-import { exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
+import { benchmarkPairId, benchmarkRunLabel, exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
@@ -581,6 +581,13 @@ export class QueueRunner {
       actualResearchProvider: research.actualResearchProvider ?? research.researchProvider ?? "queuewrite",
       fallbackUsed: research.fallbackUsed ?? false,
       fallbackReason: research.fallbackReason ?? null,
+      contentProfile: article.resolvedContentProfile ?? research.contentProfile ?? "industry_explainer",
+      benchmarkRun: benchmarkRunLabel(now),
+      benchmarkPairId: benchmarkPairId(article.title),
+      researchProviderName: typeof research.providerUsage?.providerName === "string" ? research.providerUsage.providerName : null,
+      researchProviderType: research.providerUsage?.providerType === "Production" || research.providerUsage?.providerType === "Experimental" || research.providerUsage?.providerType === "BYOK" ? research.providerUsage.providerType : null,
+      providerCredits: typeof research.providerUsage?.creditsUsed === "number" ? research.providerUsage.creditsUsed : null,
+      providerCostPricingSource: typeof research.providerUsage?.providerCostPricingSource === "string" ? research.providerUsage.providerCostPricingSource : null,
       targetWords: plan.targetWords,
       actualWords: article.wordCount,
       plannedSections: plan.h2SectionCount,
@@ -680,12 +687,18 @@ export class QueueRunner {
     try {
       await this.store.saveGenerationTelemetry(telemetry);
       log({ stage: "generation", level: "info", message: "Generation telemetry recorded.", data: { totalCostUsd: telemetry.totalCostUsd } });
-      await exportArticleTelemetry(this.store, telemetry);
-      log({ stage: "export", level: "info", message: "Article telemetry export attempted.", data: { articleId: telemetry.articleId } });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log({ stage: "generation", level: "warn", message: "Generation telemetry failed without blocking article save.", data: message });
-      console.warn("generation telemetry failed", { projectId: job.projectId, articleId: job.articleId, error: message });
+      log({ stage: "generation", level: "warn", message: "Generation telemetry persistence failed; workbook export will use the in-memory record.", data: message });
+      console.warn("generation telemetry persistence failed", { projectId: job.projectId, articleId: job.articleId, error: message });
+    }
+    try {
+      await exportArticleTelemetry(this.store, telemetry, undefined, research);
+      log({ stage: "export", level: "info", message: "Article and provider telemetry export attempted.", data: { articleId: telemetry.articleId } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log({ stage: "export", level: "warn", message: "Workbook telemetry export failed without blocking article save.", data: message });
+      console.warn("workbook telemetry export failed", { projectId: job.projectId, articleId: job.articleId, error: message });
     }
   }
 

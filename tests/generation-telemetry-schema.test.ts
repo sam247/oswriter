@@ -169,6 +169,26 @@ test("telemetry quality migration stores score and band", () => {
   assert.match(sql, /quality_band text not null default 'poor'/);
 });
 
+test("benchmark telemetry migration persists provider and grouping identifiers", () => {
+  const sql = readFileSync("db/migrations/0017_benchmark_telemetry_resilience.sql", "utf8").toLowerCase();
+
+  for (const column of [
+    "profile_key text",
+    "content_profile text",
+    "benchmark_run text",
+    "benchmark_pair_id text",
+    "research_provider_name text",
+    "research_provider_type text",
+    "provider_credits numeric",
+    "provider_cost_pricing_source text",
+    "generation_cost_pricing_source text"
+  ]) {
+    assert.match(sql, new RegExp(escapeRegExp(column)));
+  }
+  assert.match(sql, /generation_telemetry_benchmark_idx/);
+  assert.match(sql, /generation_telemetry_provider_idx/);
+});
+
 function tableBody(table: string) {
   return tableBodyFrom(migration, table);
 }
