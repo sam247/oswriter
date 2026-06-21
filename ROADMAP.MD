@@ -2,6 +2,22 @@
 
 ## Completed
 
+### Harper Grammar And Writing Assistant Integration (Phase 1)
+
+- Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
+- Added a new Writing inspector tab with grouped Grammar, Style, and Readability suggestion counts.
+- Added Accept and Ignore actions for Harper suggestions:
+  - Accept updates the current article draft immediately
+  - Ignore hides the suggestion for the current session
+- Added inline writing highlights:
+  - custom highlight styling in the rich editor
+  - mirrored overlay highlighting for markdown and split editor modes
+- Kept Harper scoped to the existing editor workflow only:
+  - no research pipeline changes
+  - no provider logic changes
+  - no telemetry, publishing, billing, auth, or generation workflow changes
+- Added markdown normalization coverage for Harper span mapping.
+
 ### WordPress Publishing Integration (Phase 1)
 
 - Added project-level WordPress connections with a dedicated Publishing section in Project Settings.

@@ -1,5 +1,17 @@
 # Writer OS MCP Roadmap
 
+## Recent Workbook Progress
+
+Current workbook-only analytics progress for the QueueWrite telemetry sheet:
+
+- Renamed Phase 1 helper tabs to `Provider Summary`, `Provider Base`, `Provider Decisions`, `Commercial Viability`, and `Neon Provider Snapshot`
+- Validated founder-facing Phase 1 outputs against the live workbook data
+- Fixed workbook reconciliation so the lightweight validation block now matches Neon counts for article rows, attributed providers, benchmark runs, and unattributed rows
+- Corrected missing-cost handling so unattributed legacy rows stay blank instead of being coerced to `0`
+- Corrected lifecycle and commercial output cells so the dashboard now shows the intended current-state recommendations and cost-at-scale figures
+- Audited provider-comparison metrics and corrected Tavily benchmark averages by sourcing attributed provider rows from `Provider Telemetry` instead of mixed article-level score columns
+- Audited the attribution path from `Provider Telemetry` through the decision layer and corrected `Provider Base` so valid Production benchmark rows now flow into `Provider Summary`, `Provider Decisions`, and the founder dashboard
+
 ## Phase 1: Read-Only Inspection
 
 Status: v1 skeleton.
