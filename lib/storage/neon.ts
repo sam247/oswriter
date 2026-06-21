@@ -32,6 +32,7 @@ export class NeonStorageProvider implements StorageProvider {
   private readonly injectedSql?: NeonSql;
   private readonly injectedTenant?: TenantSeed;
   private tenantReady = false;
+  private generationTelemetrySchemaReady = false;
   private readonly ensuredProjects = new Set<string>();
 
   constructor(options: NeonStorageProviderOptions = {}) {
@@ -1360,6 +1361,7 @@ export class NeonStorageProvider implements StorageProvider {
   private async saveGenerationTelemetry(telemetry: GenerationTelemetryDocument, projectId: string) {
     const tenant = await this.ensureTenant();
     await this.ensureProjectRows(projectId);
+    await this.ensureGenerationTelemetrySchema();
     const next = withGenerationTelemetryDefaults(telemetry, tenant, projectId);
     await this.sql`
       insert into generation_telemetry (
@@ -1475,6 +1477,21 @@ export class NeonStorageProvider implements StorageProvider {
         metadata = excluded.metadata,
         updated_at = excluded.updated_at
     `;
+  }
+
+  private async ensureGenerationTelemetrySchema() {
+    if (this.generationTelemetrySchemaReady) return;
+    await this.sql`
+      alter table generation_telemetry
+        add column if not exists profile_key text,
+        add column if not exists quality_score integer not null default 0,
+        add column if not exists quality_band text not null default 'Poor',
+        add column if not exists requested_research_provider text,
+        add column if not exists actual_research_provider text,
+        add column if not exists fallback_used boolean not null default false,
+        add column if not exists fallback_reason text
+    `;
+    this.generationTelemetrySchemaReady = true;
   }
 
   private async getTelemetryExportStatus(id: string) {
