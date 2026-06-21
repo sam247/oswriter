@@ -96,7 +96,7 @@ export interface SettingsDocument {
 
 export type AiProviderPreference = "platform_managed" | "bring_your_own_key";
 export type PersonalApiKeyStatus = "not_configured" | "placeholder" | "configured";
-export type ResearchProviderId = "queuewrite" | "queuewrite_v2" | "firecrawl";
+export type ResearchProviderId = "queuewrite" | "queuewrite_experimental" | "byok";
 
 export interface WorkspacePreferencesDocument {
   organisationId?: string;
@@ -124,8 +124,6 @@ export interface WorkspacePreferencesDocument {
     researchKeyStatus: PersonalApiKeyStatus;
     researchApiKey: string;
     researchProvider?: ResearchProviderId;
-    firecrawlApiKey?: string;
-    firecrawlKeyStatus?: PersonalApiKeyStatus;
   };
   operational: {
     autoStartQueueOnAdd: boolean;
@@ -624,10 +622,7 @@ export interface SearchUsage {
   provider?: ResearchProviderId;
   creditsUsed?: number;
   estimatedCostUsd?: number;
-  crawlPages?: number;
-  crawlSuccesses?: number;
-  crawlFailures?: number;
-  crawlDurationMs?: number;
+  managedResearchCostUsd?: number;
 }
 
 export interface SearchResponse {

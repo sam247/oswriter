@@ -881,21 +881,21 @@ export class NeonStorageProvider implements StorageProvider {
       from organisation_settings
       where organisation_id = ${tenant.organisationId}
     `);
-    const userFound = rows(await this.sql`
-      select preferences
-      from user_provider_preferences
-      where organisation_id = ${tenant.organisationId} and user_id = ${tenant.userId}
-    `);
     const saved = isRecord(found[0]?.preferences) ? found[0].preferences as unknown as WorkspacePreferencesDocument : null;
-    const userPreferences = isRecord(userFound[0]?.preferences) ? userFound[0].preferences as Record<string, unknown> : {};
     const normalized = withWorkspacePreferenceDefaults(saved, tenant);
+    const aiProvider = normalized.aiProvider;
     return {
       ...normalized,
       aiProvider: {
-        ...normalized.aiProvider,
-        researchProvider: userPreferences.researchProvider === "firecrawl" ? "firecrawl" : normalized.aiProvider.researchProvider ?? "queuewrite",
-        firecrawlApiKey: typeof userPreferences.firecrawlApiKey === "string" ? userPreferences.firecrawlApiKey : "",
-        firecrawlKeyStatus: typeof userPreferences.firecrawlApiKey === "string" && userPreferences.firecrawlApiKey ? "configured" : "not_configured"
+        preference: aiProvider.writerKeyEnabled ? "bring_your_own_key" : "platform_managed",
+        personalKeyStatus: aiProvider.writerKeyEnabled ? aiProvider.personalKeyStatus : "not_configured",
+        writerKeyEnabled: aiProvider.writerKeyEnabled,
+        writerKeyStatus: aiProvider.writerKeyStatus,
+        writerApiKey: aiProvider.writerApiKey,
+        researchProvider: "queuewrite",
+        researchKeyEnabled: false,
+        researchKeyStatus: "not_configured",
+        researchApiKey: ""
       }
     };
   }
@@ -903,9 +903,20 @@ export class NeonStorageProvider implements StorageProvider {
   private async saveWorkspacePreferences(preferences: WorkspacePreferencesDocument) {
     const tenant = await this.ensureTenant();
     const next = withWorkspacePreferenceDefaults(preferences, tenant);
+    const aiProvider = next.aiProvider;
     const workspaceDocument = {
       ...next,
-      aiProvider: { ...next.aiProvider, firecrawlApiKey: "" }
+      aiProvider: {
+        preference: aiProvider.writerKeyEnabled ? "bring_your_own_key" : "platform_managed",
+        personalKeyStatus: aiProvider.writerKeyEnabled ? aiProvider.personalKeyStatus : "not_configured",
+        writerKeyEnabled: aiProvider.writerKeyEnabled,
+        writerKeyStatus: aiProvider.writerKeyStatus,
+        writerApiKey: aiProvider.writerApiKey,
+        researchProvider: "queuewrite",
+        researchKeyEnabled: false,
+        researchKeyStatus: "not_configured",
+        researchApiKey: ""
+      }
     };
     await this.sql`
       insert into organisation_settings (organisation_id, settings, workspace_preferences, updated_at)
@@ -924,7 +935,7 @@ export class NeonStorageProvider implements StorageProvider {
       values (
         ${tenant.organisationId},
         ${tenant.userId},
-        ${JSON.stringify({ researchProvider: next.aiProvider.researchProvider ?? "queuewrite", firecrawlApiKey: next.aiProvider.firecrawlApiKey ?? "" })}::jsonb,
+        ${JSON.stringify({ researchProvider: "queuewrite" })}::jsonb,
         ${next.updatedAt}::timestamptz
       )
       on conflict (organisation_id, user_id) do update set

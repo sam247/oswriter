@@ -75,9 +75,7 @@ export function createDefaultWorkspacePreferences(input: Partial<WorkspacePrefer
       researchKeyEnabled: false,
       researchKeyStatus: "not_configured",
       researchApiKey: "",
-      researchProvider: "queuewrite",
-      firecrawlApiKey: "",
-      firecrawlKeyStatus: "not_configured"
+      researchProvider: "queuewrite"
     },
     operational: {
       autoStartQueueOnAdd: false,

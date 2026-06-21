@@ -12,10 +12,6 @@ export interface SourceDiscoveryProvider extends SearchAdapter {
   readonly providerId: ResearchProviderId;
 }
 
-export interface SourceCrawlerProvider {
-  crawl(url: string, context: { query: string }): Promise<{ markdown: string; links?: string[] }>;
-}
-
 export interface EvidenceExtractionProvider {
   extract(input: SearchResponse): Promise<SearchResponse> | SearchResponse;
 }

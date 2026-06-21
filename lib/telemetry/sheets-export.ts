@@ -618,9 +618,9 @@ function benchmarkPairId(title: string) {
 }
 
 function researchProviderLabel(provider: string) {
-  if (provider === "queuewrite") return "QueueWrite Research (Exa)";
-  if (provider === "queuewrite_v2") return "QueueWrite Research v2";
-  if (provider === "firecrawl") return "Firecrawl BYOK";
+  if (provider === "queuewrite") return "QueueWrite Research";
+  if (provider === "queuewrite_experimental") return "QueueWrite Research Experimental";
+  if (provider === "byok") return "BYOK Research";
   return provider
     .split(/[-_]/)
     .filter(Boolean)

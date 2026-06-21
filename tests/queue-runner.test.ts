@@ -870,10 +870,10 @@ describe("QueueRunner", () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     let generationCalls = 0;
     const provider: ResearchProvider = {
-      id: "firecrawl",
-      label: "Firecrawl",
+      id: "byok",
+      label: "BYOK Research",
       async research() {
-        throw new ResearchProviderError("firecrawl", "quota_exhausted", 402, "Quota exceeded (HTTP 402)");
+        throw new ResearchProviderError("byok", "quota_exhausted", 402, "Quota exceeded (HTTP 402)");
       }
     };
     const model: ModelAdapter = {
@@ -889,8 +889,8 @@ describe("QueueRunner", () => {
     assert.equal(result.job?.status, "research_failed");
     assert.equal(result.job?.statusReason, "Quota exceeded (HTTP 402)");
     assert.deepEqual(result.job?.researchTelemetry, {
-      requestedResearchProvider: "firecrawl",
-      actualResearchProvider: "firecrawl",
+      requestedResearchProvider: "byok",
+      actualResearchProvider: "byok",
       fallbackUsed: false,
       fallbackReason: "quota_exhausted"
     });

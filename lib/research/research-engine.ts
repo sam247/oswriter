@@ -43,10 +43,8 @@ export async function runResearch(title: string, articleId: string, search: Sear
   let exaContentPages = 0;
   let providerCreditsUsed = 0;
   let providerCostUsd = 0;
-  let crawlPages = 0;
-  let crawlSuccesses = 0;
-  let crawlFailures = 0;
-  let crawlDurationMs = 0;
+  let managedResearchCostUsd = 0;
+  let managedResearchCostReports = 0;
 
   const responses = await Promise.allSettled(queries.map((query) => search.search(query, {
       numResults: definition.research.depth === "very_high" ? 8 : definition.research.depth === "high" ? 6 : 5,
@@ -60,10 +58,10 @@ export async function runResearch(title: string, articleId: string, search: Sear
     exaContentPages += response.value.usage?.exaContentPages ?? results.filter((result) => result.text || result.summary || (result.highlights?.length ?? 0) > 0).length;
     providerCreditsUsed += response.value.usage?.creditsUsed ?? 0;
     providerCostUsd += response.value.usage?.estimatedCostUsd ?? 0;
-    crawlPages += response.value.usage?.crawlPages ?? 0;
-    crawlSuccesses += response.value.usage?.crawlSuccesses ?? 0;
-    crawlFailures += response.value.usage?.crawlFailures ?? 0;
-    crawlDurationMs += response.value.usage?.crawlDurationMs ?? 0;
+    if (typeof response.value.usage?.managedResearchCostUsd === "number") {
+      managedResearchCostUsd += response.value.usage.managedResearchCostUsd;
+      managedResearchCostReports += 1;
+    }
     if (requestId) requestIds.push(requestId);
     for (const result of results) {
       if (!seen.has(result.url)) {
@@ -114,11 +112,15 @@ export async function runResearch(title: string, articleId: string, search: Sear
 
   const sourcesFound = scored.length;
   const evidenceItemsExtracted = usefulFacts.length;
-  const isManagedExaProvider = researchProvider === "queuewrite" || researchProvider === "queuewrite_v2";
+  const isManagedExaProvider = researchProvider === "queuewrite" || researchProvider === "queuewrite_experimental";
   const managedSearchRequests = isManagedExaProvider ? exaSearchRequests : 0;
   const managedContentPages = isManagedExaProvider ? exaContentPages : 0;
+  const reportedManagedCostIsComplete = researchProvider === "queuewrite_experimental"
+    && managedResearchCostReports === responses.length;
   const researchCostUsd = isManagedExaProvider
-    ? estimateResearchCostUsd(managedSearchRequests, managedContentPages) + providerCostUsd
+    ? (reportedManagedCostIsComplete
+        ? managedResearchCostUsd
+        : estimateResearchCostUsd(managedSearchRequests, managedContentPages)) + providerCostUsd
     : providerCostUsd;
   return {
     articleId,
@@ -136,10 +138,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
       creditsUsed: providerCreditsUsed,
       searchRequests: queries.length,
       contentPages: exaContentPages,
-      crawlPages,
-      crawlSuccesses,
-      crawlFailures,
-      crawlDurationMs
+      ...(reportedManagedCostIsComplete ? { reportedResearchCostUsd: managedResearchCostUsd } : {})
     },
     queries,
     sources: accepted,

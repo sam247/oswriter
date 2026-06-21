@@ -2,16 +2,16 @@
 
 QueueWrite Research is the only customer-facing research product. Provider selection and research-provider credentials must not be exposed in customer settings, onboarding, pricing, or marketing surfaces.
 
-The provider registry remains extensible for benchmarks, internal QA, and future experiments. Firecrawl remains implemented in `lib/research/providers/firecrawl.ts` and registered internally.
+The launch architecture has three lanes:
 
-## Firecrawl Test Access
+- `queuewrite`: production, Exa default search.
+- `queuewrite_experimental`: internal challenger, Exa Deep Search.
+- `byok`: inactive placeholder for a future provider.
 
-Firecrawl routing is disabled by default. Set this server-only variable for controlled internal testing:
+Production and experimental share the same research-pack, evidence extraction, generation, validation, and scoring pipeline. The experimental lane is created explicitly for controlled benchmarks:
 
-```bash
-ENABLE_FIRECRAWL_PROVIDER=true
+```ts
+new ResearchProviderRegistry().create("queuewrite_experimental")
 ```
 
-The workspace must already contain an internal Firecrawl preference and key. Public application state always projects QueueWrite Research and redacts research-provider credentials, including when the internal flag is enabled.
-
-Historical provider telemetry, benchmark records, and comparison-sheet labels remain unchanged.
+BYOK has no provider, credentials, routing, telemetry, or customer UI. The registry and provider interfaces are retained so a provider can be added later without changing the production lane.

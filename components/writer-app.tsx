@@ -4607,9 +4607,7 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
       researchKeyEnabled: false,
       researchApiKey: "",
       researchKeyStatus: "not_configured",
-      researchProvider: "queuewrite",
-      firecrawlApiKey: "",
-      firecrawlKeyStatus: "not_configured"
+      researchProvider: "queuewrite"
     },
     operational: {
       ...preferences.operational,

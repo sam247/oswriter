@@ -29,9 +29,9 @@ describe("telemetry Google Sheets export", () => {
     const telemetry = sampleTelemetry({
       totalCostUsd: 0.2,
       generationDurationMs: 3000,
-      actualResearchProvider: "firecrawl",
+      actualResearchProvider: "queuewrite_experimental",
       metadata: {
-        researchProvider: "firecrawl",
+        researchProvider: "queuewrite_experimental",
         contentProfile: "industry_explainer",
         sourcesFound: 6,
         sourcesAccepted: 1,
@@ -84,7 +84,7 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(providerRow?.[0], "Provider Benchmark 2026-06");
     assert.equal(providerRow?.[4], "Telemetry Article");
     assert.equal(providerRow?.[5], "industry_explainer");
-    assert.equal(providerRow?.[6], "Firecrawl BYOK");
+    assert.equal(providerRow?.[6], "QueueWrite Research Experimental");
     assert.equal(providerRow?.[7], 0.03);
     assert.equal(providerRow?.[8], 0.9);
     assert.equal(providerRow?.[9], 6);
