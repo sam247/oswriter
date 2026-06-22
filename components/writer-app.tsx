@@ -2048,48 +2048,45 @@ function ProjectDashboard({
           <ProjectSection title="Content inventory">
             {contentInventory.length ? (
               <>
-                <div className="mb-4 overflow-hidden rounded-lg border border-line bg-surface-1 shadow-[0_1px_0_rgba(16,24,40,0.02)]">
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line/70 px-4 py-3">
-                    <div>
+                <div className="mb-3 rounded-lg border border-line bg-surface-1 px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <div className="text-[12px] font-medium text-ink">Bulk publishing</div>
-                      <div className="mt-1 text-[11px] text-ink-muted">Use the existing publish path to mark ready or send selected articles to WordPress.</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="mono rounded-full bg-surface-2 px-2.5 py-1 text-[10.5px] text-ink-subtle">{selectedInventoryCount} selected</span>
+                      <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
                       {bulkProgress && (
-                        <span className="mono rounded-full bg-surface-2 px-2.5 py-1 text-[10.5px] text-ink-subtle">
+                        <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
                           {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
                           {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
                         </span>
                       )}
                     </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-                    <label className="flex h-9 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
                       <input
                         type="checkbox"
                         checked={allInventorySelected}
                         onChange={() => onToggleSelectAll(contentInventoryIds)}
                       />
                       <span>Select all</span>
-                    </label>
-                    <select
-                      value={bulkAction}
-                      onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
-                      className="h-9 min-w-40 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
-                      aria-label="Bulk publishing action"
-                    >
-                      {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                    <button
-                      onClick={onRunBulkAction}
-                      disabled={!selectedInventoryCount || bulkBusy}
-                      className="h-9 rounded-md bg-ink px-3.5 text-[12px] font-medium text-white disabled:opacity-40"
-                    >
-                      {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
-                    </button>
+                      </label>
+                      <select
+                        value={bulkAction}
+                        onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
+                        className="h-8 min-w-36 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
+                        aria-label="Bulk publishing action"
+                      >
+                        {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                      <button
+                        onClick={onRunBulkAction}
+                        disabled={!selectedInventoryCount || bulkBusy}
+                        className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                      >
+                        {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
+                      </button>
+                    </div>
                   </div>
-                  <div className="bg-surface-2/60 px-4 py-2.5 text-[10.5px] text-ink-subtle">
+                  <div className="mt-2 text-[10.5px] text-ink-subtle">
                     {selectedInventoryCount ? "Bulk actions reuse the existing WordPress publish path." : "Select one or more articles to run a bulk action."}
                   </div>
                 </div>
