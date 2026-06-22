@@ -100,6 +100,7 @@
 - Simplified publishing workflow states by removing `Ready` and normalizing article publishing to `Not Published`, `Draft`, `Scheduled`, or `Published`.
 - Simplified bulk publishing actions to `Publish Draft`, `Publish Now`, and `Schedule`, with scheduling handled in a dedicated modal instead of inline table controls.
 - Added reusable scheduling helpers and a schedule bulk endpoint so future queue automation can share the same scheduling architecture without redesigning the table.
+- Moved single-article publish controls into the editor toolbar beside `Rich`, `MD`, and `Split` as a compact `Publish` dropdown, and greyed it out after live publish to prevent repeat publishing.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

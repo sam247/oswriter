@@ -1716,15 +1716,12 @@ function Workbench() {
               />
               <ArticleToolbar
                 article={selectedArticle}
+                connection={state?.project.publishing?.wordpress}
+                busy={busy}
                 viewMode={articleViewMode}
                 onViewModeChange={setArticleViewMode}
                 onFormat={applyFormat}
                 onCopyAll={copySelectedArticle}
-              />
-              <ArticlePublishingBar
-                article={selectedArticle}
-                connection={state?.project.publishing?.wordpress}
-                busy={busy}
                 onConnectWordPress={() => setProjectSettingsProjectId(state?.project.id ?? null)}
                 onPublishDraft={() => void publishSelectedArticle("draft")}
                 onPublishNow={() => void publishSelectedArticle("publish")}
@@ -3619,17 +3616,28 @@ function ArticleLibraryItem({
 
 function ArticleToolbar({
   article,
+  connection,
+  busy,
   viewMode,
   onViewModeChange,
   onFormat,
-  onCopyAll
+  onCopyAll,
+  onConnectWordPress,
+  onPublishDraft,
+  onPublishNow
 }: {
   article: ArticleDocument | null;
+  connection?: ProjectWordPressConnection;
+  busy: boolean;
   viewMode: ArticleViewMode;
   onViewModeChange: (mode: ArticleViewMode) => void;
   onFormat: (command: FormatCommand) => void;
   onCopyAll: () => void;
+  onConnectWordPress: () => void;
+  onPublishDraft: () => void;
+  onPublishNow: () => void;
 }) {
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const formatting = [
     { command: "bold" as const, icon: Bold, title: "Bold" },
     { command: "italic" as const, icon: Italic, title: "Italic" },
@@ -3640,6 +3648,16 @@ function ArticleToolbar({
     { command: "bullet" as const, icon: List, title: "Bullet list" },
     { command: "numbered" as const, icon: ListOrdered, title: "Numbered list" }
   ];
+  const connected = connection?.applicationPasswordConfigured && connection.connectionStatus === "connected";
+  const publishStatus = article ? getArticlePublishingStatus(article) : null;
+  const publishDisabled = !article || !connected || busy || publishStatus === "published";
+  const publishTitle = !article
+    ? "Select an article to publish."
+    : !connected
+      ? "Connect WordPress in Project Settings before publishing."
+      : publishStatus === "published"
+        ? "This article is already published."
+        : "Publish to WordPress";
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
@@ -3660,79 +3678,63 @@ function ArticleToolbar({
           </button>
         ))}
       </div>
-      <div className="ml-auto flex shrink-0 items-center rounded-md bg-surface-3 p-0.5">
-        {(["rich", "md", "split"] as const).map((mode) => (
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="relative">
           <button
-            key={mode}
-            onClick={() => onViewModeChange(mode)}
-            className={cn("h-7 rounded px-2 text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", viewMode === mode && "bg-surface-1 text-ink shadow-sm")}
+            onClick={() => {
+              if (publishDisabled) {
+                if (!connected && article && !busy) onConnectWordPress();
+                return;
+              }
+              setPublishMenuOpen((open) => !open);
+            }}
+            disabled={!article || busy || publishStatus === "published"}
+            title={publishTitle}
+            className={cn(
+              "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-medium transition-colors",
+              publishDisabled
+                ? "cursor-not-allowed border-line bg-surface-3 text-ink-subtle"
+                : "border-line bg-surface-1 text-ink hover:bg-surface-3"
+            )}
           >
-            {mode === "md" ? "MD" : mode}
+            Publish
+            <ChevronDown className={cn("size-3 transition-transform", publishMenuOpen && "rotate-180")} />
           </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ArticlePublishingBar({
-  article,
-  connection,
-  busy,
-  onConnectWordPress,
-  onPublishDraft,
-  onPublishNow
-}: {
-  article: ArticleDocument | null;
-  connection?: ProjectWordPressConnection;
-  busy: boolean;
-  onConnectWordPress: () => void;
-  onPublishDraft: () => void;
-  onPublishNow: () => void;
-}) {
-  if (!article) return null;
-  const publishable = article.status === "generated" || article.status === "needs_review" || Boolean(article.publishing?.wordpress);
-  if (!publishable) return null;
-  const published = article.publishing?.wordpress;
-  const connected = connection?.applicationPasswordConfigured && connection.connectionStatus === "connected";
-  return (
-    <div className="hairline-b bg-surface-2/35 px-5 py-3 lg:px-7">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-[13px] font-medium text-ink">Publishing Actions</div>
-          <div className="mt-0.5 text-[11px] text-ink-muted">
-            {connected ? "Publish directly to this project's WordPress site." : "Connect WordPress in Project Settings to publish without leaving QueueWrite."}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {connected ? (
-            <>
-              <button onClick={onPublishDraft} disabled={busy} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40">
+          {publishMenuOpen && !publishDisabled && (
+            <div className="absolute right-0 top-8 z-30 w-40 overflow-hidden rounded-md border border-line bg-surface-1 p-1 shadow-lg">
+              <button
+                onClick={() => {
+                  setPublishMenuOpen(false);
+                  onPublishDraft();
+                }}
+                className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
+              >
                 Publish Draft
               </button>
-              <button onClick={onPublishNow} disabled={busy} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
-                Publish Now
+              <button
+                onClick={() => {
+                  setPublishMenuOpen(false);
+                  onPublishNow();
+                }}
+                className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
+              >
+                Publish Live
               </button>
-            </>
-          ) : (
-            <button onClick={onConnectWordPress} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white">
-              Connect WordPress
-            </button>
+            </div>
           )}
         </div>
-      </div>
-      {published && (
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <MetricLine label="Published Status" value={published.status === "draft" ? "Draft" : "Published"} />
-          <MetricLine label="WordPress Post ID" value={published.postId} />
-          <MetricLine label="Published Date" value={formatDate(published.publishedAt)} />
-          <span className="text-ink-subtle">WordPress URL</span>
-          <a href={published.url} target="_blank" rel="noreferrer" className="flex items-center justify-end gap-1 text-right text-ink hover:underline">
-            <span className="truncate">{published.url}</span>
-            <ExternalLink className="size-3 shrink-0" />
-          </a>
+        <div className="flex shrink-0 items-center rounded-md bg-surface-3 p-0.5">
+        {(["rich", "md", "split"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => onViewModeChange(mode)}
+              className={cn("h-7 rounded px-2 text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", viewMode === mode && "bg-surface-1 text-ink shadow-sm")}
+            >
+              {mode === "md" ? "MD" : mode}
+            </button>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
