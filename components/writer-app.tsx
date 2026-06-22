@@ -29,7 +29,7 @@ type InspectorTab = "project" | "pipeline" | "research" | "validation" | "writin
 type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
-type InventorySortKey = "quality" | "research" | "evidence" | "words" | "updated";
+type InventorySortKey = "quality" | "research" | "evidence" | "updated";
 type SortDirection = "asc" | "desc";
 type WorkspacePreferencePatch = {
   account?: Partial<WorkspacePreferencesDocument["account"]>;
@@ -2100,7 +2100,6 @@ function ProjectDashboard({
                   sortDirection={sortDirection}
                   onSort={changeSort}
                   selectable
-                  showPublishingStatus
                 />
               </>
             ) : (
@@ -2809,8 +2808,7 @@ function InventoryTable({
   sortDirection,
   onSort,
   compact = false,
-  selectable = false,
-  showPublishingStatus = false
+  selectable = false
 }: {
   rows: Array<{ article: ArticleSummary; job: QueueJob | null }>;
   sourceCounts: Record<string, number>;
@@ -2822,12 +2820,8 @@ function InventoryTable({
   onSort: (key: InventorySortKey) => void;
   compact?: boolean;
   selectable?: boolean;
-  showPublishingStatus?: boolean;
 }) {
-  const statusColClass = selectable && showPublishingStatus ? "w-[116px]" : "w-[132px]";
-  const publishColClass = showPublishingStatus ? "w-[88px]" : undefined;
-  const wordsColClass = selectable && showPublishingStatus ? "w-[76px]" : "w-[84px]";
-  const updatedColClass = selectable && showPublishingStatus ? "w-[104px]" : "w-[88px]";
+  const updatedColClass = selectable ? "w-[104px]" : "w-[88px]";
 
   return (
     <div className="overflow-hidden">
@@ -2835,9 +2829,7 @@ function InventoryTable({
         <colgroup>
           {selectable && <col className="w-[32px]" />}
           <col />
-          <col className={statusColClass} />
-          {showPublishingStatus && <col className={publishColClass} />}
-          <col className={wordsColClass} />
+          <col className="w-[132px]" />
           <col className="w-[56px]" />
           <col className="w-[56px]" />
           <col className="w-[56px]" />
@@ -2849,8 +2841,6 @@ function InventoryTable({
             {selectable && <th className="px-3 py-2 text-left"><span className="sr-only">Select</span></th>}
             <th className="px-3 py-2 text-left">Title</th>
             <th className="px-3 py-2 text-left">Status</th>
-            {showPublishingStatus && <th className="px-3 py-2 text-left">Publish</th>}
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
             <th className="px-3 py-2 text-right">Src</th>
             <th className="px-3 py-2 text-right"><InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
             <th className="px-3 py-2 text-right"><InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
@@ -2860,7 +2850,6 @@ function InventoryTable({
         </thead>
         <tbody>
           {rows.map(({ article, job }) => {
-            const publishingStatus = getArticlePublishingStatus(article);
             const selected = selectedArticleIds?.has(article.id) ?? false;
             return (
               <tr
@@ -2890,7 +2879,7 @@ function InventoryTable({
                       <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">
                         {job
                           ? attentionSummary(article, job) ?? `Attempt ${job.attempts}`
-                          : publishingStatus === "failed"
+                          : getArticlePublishingStatus(article) === "failed"
                             ? "Publishing failed"
                             : `Updated ${relativeDate(article.updatedAt)}`}
                       </div>
@@ -2900,14 +2889,6 @@ function InventoryTable({
                 <td className="px-3 py-2.5 align-middle">
                   <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
                 </td>
-                {showPublishingStatus && (
-                  <td className="px-3 py-2.5 align-middle">
-                    <span className={cn("mono inline-flex rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em]", publishingStatusTone(publishingStatus))}>
-                      {publishingStatusLabel(publishingStatus)}
-                    </span>
-                  </td>
-                )}
-                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</td>
                 <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</td>
                 <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</td>
                 <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.researchScore}</td>
@@ -2959,7 +2940,6 @@ function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob 
 }
 
 function inventorySortValue(article: ArticleSummary, key: InventorySortKey) {
-  if (key === "words") return article.wordCount;
   if (key === "updated") return article.updatedAt;
   return key === "quality" ? article.qualityScore : key === "research" ? article.researchScore : article.evidenceScore;
 }

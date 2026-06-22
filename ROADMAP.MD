@@ -96,6 +96,7 @@
 - Rebuilt the centre-panel inventory list as a fixed-column table so headers and row values align tightly with a more clinical spreadsheet-style presentation.
 - Removed sort arrows from the centre-panel inventory headers and switched the active sort column to a bold label so sorting does not disturb column alignment.
 - Rebalanced the lower inventory fixed column widths so the `Updated` header fits cleanly alongside the selectable and publish columns.
+- Removed the `Words` column from `Needs Attention` and made `Content Inventory` use the same reduced column layout, with the bottom table differing only by its selection checkbox for bulk actions.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed
