@@ -1,5 +1,6 @@
 import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, SiteKnowledgePageDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
+import { applyPublishingDefaults } from "@/lib/publishing/workflow";
 import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
@@ -389,6 +390,7 @@ export class WorkspaceStore {
     const all = await this.storage.listJson<ArticleDocument>(articlesPrefix(projectId ?? await this.getActiveProjectId()));
     return all
       .filter((article) => typeof article.markdown === "string")
+      .map((article) => applyPublishingDefaults(article))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
@@ -410,7 +412,8 @@ export class WorkspaceStore {
 
   async getArticle(articleId: string, projectId?: string) {
     const resolvedProjectId = projectId ?? await this.getActiveProjectId();
-    return this.storage.getJson<ArticleDocument>(articlePath(articleId, resolvedProjectId));
+    const article = await this.storage.getJson<ArticleDocument>(articlePath(articleId, resolvedProjectId));
+    return article ? applyPublishingDefaults(article) : null;
   }
 
   async getArticleById(articleId: string) {

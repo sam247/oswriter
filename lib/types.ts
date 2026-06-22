@@ -89,6 +89,8 @@ export interface SiteKnowledgePageDocument {
 
 export type WordPressConnectionStatus = "not_connected" | "connected" | "failed";
 export type WordPressPostStatus = "draft" | "publish";
+export type PublishingWorkflowStatus = "draft" | "ready" | "scheduled" | "published" | "failed";
+export type PostGenerationPublishingAction = "generate_only" | "mark_ready" | "publish_draft" | "publish_live";
 
 export interface ProjectWordPressConnection {
   siteUrl: string;
@@ -253,6 +255,7 @@ export interface QueueJob {
   articleId: string;
   title: string;
   contentProfile?: ContentProfile;
+  postGenerationAction?: PostGenerationPublishingAction;
   status: JobStatus;
   statusReason?: string | null;
   createdAt: string;
@@ -447,6 +450,12 @@ export interface ArticleDocument {
   costTelemetry?: ArticleCostTelemetry | null;
   qualityScore: number;
   researchSummary: string;
+  publishingStatus?: PublishingWorkflowStatus;
+  publishedAt?: string | null;
+  wordpressPostId?: number | null;
+  wordpressUrl?: string | null;
+  scheduledPublishAt?: string | null;
+  publishingError?: string | null;
   publishing?: {
     wordpress?: {
       postId: number;
@@ -470,6 +479,11 @@ export interface ArticleSummary {
   evidenceScore: number;
   wordCount: number;
   status: JobStatus;
+  publishingStatus: PublishingWorkflowStatus;
+  publishedAt?: string | null;
+  wordpressPostId?: number | null;
+  wordpressUrl?: string | null;
+  scheduledPublishAt?: string | null;
   updatedAt: string;
 }
 

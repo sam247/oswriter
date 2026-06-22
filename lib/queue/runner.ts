@@ -9,6 +9,14 @@ import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateGenerati
 import { pricingForModel } from "@/lib/telemetry/pricing";
 import { benchmarkPairId, benchmarkRunLabel, exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
+import {
+  markArticleAsDraft,
+  markArticlePublishingFailed,
+  markArticleReady,
+  postGenerationActionToWordPressStatus,
+  publishArticleViaProjectConnection,
+  shouldAutoPublish
+} from "@/lib/publishing/workflow";
 import { projectProfileFromControls, snapshotProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { heuristicValidation } from "@/lib/validation/heuristics";
@@ -16,6 +24,7 @@ import type { WorkspaceStore } from "@/lib/storage/storage";
 import { resolveContentProfile, type ContentProfile } from "@/lib/content-profiles";
 import type { ResearchProvider } from "@/lib/research/providers/types";
 import { ResearchProviderError } from "@/lib/research/providers/registry";
+import type { PostGenerationPublishingAction } from "@/lib/types";
 
 const EMERGENCY_STOP_REASON = "Emergency stopped by user.";
 
@@ -26,7 +35,12 @@ export class QueueRunner {
     private readonly model: ModelAdapter
   ) {}
 
-  async addTitles(titles: string[], projectId?: string, contentProfile?: ContentProfile) {
+  async addTitles(
+    titles: string[],
+    projectId?: string,
+    contentProfile?: ContentProfile,
+    postGenerationAction: PostGenerationPublishingAction = "generate_only"
+  ) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const clean = titles.map((title) => title.trim()).filter(Boolean);
     const existingJobs = await this.store.listJobs(resolvedProjectId);
@@ -41,6 +55,7 @@ export class QueueRunner {
         articleId,
         title,
         ...(contentProfile ? { contentProfile } : {}),
+        postGenerationAction,
         status: "queued",
         createdAt,
         updatedAt: createdAt,
@@ -67,7 +82,12 @@ export class QueueRunner {
     return jobs;
   }
 
-  async addUniqueTitles(titles: string[], projectId?: string, contentProfile?: ContentProfile) {
+  async addUniqueTitles(
+    titles: string[],
+    projectId?: string,
+    contentProfile?: ContentProfile,
+    postGenerationAction: PostGenerationPublishingAction = "generate_only"
+  ) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     const [articles, jobs] = await Promise.all([
       this.store.listArticles(resolvedProjectId),
@@ -80,7 +100,7 @@ export class QueueRunner {
       blocked.add(key);
       return true;
     });
-    return this.addTitles(unique, resolvedProjectId, contentProfile);
+    return this.addTitles(unique, resolvedProjectId, contentProfile, postGenerationAction);
   }
 
   async regenerateArticle(articleId: string, projectId?: string) {
@@ -485,8 +505,9 @@ export class QueueRunner {
       };
 
       const costTelemetry = buildArticleCostTelemetry(job, markdown, research, generation, plan, planningDiagnostics);
-      const article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics, costTelemetry, contentProfile);
+      let article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics, costTelemetry, contentProfile);
       await this.store.saveArticle(article);
+      article = await this.applyPostGenerationWorkflow(job, article, log);
       await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
       log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
       await this.store.saveJob(job);
@@ -539,6 +560,40 @@ export class QueueRunner {
   private async nextQueuePosition(projectId: string) {
     const last = await this.store.getLatestQueuePosition(projectId);
     return Math.max(Date.now(), last + 1);
+  }
+
+  private async applyPostGenerationWorkflow(
+    job: QueueJob,
+    article: ArticleDocument,
+    log: (event: Omit<DebugEvent, "at">) => void
+  ) {
+    const action = job.postGenerationAction ?? "generate_only";
+    if (action === "mark_ready") {
+      const updated = markArticleReady(article);
+      await this.store.updateArticle(updated);
+      log({ stage: "queue", level: "info", message: "Article marked ready for publishing." });
+      return updated;
+    }
+    if (shouldAutoPublish(action)) {
+      try {
+        const updated = await publishArticleViaProjectConnection(this.store, article, postGenerationActionToWordPressStatus(action));
+        log({
+          stage: "queue",
+          level: "info",
+          message: action === "publish_live" ? "Article auto-published live." : "Article auto-published as WordPress draft."
+        });
+        return updated;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Auto-publish failed.";
+        const failed = markArticlePublishingFailed(article, message);
+        await this.store.updateArticle(failed);
+        log({ stage: "queue", level: "error", message: "Post-generation publishing failed.", data: message });
+        return failed;
+      }
+    }
+    const updated = markArticleAsDraft(article);
+    await this.store.updateArticle(updated);
+    return updated;
   }
 
   private async saveGenerationTelemetry(
@@ -918,6 +973,12 @@ function createArticle(
     costTelemetry: costTelemetry ?? null,
     qualityScore: validation.qualityScore,
     researchSummary: research.usefulFacts.slice(0, 5).join(" "),
+    publishingStatus: "draft",
+    publishedAt: null,
+    wordpressPostId: null,
+    wordpressUrl: null,
+    scheduledPublishAt: null,
+    publishingError: null,
     validation,
     pipeline: job.pipeline,
     sources,

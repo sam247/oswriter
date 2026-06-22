@@ -65,9 +65,35 @@
   - page listing
 - Added Neon schema support and tests for the Site Knowledge foundation without introducing embeddings, clustering, internal linking, or recommendation logic.
 
+### WordPress Publishing Workflow (Phase 2)
+
+- Added first-class publishing workflow fields on articles for:
+  - `publishing_status`
+  - `published_at`
+  - `wordpress_post_id`
+  - `wordpress_url`
+  - `scheduled_publish_at`
+- Added relational Neon schema support plus migration coverage while preserving legacy `article.publishing.wordpress` metadata for existing articles.
+- Added a shared publishing workflow layer so single-article publish actions, queue automation, and bulk actions reuse the existing WordPress publishing service instead of duplicating publish logic.
+- Added queue payload support for post-generation actions:
+  - Generate Only
+  - Generate + Mark Ready
+  - Generate + Publish Draft
+  - Generate + Publish Live
+- Added post-generation workflow handling in the queue runner so completed articles can stay Draft, become Ready, or publish through the existing WordPress integration automatically.
+- Added Content Inventory bulk publishing controls in the existing dashboard:
+  - checkbox selection
+  - select all
+  - bulk action picker
+  - selected count
+  - progress feedback
+  - publishing status badges
+- Added a client-safe publishing status helper module so dashboard and summary UI can consume publishing workflow metadata without importing server-only WordPress publishing code into the browser bundle.
+- Updated article summary expectations to cover the new publishing workflow fields without exposing full article content in project state.
+
 ## Deferred
 
-### WordPress Publishing (Phase 2)
+### WordPress Publishing (Next)
 
 - Schedule post
 - Categories

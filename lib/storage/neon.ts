@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
+import { applyPublishingDefaults } from "@/lib/publishing/workflow";
 import { normalizeProjectProfile, profileKeyFor } from "@/lib/project/profile";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
@@ -33,6 +34,7 @@ export class NeonStorageProvider implements StorageProvider {
   private readonly injectedTenant?: TenantSeed;
   private tenantReady = false;
   private generationTelemetrySchemaReady = false;
+  private articlePublishingSchemaReady = false;
   private wordPressConnectionSchemaReady = false;
   private siteKnowledgeSchemaReady = false;
   private readonly ensuredProjects = new Set<string>();
@@ -320,12 +322,14 @@ export class NeonStorageProvider implements StorageProvider {
   async getArticleById(articleId: string): Promise<ArticleDocument | null> {
     return this.withFailureLogging("getArticleById", articleId, async () => {
       const found = rows(await this.sql`select document from articles where id = ${articleId}`);
-      return found[0]?.document as ArticleDocument | null ?? null;
+      const article = found[0]?.document as ArticleDocument | null ?? null;
+      return article ? applyPublishingDefaults(article) : null;
     });
   }
 
   async updateArticle(article: ArticleDocument): Promise<void> {
     return this.withFailureLogging("updateArticle", article.id, async () => {
+      await this.ensureArticlePublishingSchema();
       const summary = toArticleSummary(article);
       const persistedDocument = {
         ...article,
@@ -336,6 +340,11 @@ export class NeonStorageProvider implements StorageProvider {
           title = ${article.title},
           markdown = ${article.markdown},
           word_count = ${article.wordCount},
+          publishing_status = ${summary.publishingStatus},
+          published_at = ${summary.publishedAt ?? null}::timestamptz,
+          wordpress_post_id = ${summary.wordpressPostId ?? null},
+          wordpress_url = ${summary.wordpressUrl ?? null},
+          scheduled_publish_at = ${summary.scheduledPublishAt ?? null}::timestamptz,
           document = ${JSON.stringify(persistedDocument)}::jsonb,
           updated_at = ${article.updatedAt}::timestamptz
         where id = ${article.id}
@@ -492,8 +501,14 @@ export class NeonStorageProvider implements StorageProvider {
 
   async listArticleSummaries(projectId: string): Promise<ArticleSummary[]> {
     return this.withFailureLogging("listArticleSummaries", projectId, async () => {
+      await this.ensureArticlePublishingSchema();
       const found = rows(await this.sql`
         select id, title, quality_score, word_count, status, updated_at,
+          coalesce(publishing_status, case when document #>> '{publishing,wordpress,status}' = 'publish' then 'published' when document #>> '{publishing,wordpress,status}' = 'draft' then 'draft' else 'draft' end) as publishing_status,
+          coalesce(published_at, nullif(document #>> '{publishing,wordpress,publishedAt}', '')::timestamptz) as published_at,
+          coalesce(wordpress_post_id, nullif(document #>> '{publishing,wordpress,postId}', '')::int) as wordpress_post_id,
+          coalesce(wordpress_url, nullif(document #>> '{publishing,wordpress,url}', '')) as wordpress_url,
+          scheduled_publish_at,
           coalesce((document #>> '{summaryScores,research}')::numeric, quality_score, 0) as research_score,
           coalesce((document #>> '{summaryScores,evidence}')::numeric, quality_score, 0) as evidence_score
         from articles
@@ -508,6 +523,11 @@ export class NeonStorageProvider implements StorageProvider {
         evidenceScore: Number(row.evidence_score ?? 0),
         wordCount: Number(row.word_count ?? 0),
         status: String(row.status) as ArticleSummary["status"],
+        publishingStatus: String(row.publishing_status ?? "draft") as ArticleSummary["publishingStatus"],
+        publishedAt: row.published_at ? new Date(row.published_at as string | number | Date).toISOString() : null,
+        wordpressPostId: row.wordpress_post_id === null || row.wordpress_post_id === undefined ? null : Number(row.wordpress_post_id),
+        wordpressUrl: row.wordpress_url ? String(row.wordpress_url) : null,
+        scheduledPublishAt: row.scheduled_publish_at ? new Date(row.scheduled_publish_at as string | number | Date).toISOString() : null,
         updatedAt: new Date(row.updated_at as string | number | Date).toISOString()
       }));
     });
@@ -1335,6 +1355,7 @@ export class NeonStorageProvider implements StorageProvider {
   }
 
   private async saveArticleRow(article: ArticleDocument) {
+    await this.ensureArticlePublishingSchema();
     const tenant = await this.ensureTenant();
     await this.ensureProjectRows(article.projectId);
     const next = withArticleDefaults(article, tenant);
@@ -1346,13 +1367,16 @@ export class NeonStorageProvider implements StorageProvider {
     await this.sql`
       insert into articles (
         id, organisation_id, project_id, job_id, title, status, status_reason, markdown, markdown_blob_path,
-        current_version_number, versioned_at, word_count, quality_score, research_summary, validation, pipeline,
+        current_version_number, versioned_at, word_count, quality_score, research_summary, publishing_status,
+        published_at, wordpress_post_id, wordpress_url, scheduled_publish_at, validation, pipeline,
         sources, needs_review_reasons, timings, created_by_user_id, document, created_at, updated_at
       )
       values (
         ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.jobId}, ${next.title}, ${next.status},
         ${next.statusReason ?? null}, ${next.markdown}, ${next.markdownBlobPath ?? null}, ${next.currentVersionNumber},
         ${next.versionedAt ?? null}::timestamptz, ${next.wordCount}, ${next.qualityScore}, ${next.researchSummary},
+        ${summary.publishingStatus}, ${summary.publishedAt ?? null}::timestamptz, ${summary.wordpressPostId ?? null},
+        ${summary.wordpressUrl ?? null}, ${summary.scheduledPublishAt ?? null}::timestamptz,
         ${JSON.stringify(next.validation)}::jsonb, ${JSON.stringify(next.pipeline)}::jsonb, ${JSON.stringify(next.sources)}::jsonb,
         ${JSON.stringify(next.needsReviewReasons)}::jsonb, ${JSON.stringify(next.timings ?? {})}::jsonb,
         ${next.createdByUserId}, ${JSON.stringify(persistedDocument)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
@@ -1367,6 +1391,11 @@ export class NeonStorageProvider implements StorageProvider {
         word_count = excluded.word_count,
         quality_score = excluded.quality_score,
         research_summary = excluded.research_summary,
+        publishing_status = excluded.publishing_status,
+        published_at = excluded.published_at,
+        wordpress_post_id = excluded.wordpress_post_id,
+        wordpress_url = excluded.wordpress_url,
+        scheduled_publish_at = excluded.scheduled_publish_at,
         validation = excluded.validation,
         pipeline = excluded.pipeline,
         sources = excluded.sources,
@@ -1733,6 +1762,19 @@ export class NeonStorageProvider implements StorageProvider {
     this.generationTelemetrySchemaReady = true;
   }
 
+  private async ensureArticlePublishingSchema() {
+    if (this.articlePublishingSchemaReady) return;
+    await this.sql`
+      alter table articles
+        add column if not exists publishing_status text,
+        add column if not exists published_at timestamptz,
+        add column if not exists wordpress_post_id integer,
+        add column if not exists wordpress_url text,
+        add column if not exists scheduled_publish_at timestamptz
+    `;
+    this.articlePublishingSchemaReady = true;
+  }
+
   private async ensureWordPressConnectionSchema() {
     if (this.wordPressConnectionSchemaReady) return;
     await this.sql`
@@ -2088,7 +2130,7 @@ function withWorkspacePreferenceDefaults(preferences: WorkspacePreferencesDocume
 }
 
 function withArticleDefaults(article: ArticleDocument, tenant: TenantSeed): ArticleDocument {
-  return {
+  return applyPublishingDefaults({
     ...article,
     organisationId: article.organisationId ?? tenant.organisationId,
     createdByUserId: article.createdByUserId ?? tenant.userId,
@@ -2097,7 +2139,7 @@ function withArticleDefaults(article: ArticleDocument, tenant: TenantSeed): Arti
     markdownBlobPath: article.markdownBlobPath ?? null,
     statusReason: article.statusReason ?? null,
     isPinned: article.isPinned ?? false
-  };
+  });
 }
 
 function withResearchDefaults(research: ResearchPack, tenant: TenantSeed, projectId: string): Required<Pick<ResearchPack, "id" | "organisationId" | "projectId" | "runNumber">> & ResearchPack {

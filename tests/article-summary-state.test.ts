@@ -30,8 +30,25 @@ describe("project state article summaries", () => {
 
     const [summary] = (await store.getState("default")).articles;
     assert.deepEqual(Object.keys(summary).sort(), [
-      "evidenceScore", "id", "qualityScore", "researchScore", "status", "title", "updatedAt", "wordCount"
+      "evidenceScore",
+      "id",
+      "publishedAt",
+      "publishingStatus",
+      "qualityScore",
+      "researchScore",
+      "scheduledPublishAt",
+      "status",
+      "title",
+      "updatedAt",
+      "wordCount",
+      "wordpressPostId",
+      "wordpressUrl"
     ]);
+    assert.equal(summary.publishingStatus, "draft");
+    assert.equal(summary.publishedAt, null);
+    assert.equal(summary.wordpressPostId, null);
+    assert.equal(summary.wordpressUrl, null);
+    assert.equal(summary.scheduledPublishAt, null);
     assert.equal("markdown" in summary, false);
     assert.equal("validation" in summary, false);
     assert.equal("sources" in summary, false);

@@ -12,11 +12,12 @@ import { TextareaHighlightOverlay } from "@/components/editor/TextareaHighlightO
 import { useHarperSuggestions } from "@/components/editor/useHarperSuggestions";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
+import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -44,6 +45,28 @@ type WordPressConnectionDraft = {
   defaultPostStatus: WordPressPostStatus;
   defaultCategory: string;
 };
+type BulkPublishingAction = "mark_ready" | "publish_draft" | "publish_live";
+type BulkPublishingProgress = {
+  action: BulkPublishingAction;
+  completed: number;
+  total: number;
+  failed: number;
+};
+const POST_GENERATION_ACTION_OPTIONS: Array<{
+  value: PostGenerationPublishingAction;
+  label: string;
+  description: string;
+}> = [
+  { value: "generate_only", label: "Generate Only", description: "Keep new articles in Draft after generation." },
+  { value: "mark_ready", label: "Generate + Mark Ready", description: "Mark new articles Ready for review or later publishing." },
+  { value: "publish_draft", label: "Generate + Publish Draft", description: "Send completed articles to WordPress as drafts." },
+  { value: "publish_live", label: "Generate + Publish Live", description: "Publish completed articles to WordPress immediately." }
+];
+const BULK_PUBLISHING_ACTION_OPTIONS: Array<{ value: BulkPublishingAction; label: string }> = [
+  { value: "mark_ready", label: "Mark Ready" },
+  { value: "publish_draft", label: "Publish Draft" },
+  { value: "publish_live", label: "Publish Live" }
+];
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -118,6 +141,11 @@ function Workbench() {
   const [state, setState] = useState<AppState | null>(null);
   const [titles, setTitles] = useState("");
   const [newTitlesContentProfile, setNewTitlesContentProfile] = useState<ContentProfile | "">("");
+  const [postGenerationAction, setPostGenerationAction] = useState<PostGenerationPublishingAction>("generate_only");
+  const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
+  const [selectedInventoryArticleIds, setSelectedInventoryArticleIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<BulkPublishingAction>("mark_ready");
+  const [bulkProgress, setBulkProgress] = useState<BulkPublishingProgress | null>(null);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -160,6 +188,7 @@ function Workbench() {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const richEditorRef = useRef<HTMLDivElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
+  const generateMenuRef = useRef<HTMLDivElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const saveRevisionRef = useRef(0);
   const warningsRef = useRef<HTMLDivElement | null>(null);
@@ -331,6 +360,15 @@ function Workbench() {
   }, [selectedArticleId, tab]);
 
   useEffect(() => {
+    setSelectedInventoryArticleIds((current) => {
+      if (!current.size) return current;
+      const allowed = new Set(inventoryArticles.map((article) => article.id));
+      const next = new Set([...current].filter((id) => allowed.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [inventoryArticles]);
+
+  useEffect(() => {
     if (selectedArticleId && settingsOpen) setSettingsOpen(false);
     if (selectedArticleId && projectSettingsProjectId) setProjectSettingsProjectId(null);
   }, [selectedArticleId, settingsOpen, projectSettingsProjectId]);
@@ -367,6 +405,7 @@ function Workbench() {
       if (event.key === "Escape") {
         setGlobalSearchOpen(false);
         setProjectMenuOpen(false);
+        setGenerateMenuOpen(false);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -383,6 +422,17 @@ function Workbench() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!generateMenuOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && generateMenuRef.current?.contains(target)) return;
+      setGenerateMenuOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [generateMenuOpen]);
 
   useEffect(() => {
     if (!globalSearchOpen) return;
@@ -431,12 +481,40 @@ function Workbench() {
     return () => controller.abort();
   }, [selectedArticleId, articles.some((article) => article.id === selectedArticleId)]);
 
+  function applyUpdatedArticle(updated: ArticleDocument) {
+    setSelectedArticle((current) => current?.id === updated.id ? updated : current);
+    setState((current) => current ? {
+      ...current,
+      articles: current.articles.map((article) => article.id === updated.id ? toArticleSummary(updated) : article)
+    } : current);
+  }
+
+  function toggleInventoryArticleSelection(articleId: string) {
+    setSelectedInventoryArticleIds((current) => {
+      const next = new Set(current);
+      if (next.has(articleId)) next.delete(articleId);
+      else next.add(articleId);
+      return next;
+    });
+  }
+
+  function toggleAllInventoryArticleSelections(articleIds: string[]) {
+    setSelectedInventoryArticleIds((current) => {
+      const allSelected = articleIds.length > 0 && articleIds.every((articleId) => current.has(articleId));
+      return allSelected ? new Set() : new Set(articleIds);
+    });
+  }
+
   async function addTitles() {
     setBusy(true);
     const res = await fetch("/api/jobs/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ titles: titles.split("\n"), contentProfile: newTitlesContentProfile || undefined })
+      body: JSON.stringify({
+        titles: titles.split("\n"),
+        contentProfile: newTitlesContentProfile || undefined,
+        postGenerationAction
+      })
     });
     const data = await res.json().catch(() => ({})) as { state?: AppState; jobs?: QueueJob[]; error?: string };
     setBusy(false);
@@ -748,13 +826,72 @@ function Workbench() {
       setMessage(data.error ?? "WordPress publish failed.");
       return false;
     }
-    setSelectedArticle(data.article);
-    setState((current) => current ? {
-      ...current,
-      articles: current.articles.map((article) => article.id === data.article?.id ? toArticleSummary(data.article) : article)
-    } : current);
+    applyUpdatedArticle(data.article);
     setMessage(data.message ?? (status === "draft" ? "Draft published successfully" : "Article published successfully"));
     return true;
+  }
+
+  async function runBulkPublishingAction() {
+    const articleIds = [...selectedInventoryArticleIds];
+    if (!articleIds.length) {
+      setMessage("Select at least one article.");
+      return false;
+    }
+    setBusy(true);
+    setBulkProgress({ action: bulkAction, completed: 0, total: articleIds.length, failed: 0 });
+
+    if (bulkAction === "mark_ready") {
+      const res = await fetch("/api/articles/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ articleIds, action: "mark_ready" })
+      });
+      const data = await res.json().catch(() => ({})) as {
+        updatedArticles?: ArticleDocument[];
+        failed?: Array<{ articleId: string; error: string }>;
+        message?: string;
+        error?: string;
+      };
+      setBusy(false);
+      const updatedArticles = data.updatedArticles ?? [];
+      updatedArticles.forEach((article) => applyUpdatedArticle(article));
+      setSelectedInventoryArticleIds(new Set());
+      setBulkProgress({
+        action: bulkAction,
+        completed: articleIds.length,
+        total: articleIds.length,
+        failed: data.failed?.length ?? 0
+      });
+      setMessage(res.ok ? data.message ?? "Selected articles marked ready." : data.error ?? "Bulk update failed.");
+      if (!res.ok) await refresh();
+      return res.ok;
+    }
+
+    const status: WordPressPostStatus = bulkAction === "publish_live" ? "publish" : "draft";
+    let completed = 0;
+    let failed = 0;
+    for (const articleId of articleIds) {
+      const res = await fetch(`/api/articles/${articleId}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+      const data = await res.json().catch(() => ({})) as { article?: ArticleDocument };
+      if (res.ok && data.article) {
+        applyUpdatedArticle(data.article);
+      } else {
+        failed += 1;
+      }
+      completed += 1;
+      setBulkProgress({ action: bulkAction, completed, total: articleIds.length, failed });
+    }
+    setBusy(false);
+    setSelectedInventoryArticleIds(new Set());
+    setMessage(failed
+      ? `${completed - failed} article${completed - failed === 1 ? "" : "s"} completed, ${failed} failed.`
+      : `${completed} article${completed === 1 ? "" : "s"} ${bulkAction === "publish_live" ? "published live" : "published as drafts"}.`);
+    if (failed) await refresh();
+    return failed === 0;
   }
 
   async function renameProject() {
@@ -1210,17 +1347,62 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <button
-            onClick={processNext}
-            disabled={generateButton.disabled}
-            title={generateButton.title}
-            className={cn(
-              "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
-              generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+          <div ref={generateMenuRef} className="relative">
+            <div className="flex items-center">
+              <button
+                onClick={() => void processNext()}
+                disabled={generateButton.disabled}
+                title={generateButton.title}
+                className={cn(
+                  "flex h-7 items-center gap-1.5 rounded-l-md px-2.5 text-[12px] font-medium transition-colors",
+                  generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+                )}
+              >
+                <Play className="size-3 fill-current" /> {generateButton.label}
+              </button>
+              <button
+                onClick={() => setGenerateMenuOpen((open) => !open)}
+                className={cn(
+                  "grid h-7 w-7 place-items-center rounded-r-md border-l text-[12px] transition-colors",
+                  generateButton.disabled
+                    ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
+                    : "border-white/15 bg-ink text-white hover:bg-ink/90"
+                )}
+                title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
+              >
+                <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
+              </button>
+            </div>
+            {generateMenuOpen && (
+              <div className="absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
+                <div className="hairline-b px-3 py-2">
+                  <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
+                  <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
+                </div>
+                <div className="p-1.5">
+                  {POST_GENERATION_ACTION_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setPostGenerationAction(option.value);
+                        setGenerateMenuOpen(false);
+                      }}
+                      className={cn(
+                        "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
+                        postGenerationAction === option.value && "bg-surface-2"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] font-medium text-ink">{option.label}</span>
+                        {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
+                      </div>
+                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
-          >
-            <Play className="size-3 fill-current" /> {generateButton.label}
-          </button>
+          </div>
           {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
             <button
               onClick={stopRun}
@@ -1415,6 +1597,20 @@ function Workbench() {
               <option value="">Inherit project profile ({CONTENT_PROFILES[resolveContentProfile(undefined, state?.project.defaultContentProfile)].label})</option>
               {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
+            <label className="mt-1.5 block text-[11px] text-ink-muted">
+              <span>After generation</span>
+              <select
+                value={postGenerationAction}
+                onChange={(event) => setPostGenerationAction(event.target.value as PostGenerationPublishingAction)}
+                className="mt-1 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none"
+                aria-label="Post-generation publishing action"
+              >
+                {POST_GENERATION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <div className="mt-1 text-[10.5px] leading-snug text-ink-subtle">
+              {describePostGenerationAction(postGenerationAction)}: {POST_GENERATION_ACTION_OPTIONS.find((option) => option.value === postGenerationAction)?.description}
+            </div>
             <div className="mt-1.5 flex gap-1">
               <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
                 <Upload className="size-3.5" /> Add
@@ -1496,7 +1692,15 @@ function Workbench() {
               jobs={displayJobs}
               summary={projectSummary}
               sourceCounts={articleSourceCounts}
+              selectedArticleIds={selectedInventoryArticleIds}
+              bulkAction={bulkAction}
+              bulkProgress={bulkProgress}
+              bulkBusy={busy}
               onSelectArticle={setSelectedArticleId}
+              onToggleArticleSelection={toggleInventoryArticleSelection}
+              onToggleSelectAll={toggleAllInventoryArticleSelections}
+              onBulkActionChange={setBulkAction}
+              onRunBulkAction={() => void runBulkPublishingAction()}
             />
           )}
         </section>
@@ -1771,14 +1975,30 @@ function ProjectDashboard({
   jobs,
   summary,
   sourceCounts,
-  onSelectArticle
+  selectedArticleIds,
+  bulkAction,
+  bulkProgress,
+  bulkBusy,
+  onSelectArticle,
+  onToggleArticleSelection,
+  onToggleSelectAll,
+  onBulkActionChange,
+  onRunBulkAction
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
   jobs: QueueJob[];
   summary: ProjectSummary | null;
   sourceCounts: Record<string, number>;
+  selectedArticleIds: Set<string>;
+  bulkAction: BulkPublishingAction;
+  bulkProgress: BulkPublishingProgress | null;
+  bulkBusy: boolean;
   onSelectArticle: (id: string) => void;
+  onToggleArticleSelection: (id: string) => void;
+  onToggleSelectAll: (articleIds: string[]) => void;
+  onBulkActionChange: (action: BulkPublishingAction) => void;
+  onRunBulkAction: () => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -1788,6 +2008,9 @@ function ProjectDashboard({
     sortDirection
   );
   const contentInventory = inventoryRows;
+  const contentInventoryIds = contentInventory.map(({ article }) => article.id);
+  const allInventorySelected = contentInventoryIds.length > 0 && contentInventoryIds.every((articleId) => selectedArticleIds.has(articleId));
+  const selectedInventoryCount = selectedArticleIds.size;
   const attentionRows = inventoryRows
     .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "processing")
     .slice(0, 8);
@@ -1830,7 +2053,57 @@ function ProjectDashboard({
 
           <ProjectSection title="Content inventory">
             {contentInventory.length ? (
-              <InventoryTable rows={contentInventory} sourceCounts={sourceCounts} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} />
+              <>
+                <div className="mb-3 rounded-md border border-line bg-surface-2 p-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="flex items-center gap-2 text-[12px] text-ink">
+                      <input
+                        type="checkbox"
+                        checked={allInventorySelected}
+                        onChange={() => onToggleSelectAll(contentInventoryIds)}
+                      />
+                      <span>Select all</span>
+                    </label>
+                    <span className="mono text-[10.5px] text-ink-subtle">{selectedInventoryCount} selected</span>
+                    <select
+                      value={bulkAction}
+                      onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
+                      className="h-8 min-w-36 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink outline-none"
+                      aria-label="Bulk publishing action"
+                    >
+                      {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                    <button
+                      onClick={onRunBulkAction}
+                      disabled={!selectedInventoryCount || bulkBusy}
+                      className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                    >
+                      {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[10.5px] text-ink-subtle">
+                    <span>{selectedInventoryCount ? "Bulk actions reuse the existing WordPress publish path." : "Select one or more articles to run a bulk action."}</span>
+                    {bulkProgress && (
+                      <span className="mono">
+                        {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                        {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <InventoryTable
+                  rows={contentInventory}
+                  sourceCounts={sourceCounts}
+                  selectedArticleIds={selectedArticleIds}
+                  onToggleArticleSelection={onToggleArticleSelection}
+                  onSelectArticle={onSelectArticle}
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={changeSort}
+                  selectable
+                  showPublishingStatus
+                />
+              </>
             ) : (
               <Empty text="Saved articles will appear here." />
             )}
@@ -2508,25 +2781,42 @@ function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | nu
 function InventoryTable({
   rows,
   sourceCounts,
+  selectedArticleIds,
+  onToggleArticleSelection,
   onSelectArticle,
   sortKey,
   sortDirection,
   onSort,
-  compact = false
+  compact = false,
+  selectable = false,
+  showPublishingStatus = false
 }: {
   rows: Array<{ article: ArticleSummary; job: QueueJob | null }>;
   sourceCounts: Record<string, number>;
+  selectedArticleIds?: Set<string>;
+  onToggleArticleSelection?: (id: string) => void;
   onSelectArticle: (id: string) => void;
   sortKey: InventorySortKey;
   sortDirection: SortDirection;
   onSort: (key: InventorySortKey) => void;
   compact?: boolean;
+  selectable?: boolean;
+  showPublishingStatus?: boolean;
 }) {
+  const contentGridClass = showPublishingStatus
+    ? "grid-cols-[minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px]"
+    : "grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px]";
+  const wrapperGridClass = selectable
+    ? `grid-cols-[28px_${showPublishingStatus ? "minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px" : "minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px"}]`
+    : contentGridClass;
+
   return (
     <div className="overflow-hidden">
-      <div className="grid grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+      <div className={cn("grid gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", wrapperGridClass)}>
+        {selectable && <span className="sr-only">Select</span>}
         <span>Title</span>
         <span>Status</span>
+        {showPublishingStatus && <span>Publish</span>}
         <InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} />
         <span className="text-right">Src</span>
         <InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} />
@@ -2536,23 +2826,69 @@ function InventoryTable({
       </div>
       <div className="divide-y divide-line/70">
         {rows.map(({ article, job }) => {
-          return (
-            <button
-              key={article.id}
-              onClick={() => onSelectArticle(article.id)}
-              className="grid w-full grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2"
-            >
+          const publishingStatus = getArticlePublishingStatus(article);
+          const selected = selectedArticleIds?.has(article.id) ?? false;
+          const rowBody = (
+            <>
               <span className="min-w-0">
                 <span className="block truncate font-medium text-ink">{article.title}</span>
-                {!compact && <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">{job ? attentionSummary(article, job) ?? `Attempt ${job.attempts}` : `Updated ${relativeDate(article.updatedAt)}`}</span>}
+                {!compact && (
+                  <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">
+                    {job
+                      ? attentionSummary(article, job) ?? `Attempt ${job.attempts}`
+                      : publishingStatus === "failed"
+                        ? "Publishing failed"
+                        : `Updated ${relativeDate(article.updatedAt)}`}
+                  </span>
+                )}
               </span>
               <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
+              {showPublishingStatus && (
+                <span className={cn("mono inline-flex w-fit rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em]", publishingStatusTone(publishingStatus))}>
+                  {publishingStatusLabel(publishingStatus)}
+                </span>
+              )}
               <span className="mono text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{article.researchScore}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</span>
               <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</span>
+            </>
+          );
+
+          if (selectable && onToggleArticleSelection && selectedArticleIds) {
+            return (
+              <div
+                key={article.id}
+                className={cn("grid gap-2 px-1 py-2 text-[12px] hover:bg-surface-2", wrapperGridClass, selected && "bg-surface-2/70")}
+              >
+                <label className="flex items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={() => onToggleArticleSelection(article.id)}
+                    aria-label={`Select ${article.title}`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onSelectArticle(article.id)}
+                  className={cn("grid min-w-0 gap-2 text-left", contentGridClass)}
+                >
+                  {rowBody}
+                </button>
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={article.id}
+              onClick={() => onSelectArticle(article.id)}
+              className={cn("grid w-full gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2", wrapperGridClass)}
+            >
+              {rowBody}
             </button>
           );
         })}
@@ -4637,6 +4973,26 @@ function statusLabel(status: JobStatus) {
     failed: "Failed",
     skipped: "Skipped"
   }[status];
+}
+
+function publishingStatusTone(status: PublishingWorkflowStatus) {
+  if (status === "published") return "bg-success/10 text-success";
+  if (status === "ready") return "bg-info/10 text-info";
+  if (status === "scheduled") return "bg-[#f0e4ff] text-[#6d3bb8]";
+  if (status === "failed") return "bg-danger/10 text-danger";
+  return "bg-surface-3 text-ink-subtle";
+}
+
+function publishingStatusLabel(status: PublishingWorkflowStatus) {
+  if (status === "published") return "Published";
+  if (status === "ready") return "Ready";
+  if (status === "scheduled") return "Scheduled";
+  if (status === "failed") return "Failed";
+  return "Draft";
+}
+
+function bulkActionLabel(action: BulkPublishingAction) {
+  return BULK_PUBLISHING_ACTION_OPTIONS.find((option) => option.value === action)?.label ?? action;
 }
 
 function formatMarkdown(markdown: string, start: number, end: number, command: FormatCommand) {

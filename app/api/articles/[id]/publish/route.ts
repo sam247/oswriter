@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { nowIso } from "@/lib/defaults";
-import { publishArticleToWordPress } from "@/lib/publishing/wordpress";
-import { getAccessibleArticle, getAccessibleProject } from "@/lib/server/project-access";
+import { publishArticleViaProjectConnection } from "@/lib/publishing/workflow";
+import { getAccessibleArticle } from "@/lib/server/project-access";
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
 import type { WordPressPostStatus } from "@/lib/types";
@@ -26,28 +25,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   if (!article) {
     return NextResponse.json({ error: "Article not found." }, { status: 404 });
   }
-
-  const project = await getAccessibleProject(store, article.projectId);
-  if (!project) {
-    return NextResponse.json({ error: "Project not found." }, { status: 404 });
-  }
-
-  const connection = await store.getProjectWordPressConnection(project.id);
-  if (!connection) {
-    return NextResponse.json({ error: "Connect WordPress in Project Settings before publishing." }, { status: 409 });
-  }
-
   try {
-    const published = await publishArticleToWordPress(connection, article, status);
-    const updated = {
-      ...article,
-      publishing: {
-        ...article.publishing,
-        wordpress: published
-      },
-      updatedAt: nowIso()
-    };
-    await store.updateArticle(updated);
+    const updated = await publishArticleViaProjectConnection(store, article, status);
     return NextResponse.json({
       article: updated,
       message: status === "draft" ? "Draft published successfully" : "Article published successfully"
