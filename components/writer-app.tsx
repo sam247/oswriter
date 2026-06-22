@@ -1429,7 +1429,7 @@ function Workbench() {
           ) : null}
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
+          <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 w-[7.5rem] items-center justify-between gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
             <Search className="size-3.5" />
             <span>Search</span>
             <span className="mono rounded bg-surface-3 px-1 py-0.5 text-[10px] text-ink-subtle">⌘K</span>
@@ -1694,7 +1694,7 @@ function Workbench() {
           </div>
         </aside>}
 
-        <section className="flex min-h-0 flex-col bg-background">
+        <section className={cn("flex min-h-0 flex-col bg-background", showRightPane && "border-r border-line")}>
           {projectSettingsProject && state ? (
             <ProjectSettingsPanel
               key={projectSettingsProject.id}
@@ -1777,7 +1777,7 @@ function Workbench() {
           )}
         </section>
 
-        {showRightPane && <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
+        {showRightPane && <aside className="flex min-h-0 flex-col bg-surface-2">
           <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
             {(["project", "pipeline", "research", "validation", "writing", "seo", "debug"] as const).map((item) => (
               <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>

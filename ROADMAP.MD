@@ -108,6 +108,8 @@
 - Removed the legacy queue-side `After generation` selector because post-generation behavior is now controlled from the main `Generate` button.
 - Removed the remaining generic settings width cap so settings cards can use the centre pane width instead of a narrower fixed content column.
 - Turned the top project/article breadcrumb labels into clickable navigation controls so users can jump back to project overview or reopen the current article context directly from the header.
+- Increased the header search trigger width so the global search control reads more clearly in the top toolbar.
+- Added a visible divider between the centre workspace and right inspector so the pane boundary stays readable against the light UI surfaces.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed
