@@ -93,6 +93,7 @@
 - Tightened the bulk publishing header spacing again so the title, selection state, controls, and helper text sit as a compact tool row instead of a tall stacked panel.
 - Fixed the Content Inventory table grid sizing so the header and article rows render directly under the bulk publishing controls without a false empty gap in the centre panel.
 - Aligned the project inventory header with the selectable article row columns by matching the header structure to the checkbox-plus-content table layout.
+- Rebuilt the centre-panel inventory list as a fixed-column table so headers and row values align tightly with a more clinical spreadsheet-style presentation.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

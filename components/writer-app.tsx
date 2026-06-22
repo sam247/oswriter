@@ -2824,107 +2824,95 @@ function InventoryTable({
   selectable?: boolean;
   showPublishingStatus?: boolean;
 }) {
-  const contentGridClass = showPublishingStatus
-    ? "grid-cols-[minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px]"
-    : "grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px]";
-  const selectableWrapperGridClass = "grid-cols-[28px_minmax(0,1fr)]";
-  const headerCells = (
-    <>
-      <span>Title</span>
-      <span>Status</span>
-      {showPublishingStatus && <span>Publish</span>}
-      <InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} />
-      <span className="text-right">Src</span>
-      <InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} />
-      <InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} />
-      <InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} />
-      <InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} />
-    </>
-  );
-
   return (
     <div className="overflow-hidden">
-      {selectable ? (
-        <div className={cn("grid gap-3 border-b border-line/70 px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", selectableWrapperGridClass)}>
-          <span className="sr-only">Select</span>
-          <div className={cn("grid gap-3", contentGridClass)}>
-            {headerCells}
-          </div>
-        </div>
-      ) : (
-        <div className={cn("grid gap-3 border-b border-line/70 px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", contentGridClass)}>
-          {headerCells}
-        </div>
-      )}
-      <div className="divide-y divide-line/70">
-        {rows.map(({ article, job }) => {
-          const publishingStatus = getArticlePublishingStatus(article);
-          const selected = selectedArticleIds?.has(article.id) ?? false;
-          const rowBody = (
-            <>
-              <span className="min-w-0">
-                <span className="block truncate font-medium text-ink">{article.title}</span>
-                {!compact && (
-                  <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">
-                    {job
-                      ? attentionSummary(article, job) ?? `Attempt ${job.attempts}`
-                      : publishingStatus === "failed"
-                        ? "Publishing failed"
-                        : `Updated ${relativeDate(article.updatedAt)}`}
-                  </span>
-                )}
-              </span>
-              <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
-              {showPublishingStatus && (
-                <span className={cn("mono inline-flex w-fit rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em]", publishingStatusTone(publishingStatus))}>
-                  {publishingStatusLabel(publishingStatus)}
-                </span>
-              )}
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.researchScore}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</span>
-            </>
-          );
-
-          if (selectable && onToggleArticleSelection && selectedArticleIds) {
+      <table className="w-full table-fixed border-collapse">
+        <colgroup>
+          {selectable && <col className="w-[32px]" />}
+          <col />
+          <col className="w-[132px]" />
+          {showPublishingStatus && <col className="w-[96px]" />}
+          <col className="w-[84px]" />
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+          <col className="w-[88px]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-line/70 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+            {selectable && <th className="px-3 py-2 text-left"><span className="sr-only">Select</span></th>}
+            <th className="px-3 py-2 text-left">Title</th>
+            <th className="px-3 py-2 text-left">Status</th>
+            {showPublishingStatus && <th className="px-3 py-2 text-left">Publish</th>}
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right">Src</th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ article, job }) => {
+            const publishingStatus = getArticlePublishingStatus(article);
+            const selected = selectedArticleIds?.has(article.id) ?? false;
             return (
-              <div
+              <tr
                 key={article.id}
-                className={cn("grid gap-3 rounded-md px-2 py-2.5 text-[12px] transition-colors hover:bg-surface-2", selectableWrapperGridClass, selected && "bg-surface-2/70 ring-1 ring-line")}
+                onClick={() => onSelectArticle(article.id)}
+                className={cn(
+                  "cursor-pointer border-b border-line/70 text-[12px] transition-colors hover:bg-surface-2",
+                  selected && "bg-surface-2/70"
+                )}
               >
-                <label className="flex items-center justify-center">
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={() => onToggleArticleSelection(article.id)}
-                    aria-label={`Select ${article.title}`}
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => onSelectArticle(article.id)}
-                  className={cn("grid min-w-0 gap-3 text-left", contentGridClass)}
-                >
-                  {rowBody}
-                </button>
-              </div>
+                {selectable && onToggleArticleSelection && selectedArticleIds && (
+                  <td className="px-3 py-2.5" onClick={(event) => event.stopPropagation()}>
+                    <label className="flex items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => onToggleArticleSelection(article.id)}
+                        aria-label={`Select ${article.title}`}
+                      />
+                    </label>
+                  </td>
+                )}
+                <td className="px-3 py-2.5 align-middle">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-ink">{article.title}</div>
+                    {!compact && (
+                      <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">
+                        {job
+                          ? attentionSummary(article, job) ?? `Attempt ${job.attempts}`
+                          : publishingStatus === "failed"
+                            ? "Publishing failed"
+                            : `Updated ${relativeDate(article.updatedAt)}`}
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-2.5 align-middle">
+                  <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
+                </td>
+                {showPublishingStatus && (
+                  <td className="px-3 py-2.5 align-middle">
+                    <span className={cn("mono inline-flex rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em]", publishingStatusTone(publishingStatus))}>
+                      {publishingStatusLabel(publishingStatus)}
+                    </span>
+                  </td>
+                )}
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.researchScore}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</td>
+              </tr>
             );
-          }
-
-          return (
-            <button
-              key={article.id}
-              onClick={() => onSelectArticle(article.id)}
-              className={cn("grid w-full gap-3 rounded-md px-2 py-2.5 text-left text-[12px] transition-colors hover:bg-surface-2", contentGridClass)}
-            >
-              {rowBody}
-            </button>
-          );
-        })}
-      </div>
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -2936,7 +2924,7 @@ function InventorySortHeader({ label, metric, active, direction, onSort }: {
   direction: SortDirection;
   onSort: (metric: InventorySortKey) => void;
 }) {
-  return <button onClick={() => onSort(metric)} className={cn("text-right hover:text-ink", active === metric && "text-ink")} title={`Sort by ${label}`}>{label}{active === metric ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
+  return <button onClick={() => onSort(metric)} className={cn("w-full text-right hover:text-ink", active === metric && "text-ink")} title={`Sort by ${label}`}>{label}{active === metric ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
 }
 
 function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob | null }>, key: InventorySortKey, direction: SortDirection) {
