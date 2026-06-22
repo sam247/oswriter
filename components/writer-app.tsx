@@ -2824,20 +2824,25 @@ function InventoryTable({
   selectable?: boolean;
   showPublishingStatus?: boolean;
 }) {
+  const statusColClass = selectable && showPublishingStatus ? "w-[116px]" : "w-[132px]";
+  const publishColClass = showPublishingStatus ? "w-[88px]" : undefined;
+  const wordsColClass = selectable && showPublishingStatus ? "w-[76px]" : "w-[84px]";
+  const updatedColClass = selectable && showPublishingStatus ? "w-[104px]" : "w-[88px]";
+
   return (
     <div className="overflow-hidden">
       <table className="w-full table-fixed border-collapse">
         <colgroup>
           {selectable && <col className="w-[32px]" />}
           <col />
-          <col className="w-[132px]" />
-          {showPublishingStatus && <col className="w-[96px]" />}
-          <col className="w-[84px]" />
+          <col className={statusColClass} />
+          {showPublishingStatus && <col className={publishColClass} />}
+          <col className={wordsColClass} />
           <col className="w-[56px]" />
           <col className="w-[56px]" />
           <col className="w-[56px]" />
           <col className="w-[56px]" />
-          <col className="w-[88px]" />
+          <col className={updatedColClass} />
         </colgroup>
         <thead>
           <tr className="border-b border-line/70 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
