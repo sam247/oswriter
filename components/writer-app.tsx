@@ -2329,7 +2329,7 @@ function ProjectSettingsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl">
-          <SettingsSection title="Project Settings">
+          <CollapsibleSettingsSection title="Project Settings" defaultOpen>
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
@@ -2362,14 +2362,14 @@ function ProjectSettingsPanel({
               <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
               <button onClick={save} disabled={!dirty || Boolean(settingsBlockedReason)} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save project settings</button>
             </div>
-          </SettingsSection>
+          </CollapsibleSettingsSection>
           <KnowledgeBaseSettings
             projectId={project.id}
             knowledgeBase={project.knowledgeBase}
             disabledReason={settingsBlockedReason}
             onSave={onUpdateKnowledgeBase}
           />
-          <SettingsSection title="Publishing">
+          <CollapsibleSettingsSection title="Publishing">
             <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
               <div>
                 <div className="text-[13px] font-medium text-ink">WordPress Connection</div>
@@ -2450,10 +2450,32 @@ function ProjectSettingsPanel({
                 {wordpressBusy === "saving" ? "Saving..." : "Save Connection"}
               </button>
             </div>
-          </SettingsSection>
+          </CollapsibleSettingsSection>
         </div>
       </div>
     </div>
+  );
+}
+
+function CollapsibleSettingsSection({
+  title,
+  children,
+  defaultOpen = false
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details className="group rounded-md border border-line bg-surface-1" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
+        <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
+        <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="border-t border-line px-4 pb-4 pt-3">
+        <div className="space-y-2">{children}</div>
+      </div>
+    </details>
   );
 }
 
