@@ -2924,7 +2924,21 @@ function InventorySortHeader({ label, metric, active, direction, onSort }: {
   direction: SortDirection;
   onSort: (metric: InventorySortKey) => void;
 }) {
-  return <button onClick={() => onSort(metric)} className={cn("w-full text-right hover:text-ink", active === metric && "text-ink")} title={`Sort by ${label}`}>{label}{active === metric ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
+  const isActive = active === metric;
+  const directionLabel = direction === "desc" ? "descending" : "ascending";
+  return (
+    <button
+      onClick={() => onSort(metric)}
+      className={cn(
+        "w-full text-right hover:text-ink",
+        isActive ? "font-bold text-ink" : "font-semibold text-ink-subtle"
+      )}
+      title={isActive ? `Sorted by ${label} (${directionLabel})` : `Sort by ${label}`}
+      aria-label={isActive ? `${label}, sorted ${directionLabel}` : `Sort by ${label}`}
+    >
+      {label}
+    </button>
+  );
 }
 
 function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob | null }>, key: InventorySortKey, direction: SortDirection) {
