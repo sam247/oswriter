@@ -4347,6 +4347,7 @@ function Inspector({
           activeSuggestionId={harper.activeSuggestionId}
           counts={harper.counts}
           error={harper.error}
+          report={null}
           status={harper.status}
           suggestions={harper.suggestions}
           onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}

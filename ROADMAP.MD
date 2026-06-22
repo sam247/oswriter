@@ -18,6 +18,7 @@
   - no provider logic changes
   - no telemetry, publishing, billing, auth, or generation workflow changes
 - Added markdown normalization coverage for Harper span mapping.
+- Restored the Harper deploy path by wiring the Writing panel to the expanded suggestion props and re-adding the missing Neon Harper telemetry schema bootstrap and aggregate helpers required by the analytics route.
 
 ### WordPress Publishing Integration (Phase 1)
 
