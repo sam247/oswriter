@@ -1950,38 +1950,6 @@ export class NeonStorageProvider implements StorageProvider {
     this.generationTelemetrySchemaReady = true;
   }
 
-  private async ensureHarperTelemetrySchema() {
-    if (this.harperTelemetrySchemaReady) return;
-    await this.sql`
-      create table if not exists harper_telemetry (
-        id text primary key default gen_random_uuid()::text,
-        organisation_id text not null references organisations(id) on delete cascade,
-        project_id text not null references projects(id) on delete cascade,
-        article_id text not null references articles(id) on delete cascade,
-        content_profile text,
-        rule_id text not null,
-        suggestion_id text not null,
-        category text not null,
-        action text not null,
-        timestamp timestamptz not null default now(),
-        created_at timestamptz not null default now()
-      )
-    `;
-    await this.sql`
-      create index if not exists idx_harper_telemetry_project_timestamp
-        on harper_telemetry (organisation_id, project_id, timestamp desc)
-    `;
-    await this.sql`
-      create index if not exists idx_harper_telemetry_rule
-        on harper_telemetry (organisation_id, project_id, rule_id)
-    `;
-    await this.sql`
-      create index if not exists idx_harper_telemetry_profile
-        on harper_telemetry (organisation_id, project_id, content_profile)
-    `;
-    this.harperTelemetrySchemaReady = true;
-  }
-
   private async ensureArticlePublishingSchema() {
     if (this.articlePublishingSchemaReady) return;
     await this.sql`
@@ -2630,51 +2598,6 @@ function organisationFromRow(row: Record<string, unknown>): OrganisationDocument
     createdAt: new Date(row.created_at as string | number | Date).toISOString(),
     updatedAt: new Date(row.updated_at as string | number | Date).toISOString()
   };
-}
-
-function harperRuleMetricFromRow(row: Record<string, unknown>): HarperRuleMetric {
-  return {
-    rule_id: String(row.rule_id ?? ""),
-    category: String(row.category ?? "usage") as HarperRuleMetric["category"],
-    total_occurrences: Number(row.total_occurrences ?? 0),
-    accepted_count: Number(row.accepted_count ?? 0),
-    ignored_count: Number(row.ignored_count ?? 0),
-    acceptance_rate: Number(row.acceptance_rate ?? 0),
-    ignore_rate: Number(row.ignore_rate ?? 0)
-  };
-}
-
-function harperContentProfileMetricFromRow(row: Record<string, unknown>): HarperContentProfileMetric {
-  return {
-    content_profile: String(row.content_profile ?? "unknown"),
-    total_suggestions: Number(row.total_suggestions ?? 0),
-    accepted_count: Number(row.accepted_count ?? 0),
-    ignored_count: Number(row.ignored_count ?? 0),
-    acceptance_rate: Number(row.acceptance_rate ?? 0),
-    ignore_rate: Number(row.ignore_rate ?? 0)
-  };
-}
-
-function chooseTopHelpfulRule(ruleMetrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
-  if (!ruleMetrics.length) return null;
-  return [...ruleMetrics]
-    .sort((left, right) =>
-      right.accepted_count - left.accepted_count ||
-      right.acceptance_rate - left.acceptance_rate ||
-      right.total_occurrences - left.total_occurrences ||
-      left.rule_id.localeCompare(right.rule_id)
-    )[0] ?? null;
-}
-
-function chooseTopIgnoredRule(ruleMetrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
-  if (!ruleMetrics.length) return null;
-  return [...ruleMetrics]
-    .sort((left, right) =>
-      right.ignored_count - left.ignored_count ||
-      right.ignore_rate - left.ignore_rate ||
-      right.total_occurrences - left.total_occurrences ||
-      left.rule_id.localeCompare(right.rule_id)
-    )[0] ?? null;
 }
 
 function versionFromRow(row: Record<string, unknown>): DocumentVersion {
