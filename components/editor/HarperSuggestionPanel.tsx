@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, EyeOff, Loader2 } from "lucide-react";
+import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import { cn } from "@/lib/utils";
 import type { HarperSuggestionCategory } from "@/lib/editor/harper/types";
 import type { HarperSuggestionItem } from "@/components/editor/useHarperSuggestions";
@@ -9,6 +10,7 @@ type HarperSuggestionPanelProps = {
   activeSuggestionId: string | null;
   counts: Record<HarperSuggestionCategory, number>;
   error: string | null;
+  report: HarperTelemetryReport | null;
   status: "idle" | "loading" | "ready" | "error";
   suggestions: HarperSuggestionItem[];
   onAccept: (suggestionId: string) => void;
@@ -26,6 +28,7 @@ export function HarperSuggestionPanel({
   activeSuggestionId,
   counts,
   error,
+  report,
   status,
   suggestions,
   onAccept,
@@ -131,6 +134,108 @@ export function HarperSuggestionPanel({
           </section>
         );
       })}
+
+      {report && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-subtle">Writing Intelligence</h3>
+            <span className="mono text-[10.5px] text-ink-subtle">{report.summary.total_suggestions} tracked</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <StatCard label="Acceptance Rate" value={`${report.summary.acceptance_rate}%`} />
+            <StatCard label="Ignore Rate" value={`${report.summary.ignore_rate}%`} />
+            <StatCard label="Accepted" value={report.summary.accepted_suggestions} />
+            <StatCard label="Ignored" value={report.summary.ignored_suggestions} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-2">
+            <MetricBlock
+              label="Top Helpful Rule"
+              primary={report.summary.top_helpful_rule?.rule_id ?? "No accepted rules yet"}
+              secondary={report.summary.top_helpful_rule ? `${report.summary.top_helpful_rule.acceptance_rate}% acceptance` : "Waiting for enough usage"}
+            />
+            <MetricBlock
+              label="Top Ignored Rule"
+              primary={report.summary.top_ignored_rule?.rule_id ?? "No ignored rules yet"}
+              secondary={report.summary.top_ignored_rule ? `${report.summary.top_ignored_rule.ignore_rate}% ignored` : "Waiting for enough usage"}
+            />
+          </div>
+
+          {report.noisy_rules.length > 0 && (
+            <section className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-subtle">Potentially Noisy Rules</div>
+              <div className="space-y-2">
+                {report.noisy_rules.slice(0, 5).map((rule) => (
+                  <MetricBlock
+                    key={rule.rule_id}
+                    label={formatTelemetryLabel(rule.category)}
+                    primary={rule.rule_id}
+                    secondary={`${rule.total_occurrences} occurrences · ${rule.ignore_rate}% ignored`}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {report.rule_metrics.length > 0 && (
+            <section className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-subtle">Rule Effectiveness</div>
+              <div className="space-y-2">
+                {report.rule_metrics.slice(0, 6).map((rule) => (
+                  <MetricBlock
+                    key={rule.rule_id}
+                    label={formatTelemetryLabel(rule.category)}
+                    primary={rule.rule_id}
+                    secondary={`${rule.total_occurrences} occurrences · ${rule.acceptance_rate}% acceptance`}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {report.content_profile_metrics.length > 0 && (
+            <section className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-subtle">Content Profiles</div>
+              <div className="space-y-2">
+                {report.content_profile_metrics.slice(0, 6).map((profile) => (
+                  <MetricBlock
+                    key={profile.content_profile}
+                    label="Content Profile"
+                    primary={formatTelemetryLabel(profile.content_profile)}
+                    secondary={`${profile.total_suggestions} suggestions · ${profile.acceptance_rate}% acceptance`}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </section>
+      )}
     </div>
   );
+}
+
+function StatCard({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-md border border-line bg-background p-2.5">
+      <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-ink">{value}</div>
+    </div>
+  );
+}
+
+function MetricBlock({ label, primary, secondary }: { label: string; primary: string; secondary: string }) {
+  return (
+    <div className="rounded-md border border-line bg-background p-3">
+      <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
+      <div className="mt-1 text-sm font-medium text-ink">{primary}</div>
+      <div className="mt-1 text-xs text-ink-muted">{secondary}</div>
+    </div>
+  );
+}
+
+function formatTelemetryLabel(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 }

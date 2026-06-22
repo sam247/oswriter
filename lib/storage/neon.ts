@@ -11,6 +11,7 @@ import type { WorkerObservationTimings } from "@/lib/storage/storage";
 import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
+import { emptyHarperTelemetryReport, type HarperContentProfileMetric, type HarperRuleMetric, type HarperTelemetryEventInput, type HarperTelemetryReport, type HarperTelemetrySummary, type HarperTopRuleMetric } from "@/lib/analytics/harper";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -34,6 +35,7 @@ export class NeonStorageProvider implements StorageProvider {
   private readonly injectedTenant?: TenantSeed;
   private tenantReady = false;
   private generationTelemetrySchemaReady = false;
+  private harperTelemetrySchemaReady = false;
   private articlePublishingSchemaReady = false;
   private wordPressConnectionSchemaReady = false;
   private siteKnowledgeSchemaReady = false;
@@ -592,6 +594,183 @@ export class NeonStorageProvider implements StorageProvider {
         total_words: Number(row.total_words ?? 0),
         source_count: Number(row.source_count ?? 0)
       };
+    });
+  }
+
+  async getHarperTelemetryReport(projectId: string): Promise<HarperTelemetryReport> {
+    return this.withFailureLogging("getHarperTelemetryReport", projectId, async () => {
+      await this.ensureHarperTelemetrySchema();
+      const tenant = await this.ensureTenant();
+
+      const [summaryRows, ruleRows, noisyRuleRows, contentProfileRows] = await Promise.all([
+        rows(await this.sql`
+          with base as (
+            select
+              count(*) filter (where action = 'shown')::int as total_suggestions,
+              count(*) filter (where action = 'accepted')::int as accepted_suggestions,
+              count(*) filter (where action = 'ignored')::int as ignored_suggestions
+            from harper_telemetry
+            where organisation_id = ${tenant.organisationId}
+              and project_id = ${projectId}
+          )
+          select
+            total_suggestions,
+            accepted_suggestions,
+            ignored_suggestions,
+            case when total_suggestions > 0 then round((accepted_suggestions::numeric * 100) / total_suggestions, 1) else 0 end as acceptance_rate,
+            case when total_suggestions > 0 then round((ignored_suggestions::numeric * 100) / total_suggestions, 1) else 0 end as ignore_rate
+          from base
+        `),
+        rows(await this.sql`
+          with per_rule as (
+            select
+              rule_id,
+              max(category) filter (where action = 'shown') as category,
+              count(*) filter (where action = 'shown')::int as total_occurrences,
+              count(*) filter (where action = 'accepted')::int as accepted_count,
+              count(*) filter (where action = 'ignored')::int as ignored_count
+            from harper_telemetry
+            where organisation_id = ${tenant.organisationId}
+              and project_id = ${projectId}
+            group by rule_id
+          )
+          select
+            rule_id,
+            coalesce(category, 'usage') as category,
+            total_occurrences,
+            accepted_count,
+            ignored_count,
+            case when total_occurrences > 0 then round((accepted_count::numeric * 100) / total_occurrences, 1) else 0 end as acceptance_rate,
+            case when total_occurrences > 0 then round((ignored_count::numeric * 100) / total_occurrences, 1) else 0 end as ignore_rate
+          from per_rule
+          where total_occurrences > 0
+          order by total_occurrences desc, accepted_count desc, rule_id asc
+        `),
+        rows(await this.sql`
+          with per_rule as (
+            select
+              rule_id,
+              max(category) filter (where action = 'shown') as category,
+              count(*) filter (where action = 'shown')::int as total_occurrences,
+              count(*) filter (where action = 'accepted')::int as accepted_count,
+              count(*) filter (where action = 'ignored')::int as ignored_count
+            from harper_telemetry
+            where organisation_id = ${tenant.organisationId}
+              and project_id = ${projectId}
+            group by rule_id
+          )
+          select
+            rule_id,
+            coalesce(category, 'usage') as category,
+            total_occurrences,
+            accepted_count,
+            ignored_count,
+            case when total_occurrences > 0 then round((accepted_count::numeric * 100) / total_occurrences, 1) else 0 end as acceptance_rate,
+            case when total_occurrences > 0 then round((ignored_count::numeric * 100) / total_occurrences, 1) else 0 end as ignore_rate
+          from per_rule
+          where total_occurrences >= 25
+            and case when total_occurrences > 0 then (ignored_count::numeric * 100) / total_occurrences else 0 end > 75
+          order by ignore_rate desc, total_occurrences desc, rule_id asc
+        `),
+        rows(await this.sql`
+          with per_profile as (
+            select
+              coalesce(nullif(content_profile, ''), 'unknown') as content_profile,
+              count(*) filter (where action = 'shown')::int as total_suggestions,
+              count(*) filter (where action = 'accepted')::int as accepted_count,
+              count(*) filter (where action = 'ignored')::int as ignored_count
+            from harper_telemetry
+            where organisation_id = ${tenant.organisationId}
+              and project_id = ${projectId}
+            group by coalesce(nullif(content_profile, ''), 'unknown')
+          )
+          select
+            content_profile,
+            total_suggestions,
+            accepted_count,
+            ignored_count,
+            case when total_suggestions > 0 then round((accepted_count::numeric * 100) / total_suggestions, 1) else 0 end as acceptance_rate,
+            case when total_suggestions > 0 then round((ignored_count::numeric * 100) / total_suggestions, 1) else 0 end as ignore_rate
+          from per_profile
+          where total_suggestions > 0
+          order by total_suggestions desc, content_profile asc
+        `)
+      ]);
+
+      if (!summaryRows[0] && !ruleRows.length && !contentProfileRows.length) return emptyHarperTelemetryReport();
+
+      const ruleMetrics = ruleRows.map(harperRuleMetricFromRow);
+      return {
+        summary: {
+          total_suggestions: Number(summaryRows[0]?.total_suggestions ?? 0),
+          accepted_suggestions: Number(summaryRows[0]?.accepted_suggestions ?? 0),
+          ignored_suggestions: Number(summaryRows[0]?.ignored_suggestions ?? 0),
+          acceptance_rate: Number(summaryRows[0]?.acceptance_rate ?? 0),
+          ignore_rate: Number(summaryRows[0]?.ignore_rate ?? 0),
+          top_helpful_rule: chooseTopHelpfulRule(ruleMetrics),
+          top_ignored_rule: chooseTopIgnoredRule(ruleMetrics)
+        },
+        rule_metrics: ruleMetrics,
+        noisy_rules: noisyRuleRows.map(harperRuleMetricFromRow),
+        content_profile_metrics: contentProfileRows.map(harperContentProfileMetricFromRow)
+      };
+    });
+  }
+
+  async recordHarperTelemetry(projectId: string, events: HarperTelemetryEventInput[]) {
+    return this.withFailureLogging("recordHarperTelemetry", projectId, async () => {
+      if (!events.length) return;
+      const tenant = await this.ensureTenant();
+      await this.ensureProjectRows(projectId);
+      await this.ensureHarperTelemetrySchema();
+      const payload = JSON.stringify(events.map((event) => ({
+        article_id: event.article_id,
+        content_profile: event.content_profile ?? null,
+        rule_id: event.rule_id,
+        suggestion_id: event.suggestion_id,
+        category: event.category,
+        action: event.action,
+        timestamp: event.timestamp
+      })));
+
+      await this.sql`
+        with input as (
+          select *
+          from jsonb_to_recordset(${payload}::jsonb) as event(
+            article_id text,
+            content_profile text,
+            rule_id text,
+            suggestion_id text,
+            category text,
+            action text,
+            timestamp timestamptz
+          )
+        )
+        insert into harper_telemetry (
+          id,
+          organisation_id,
+          project_id,
+          article_id,
+          content_profile,
+          rule_id,
+          suggestion_id,
+          category,
+          action,
+          timestamp
+        )
+        select
+          gen_random_uuid()::text,
+          ${tenant.organisationId},
+          ${projectId},
+          input.article_id,
+          nullif(input.content_profile, ''),
+          input.rule_id,
+          input.suggestion_id,
+          input.category,
+          input.action,
+          input.timestamp
+        from input
+      `;
     });
   }
 
@@ -1771,6 +1950,38 @@ export class NeonStorageProvider implements StorageProvider {
     this.generationTelemetrySchemaReady = true;
   }
 
+  private async ensureHarperTelemetrySchema() {
+    if (this.harperTelemetrySchemaReady) return;
+    await this.sql`
+      create table if not exists harper_telemetry (
+        id text primary key default gen_random_uuid()::text,
+        organisation_id text not null references organisations(id) on delete cascade,
+        project_id text not null references projects(id) on delete cascade,
+        article_id text not null references articles(id) on delete cascade,
+        content_profile text,
+        rule_id text not null,
+        suggestion_id text not null,
+        category text not null,
+        action text not null,
+        timestamp timestamptz not null default now(),
+        created_at timestamptz not null default now()
+      )
+    `;
+    await this.sql`
+      create index if not exists idx_harper_telemetry_project_timestamp
+        on harper_telemetry (organisation_id, project_id, timestamp desc)
+    `;
+    await this.sql`
+      create index if not exists idx_harper_telemetry_rule
+        on harper_telemetry (organisation_id, project_id, rule_id)
+    `;
+    await this.sql`
+      create index if not exists idx_harper_telemetry_profile
+        on harper_telemetry (organisation_id, project_id, content_profile)
+    `;
+    this.harperTelemetrySchemaReady = true;
+  }
+
   private async ensureArticlePublishingSchema() {
     if (this.articlePublishingSchemaReady) return;
     await this.sql`
@@ -2419,6 +2630,51 @@ function organisationFromRow(row: Record<string, unknown>): OrganisationDocument
     createdAt: new Date(row.created_at as string | number | Date).toISOString(),
     updatedAt: new Date(row.updated_at as string | number | Date).toISOString()
   };
+}
+
+function harperRuleMetricFromRow(row: Record<string, unknown>): HarperRuleMetric {
+  return {
+    rule_id: String(row.rule_id ?? ""),
+    category: String(row.category ?? "usage") as HarperRuleMetric["category"],
+    total_occurrences: Number(row.total_occurrences ?? 0),
+    accepted_count: Number(row.accepted_count ?? 0),
+    ignored_count: Number(row.ignored_count ?? 0),
+    acceptance_rate: Number(row.acceptance_rate ?? 0),
+    ignore_rate: Number(row.ignore_rate ?? 0)
+  };
+}
+
+function harperContentProfileMetricFromRow(row: Record<string, unknown>): HarperContentProfileMetric {
+  return {
+    content_profile: String(row.content_profile ?? "unknown"),
+    total_suggestions: Number(row.total_suggestions ?? 0),
+    accepted_count: Number(row.accepted_count ?? 0),
+    ignored_count: Number(row.ignored_count ?? 0),
+    acceptance_rate: Number(row.acceptance_rate ?? 0),
+    ignore_rate: Number(row.ignore_rate ?? 0)
+  };
+}
+
+function chooseTopHelpfulRule(ruleMetrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
+  if (!ruleMetrics.length) return null;
+  return [...ruleMetrics]
+    .sort((left, right) =>
+      right.accepted_count - left.accepted_count ||
+      right.acceptance_rate - left.acceptance_rate ||
+      right.total_occurrences - left.total_occurrences ||
+      left.rule_id.localeCompare(right.rule_id)
+    )[0] ?? null;
+}
+
+function chooseTopIgnoredRule(ruleMetrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
+  if (!ruleMetrics.length) return null;
+  return [...ruleMetrics]
+    .sort((left, right) =>
+      right.ignored_count - left.ignored_count ||
+      right.ignore_rate - left.ignore_rate ||
+      right.total_occurrences - left.total_occurrences ||
+      left.rule_id.localeCompare(right.rule_id)
+    )[0] ?? null;
 }
 
 function versionFromRow(row: Record<string, unknown>): DocumentVersion {

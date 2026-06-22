@@ -2,9 +2,10 @@
 
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionKind, type Lint, type Suggestion } from "harper.js";
+import type { HarperTelemetryAction, HarperTelemetryEventInput } from "@/lib/analytics/harper";
 import { getHarperLinter, warmHarperLinter } from "@/lib/editor/harper/client";
 import { mapPlainSpanToMarkdownRange, normalizeMarkdownForHarper } from "@/lib/editor/harper/normalization";
-import type { HarperSuggestionCategory, HarperTextMapping } from "@/lib/editor/harper/types";
+import type { HarperSuggestionCategory, HarperTelemetryCategory, HarperTextMapping } from "@/lib/editor/harper/types";
 
 export type ArticleViewMode = "rich" | "md" | "split";
 
@@ -12,6 +13,8 @@ export type HarperSuggestionItem = {
   id: string;
   hash: bigint;
   category: HarperSuggestionCategory;
+  telemetryCategory: HarperTelemetryCategory;
+  ruleId: string;
   kind: string;
   message: string;
   problemText: string;
@@ -27,6 +30,7 @@ export type HarperSuggestionItem = {
 
 type UseHarperSuggestionsParams = {
   articleId: string | null;
+  contentProfile?: string | null;
   markdown: string;
   viewMode: ArticleViewMode;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -42,6 +46,7 @@ type JumpTarget = {
 
 export function useHarperSuggestions({
   articleId,
+  contentProfile,
   markdown,
   viewMode,
   textareaRef,
@@ -56,9 +61,22 @@ export function useHarperSuggestions({
   const viewModeRef = useRef(viewMode);
   const analysisRevisionRef = useRef(0);
   const mappingRef = useRef<HarperTextMapping | null>(null);
+  const visibleSuggestionIdsRef = useRef<Set<string>>(new Set());
 
   markdownRef.current = markdown;
   viewModeRef.current = viewMode;
+
+  const recordTelemetry = useCallback((events: HarperTelemetryEventInput[]) => {
+    if (!events.length) return;
+    void fetch("/api/analytics/harper", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events }),
+      keepalive: true
+    }).catch(() => {
+      // Telemetry must stay invisible to the editing experience.
+    });
+  }, []);
 
   const runAnalysis = useCallback(async (sourceMarkdown: string, immediate = false) => {
     const revision = analysisRevisionRef.current + 1;
@@ -87,31 +105,35 @@ export function useHarperSuggestions({
     const execute = async () => {
       try {
         const linter = await getHarperLinter();
-        const lints = await linter.lint(mapping.text, { language: "plaintext", dedup: true });
+        const lintGroups = await linter.organizedLints(mapping.text, { language: "plaintext", dedup: true });
         const nextSuggestions: HarperSuggestionItem[] = [];
 
-        for (const lint of lints) {
-          const span = lint.span();
-          const markdownRange = mapPlainSpanToMarkdownRange(mapping, span.start, span.end);
-          if (!markdownRange) continue;
-          const hash = await linter.contextHash(mapping.text, lint);
-          const lintSuggestions = lint.suggestions();
-          nextSuggestions.push({
-            id: `${hash.toString()}-${span.start}-${span.end}`,
-            hash,
-            category: categorizeLint(lint.lint_kind()),
-            kind: lint.lint_kind(),
-            message: lint.message(),
-            problemText: lint.get_problem_text(),
-            replacementText: lintSuggestions[0]?.get_replacement_text() ?? null,
-            plainStart: span.start,
-            plainEnd: span.end,
-            markdownStart: markdownRange.start,
-            markdownEnd: markdownRange.end,
-            suggestionCount: lintSuggestions.length,
-            lint,
-            suggestions: lintSuggestions
-          });
+        for (const [ruleId, lints] of Object.entries(lintGroups)) {
+          for (const lint of lints) {
+            const span = lint.span();
+            const markdownRange = mapPlainSpanToMarkdownRange(mapping, span.start, span.end);
+            if (!markdownRange) continue;
+            const hash = await linter.contextHash(mapping.text, lint);
+            const lintSuggestions = lint.suggestions();
+            nextSuggestions.push({
+              id: `${ruleId}:${hash.toString()}-${span.start}-${span.end}`,
+              hash,
+              category: categorizeLint(lint.lint_kind()),
+              telemetryCategory: telemetryCategoryForLint(lint.lint_kind()),
+              ruleId,
+              kind: lint.lint_kind(),
+              message: lint.message(),
+              problemText: lint.get_problem_text(),
+              replacementText: lintSuggestions[0]?.get_replacement_text() ?? null,
+              plainStart: span.start,
+              plainEnd: span.end,
+              markdownStart: markdownRange.start,
+              markdownEnd: markdownRange.end,
+              suggestionCount: lintSuggestions.length,
+              lint,
+              suggestions: lintSuggestions
+            });
+          }
         }
 
         nextSuggestions.sort((left, right) => left.plainStart - right.plainStart || left.plainEnd - right.plainEnd);
@@ -149,6 +171,23 @@ export function useHarperSuggestions({
     void runAnalysis(markdown);
   }, [articleId, markdown, runAnalysis]);
 
+  useEffect(() => {
+    visibleSuggestionIdsRef.current.clear();
+  }, [articleId]);
+
+  useEffect(() => {
+    if (!articleId || !suggestions.length) {
+      visibleSuggestionIdsRef.current = new Set();
+      return;
+    }
+    const previouslyVisible = visibleSuggestionIdsRef.current;
+    const currentVisible = new Set(suggestions.map((item) => item.id));
+    const entering = suggestions.filter((item) => !previouslyVisible.has(item.id));
+    visibleSuggestionIdsRef.current = currentVisible;
+    if (!entering.length) return;
+    recordTelemetry(entering.map((item) => buildTelemetryEvent(item, articleId, contentProfile, "shown")));
+  }, [articleId, contentProfile, recordTelemetry, suggestions]);
+
   const counts = useMemo(() => ({
     grammar: suggestions.filter((item) => item.category === "grammar").length,
     style: suggestions.filter((item) => item.category === "style").length,
@@ -169,19 +208,21 @@ export function useHarperSuggestions({
       nextMarkdown = `${nextMarkdown.slice(0, target.markdownStart)}${replacement}${nextMarkdown.slice(target.markdownEnd)}`;
     }
 
+    recordTelemetry([buildTelemetryEvent(target, articleId, contentProfile, "accepted")]);
     onChange(nextMarkdown);
     setActiveSuggestionId(null);
-  }, [onChange, suggestions]);
+  }, [articleId, contentProfile, onChange, recordTelemetry, suggestions]);
 
   const ignoreSuggestion = useCallback(async (suggestionId: string) => {
     const target = suggestions.find((item) => item.id === suggestionId);
     if (!target || !mappingRef.current) return;
+    recordTelemetry([buildTelemetryEvent(target, articleId, contentProfile, "ignored")]);
     setSuggestions((current) => current.filter((item) => item.id !== suggestionId));
     if (activeSuggestionId === suggestionId) setActiveSuggestionId(null);
     const linter = await getHarperLinter();
     await linter.ignoreLintHash(target.hash);
     void runAnalysis(markdownRef.current, true);
-  }, [activeSuggestionId, runAnalysis, suggestions]);
+  }, [activeSuggestionId, articleId, contentProfile, recordTelemetry, runAnalysis, suggestions]);
 
   const jumpToSuggestion = useCallback(({ suggestionId }: JumpTarget) => {
     const target = suggestions.find((item) => item.id === suggestionId);
@@ -236,6 +277,31 @@ function categorizeLint(kind: string): HarperSuggestionCategory {
     "Typo"
   ].includes(kind)) return "grammar";
   return "style";
+}
+
+function telemetryCategoryForLint(kind: string): HarperTelemetryCategory {
+  if (kind === "Readability") return "readability";
+  if (kind === "Spelling" || kind === "Typo") return "spelling";
+  if (kind === "Capitalization" || kind === "RepeatedWords" || kind === "WordChoice" || kind === "Usage") return "usage";
+  if (categorizeLint(kind) === "style") return "style";
+  return "grammar";
+}
+
+function buildTelemetryEvent(
+  suggestion: HarperSuggestionItem,
+  articleId: string | null,
+  contentProfile: string | null | undefined,
+  action: HarperTelemetryAction
+): HarperTelemetryEventInput {
+  return {
+    article_id: articleId ?? "",
+    content_profile: contentProfile ?? null,
+    rule_id: suggestion.ruleId,
+    suggestion_id: suggestion.id,
+    category: suggestion.telemetryCategory,
+    action,
+    timestamp: new Date().toISOString()
+  };
 }
 
 function createDomRangeFromOffsets(root: HTMLElement, start: number, end: number) {

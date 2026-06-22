@@ -1,4 +1,5 @@
 export type HarperSuggestionCategory = "grammar" | "style" | "readability";
+export type HarperTelemetryCategory = "grammar" | "style" | "readability" | "spelling" | "usage";
 
 export type HarperTextMapping = {
   text: string;

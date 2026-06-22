@@ -6,6 +6,14 @@
 
 - Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
 - Added a resilient Harper linter bootstrap path that falls back to `LocalLinter` if the worker setup fails or hangs in the browser.
+- Added Harper telemetry and rule-effectiveness tracking for suggestion shown, accepted, and ignored events.
+- Added compact Writing Intelligence reporting with:
+  - total suggestions
+  - acceptance rate
+  - ignore rate
+  - top helpful rule
+  - top ignored rule
+- Added rule-level and content-profile Harper reporting plus noisy-rule detection for future suppression decisions.
 - Added a new Writing inspector tab with grouped Grammar, Style, and Readability suggestion counts.
 - Added Accept and Ignore actions for Harper suggestions:
   - Accept updates the current article draft immediately
