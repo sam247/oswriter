@@ -92,6 +92,7 @@
 - Refined the Content Inventory bulk action bar with cleaner spacing, clearer hierarchy, and lighter row treatment to reduce dashboard form clutter.
 - Tightened the bulk publishing header spacing again so the title, selection state, controls, and helper text sit as a compact tool row instead of a tall stacked panel.
 - Fixed the Content Inventory table grid sizing so the header and article rows render directly under the bulk publishing controls without a false empty gap in the centre panel.
+- Aligned the project inventory header with the selectable article row columns by matching the header structure to the checkbox-plus-content table layout.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

@@ -2827,26 +2827,35 @@ function InventoryTable({
   const contentGridClass = showPublishingStatus
     ? "grid-cols-[minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px]"
     : "grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px]";
-  const wrapperGridClass = selectable
-    ? (showPublishingStatus
-      ? "grid-cols-[28px_minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px]"
-      : "grid-cols-[28px_minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px]")
-    : contentGridClass;
+  const selectableWrapperGridClass = "grid-cols-[28px_minmax(0,1fr)]";
+  const headerCells = (
+    <>
+      <span>Title</span>
+      <span>Status</span>
+      {showPublishingStatus && <span>Publish</span>}
+      <InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} />
+      <span className="text-right">Src</span>
+      <InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} />
+      <InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} />
+      <InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} />
+      <InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} />
+    </>
+  );
 
   return (
     <div className="overflow-hidden">
-      <div className={cn("grid gap-3 border-b border-line/70 px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", wrapperGridClass)}>
-        {selectable && <span className="sr-only">Select</span>}
-        <span>Title</span>
-        <span>Status</span>
-        {showPublishingStatus && <span>Publish</span>}
-        <InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <span className="text-right">Src</span>
-        <InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} />
-      </div>
+      {selectable ? (
+        <div className={cn("grid gap-3 border-b border-line/70 px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", selectableWrapperGridClass)}>
+          <span className="sr-only">Select</span>
+          <div className={cn("grid gap-3", contentGridClass)}>
+            {headerCells}
+          </div>
+        </div>
+      ) : (
+        <div className={cn("grid gap-3 border-b border-line/70 px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", contentGridClass)}>
+          {headerCells}
+        </div>
+      )}
       <div className="divide-y divide-line/70">
         {rows.map(({ article, job }) => {
           const publishingStatus = getArticlePublishingStatus(article);
@@ -2884,7 +2893,7 @@ function InventoryTable({
             return (
               <div
                 key={article.id}
-                className={cn("grid gap-3 rounded-md px-2 py-2.5 text-[12px] transition-colors hover:bg-surface-2", wrapperGridClass, selected && "bg-surface-2/70 ring-1 ring-line")}
+                className={cn("grid gap-3 rounded-md px-2 py-2.5 text-[12px] transition-colors hover:bg-surface-2", selectableWrapperGridClass, selected && "bg-surface-2/70 ring-1 ring-line")}
               >
                 <label className="flex items-center justify-center">
                   <input
@@ -2909,7 +2918,7 @@ function InventoryTable({
             <button
               key={article.id}
               onClick={() => onSelectArticle(article.id)}
-              className={cn("grid w-full gap-3 rounded-md px-2 py-2.5 text-left text-[12px] transition-colors hover:bg-surface-2", wrapperGridClass)}
+              className={cn("grid w-full gap-3 rounded-md px-2 py-2.5 text-left text-[12px] transition-colors hover:bg-surface-2", contentGridClass)}
             >
               {rowBody}
             </button>
