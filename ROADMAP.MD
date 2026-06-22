@@ -91,6 +91,7 @@
 - Removed the queue-side article type selector so new titles always inherit the project-level content profile from Project Settings.
 - Refined the Content Inventory bulk action bar with cleaner spacing, clearer hierarchy, and lighter row treatment to reduce dashboard form clutter.
 - Tightened the bulk publishing header spacing again so the title, selection state, controls, and helper text sit as a compact tool row instead of a tall stacked panel.
+- Fixed the Content Inventory table grid sizing so the header and article rows render directly under the bulk publishing controls without a false empty gap in the centre panel.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

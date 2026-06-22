@@ -2828,7 +2828,9 @@ function InventoryTable({
     ? "grid-cols-[minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px]"
     : "grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px]";
   const wrapperGridClass = selectable
-    ? `grid-cols-[28px_${showPublishingStatus ? "minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px" : "minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px"}]`
+    ? (showPublishingStatus
+      ? "grid-cols-[28px_minmax(0,1fr)_86px_92px_64px_42px_38px_38px_38px_64px]"
+      : "grid-cols-[28px_minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px]")
     : contentGridClass;
 
   return (
