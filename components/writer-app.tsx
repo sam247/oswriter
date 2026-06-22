@@ -2089,6 +2089,7 @@ function ProjectSettingsPanel({
             </div>
           </SettingsSection>
           <KnowledgeBaseSettings
+            projectId={project.id}
             knowledgeBase={project.knowledgeBase}
             disabledReason={settingsBlockedReason}
             onSave={onUpdateKnowledgeBase}

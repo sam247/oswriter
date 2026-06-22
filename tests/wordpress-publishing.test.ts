@@ -116,15 +116,17 @@ function sampleArticle(): ArticleDocument {
     qualityScore: 92,
     researchSummary: "Useful summary for excerpt generation.",
     validation: {
-      verdict: "pass",
+      pass: true,
       qualityScore: 92,
-      clarityScore: 90,
-      accuracyScore: 91,
+      sectionScores: {
+        clarity: 90,
+        accuracy: 91
+      },
       seoScore: 89,
       profileRelevanceScore: 88,
       faqScore: 0,
       warnings: [],
-      needsHumanReview: false
+      needsReviewReasons: []
     },
     pipeline: createPipeline(),
     sources: [],

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { articleMarkdownPath, articlePath, debugPath, jobPath, researchPath, settingsPath, workspacePath } from "@/lib/storage/paths";
+import { articleMarkdownPath, articlePath, debugPath, jobPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePath, workspacePath } from "@/lib/storage/paths";
 
 describe("storage paths", () => {
   it("keeps project documents debuggable and grouped", () => {
@@ -11,5 +11,7 @@ describe("storage paths", () => {
     assert.equal(articleMarkdownPath("article_1"), "projects/default/articles/article_1.md");
     assert.equal(researchPath("article_1"), "projects/default/research/article_1.json");
     assert.equal(debugPath("article_1"), "projects/default/debug/article_1.json");
+    assert.equal(siteKnowledgePath(), "projects/default/knowledge/site/config.json");
+    assert.equal(siteKnowledgePagePath("site_1"), "projects/default/knowledge/site/pages/site_1.json");
   });
 });

@@ -1,11 +1,11 @@
-import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, SiteKnowledgePageDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
@@ -237,6 +237,8 @@ export class WorkspaceStore {
     const prefixes = [
       jobsPrefix(resolvedProjectId),
       articlesPrefix(resolvedProjectId),
+      siteKnowledgePagesPrefix(resolvedProjectId),
+      `${rootForClear(resolvedProjectId)}/knowledge/site/`,
       `${rootForClear(resolvedProjectId)}/queue/`,
       `${rootForClear(resolvedProjectId)}/research/`,
       `${rootForClear(resolvedProjectId)}/debug/`,
@@ -558,6 +560,32 @@ export class WorkspaceStore {
     }
 
     return { query: clean, groups };
+  }
+
+  async getProjectSiteKnowledge(projectId?: string) {
+    return this.storage.getJson<ProjectSiteKnowledgeDocument>(siteKnowledgePath(projectId ?? await this.getActiveProjectId()));
+  }
+
+  async saveProjectSiteKnowledge(siteKnowledge: ProjectSiteKnowledgeDocument) {
+    await this.storage.putJson(siteKnowledgePath(siteKnowledge.projectId), siteKnowledge);
+  }
+
+  async listProjectSiteKnowledgePages(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    const pages = await this.storage.listJson<SiteKnowledgePageDocument>(siteKnowledgePagesPrefix(resolvedProjectId));
+    return pages.sort((a, b) => b.importedAt.localeCompare(a.importedAt) || a.url.localeCompare(b.url));
+  }
+
+  async saveProjectSiteKnowledgePage(page: SiteKnowledgePageDocument) {
+    await this.storage.putJson(siteKnowledgePagePath(page.id, page.projectId), page);
+  }
+
+  async saveProjectSiteKnowledgePages(pages: SiteKnowledgePageDocument[]) {
+    await Promise.all(pages.map((page) => this.saveProjectSiteKnowledgePage(page)));
+  }
+
+  async deleteProjectSiteKnowledgePage(pageId: string, projectId?: string) {
+    await this.storage.deletePath(siteKnowledgePagePath(pageId, projectId ?? await this.getActiveProjectId()));
   }
 }
 

@@ -53,6 +53,40 @@ export interface ProjectKnowledgeBase {
   preferredCTA: string;
 }
 
+export type SiteKnowledgeStatus = "not_configured" | "importing" | "ready" | "failed";
+
+export interface ProjectSiteKnowledgeDocument {
+  projectId: string;
+  organisationId?: string;
+  sitemapUrl: string;
+  status: SiteKnowledgeStatus;
+  pagesIndexed: number;
+  processedPages: number;
+  totalDiscoveredUrls: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  lastImportedAt?: string | null;
+  currentUrl?: string | null;
+  lastError?: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SiteKnowledgePageDocument {
+  id: string;
+  projectId: string;
+  organisationId?: string;
+  url: string;
+  title: string;
+  h1: string;
+  metaDescription: string;
+  shortSummary: string;
+  importedAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+}
+
 export type WordPressConnectionStatus = "not_connected" | "connected" | "failed";
 export type WordPressPostStatus = "draft" | "publish";
 
