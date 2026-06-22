@@ -3661,6 +3661,50 @@ function ArticleToolbar({
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
+      <div className="relative">
+        <button
+          onClick={() => {
+            if (publishDisabled) {
+              if (!connected && article && !busy) onConnectWordPress();
+              return;
+            }
+            setPublishMenuOpen((open) => !open);
+          }}
+          disabled={!article || busy || publishStatus === "published"}
+          title={publishTitle}
+          className={cn(
+            "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-medium transition-colors",
+            publishDisabled
+              ? "cursor-not-allowed border-line bg-surface-3 text-ink-subtle"
+              : "border-line bg-surface-1 text-ink hover:bg-surface-3"
+          )}
+        >
+          Publish
+          <ChevronDown className={cn("size-3 transition-transform", publishMenuOpen && "rotate-180")} />
+        </button>
+        {publishMenuOpen && !publishDisabled && (
+          <div className="absolute left-0 top-8 z-30 w-40 overflow-hidden rounded-md border border-line bg-surface-1 p-1 shadow-lg">
+            <button
+              onClick={() => {
+                setPublishMenuOpen(false);
+                onPublishDraft();
+              }}
+              className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
+            >
+              Publish Draft
+            </button>
+            <button
+              onClick={() => {
+                setPublishMenuOpen(false);
+                onPublishNow();
+              }}
+              className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
+            >
+              Publish Live
+            </button>
+          </div>
+        )}
+      </div>
       <button
         onClick={onCopyAll}
         disabled={!article}
@@ -3678,62 +3722,16 @@ function ArticleToolbar({
           </button>
         ))}
       </div>
-      <div className="ml-auto flex shrink-0 items-center gap-2">
-        <div className="relative">
-          <button
-            onClick={() => {
-              if (publishDisabled) {
-                if (!connected && article && !busy) onConnectWordPress();
-                return;
-              }
-              setPublishMenuOpen((open) => !open);
-            }}
-            disabled={!article || busy || publishStatus === "published"}
-            title={publishTitle}
-            className={cn(
-              "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-medium transition-colors",
-              publishDisabled
-                ? "cursor-not-allowed border-line bg-surface-3 text-ink-subtle"
-                : "border-line bg-surface-1 text-ink hover:bg-surface-3"
-            )}
-          >
-            Publish
-            <ChevronDown className={cn("size-3 transition-transform", publishMenuOpen && "rotate-180")} />
-          </button>
-          {publishMenuOpen && !publishDisabled && (
-            <div className="absolute right-0 top-8 z-30 w-40 overflow-hidden rounded-md border border-line bg-surface-1 p-1 shadow-lg">
-              <button
-                onClick={() => {
-                  setPublishMenuOpen(false);
-                  onPublishDraft();
-                }}
-                className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
-              >
-                Publish Draft
-              </button>
-              <button
-                onClick={() => {
-                  setPublishMenuOpen(false);
-                  onPublishNow();
-                }}
-                className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
-              >
-                Publish Live
-              </button>
-            </div>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center rounded-md bg-surface-3 p-0.5">
+      <div className="ml-auto flex shrink-0 items-center rounded-md bg-surface-3 p-0.5">
         {(["rich", "md", "split"] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => onViewModeChange(mode)}
-              className={cn("h-7 rounded px-2 text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", viewMode === mode && "bg-surface-1 text-ink shadow-sm")}
-            >
-              {mode === "md" ? "MD" : mode}
-            </button>
-          ))}
-        </div>
+          <button
+            key={mode}
+            onClick={() => onViewModeChange(mode)}
+            className={cn("h-7 rounded px-2 text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", viewMode === mode && "bg-surface-1 text-ink shadow-sm")}
+          >
+            {mode === "md" ? "MD" : mode}
+          </button>
+        ))}
       </div>
     </div>
   );
