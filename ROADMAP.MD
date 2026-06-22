@@ -103,6 +103,7 @@
 - Moved single-article publish controls into the editor toolbar beside `Rich`, `MD`, and `Split` as a compact `Publish` dropdown, and greyed it out after live publish to prevent repeat publishing.
 - Repositioned the single-article `Publish` dropdown into the export cluster so it sits beside `Export` as part of the publishing/export area.
 - Made the Project Settings accordion stack respond to the available centre-pane width and use one even small gap between `Project Settings`, `Knowledge Base`, and `Publishing`.
+- Removed the centred document-style width cap from Project Settings so the accordion stack now uses the actual centre-pane workspace width.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

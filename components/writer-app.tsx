@@ -2490,8 +2490,8 @@ function ProjectSettingsPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
-        <div className="mx-auto w-full max-w-5xl space-y-2.5">
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
+        <div className="w-full max-w-none space-y-2.5">
           <CollapsibleSettingsSection title="Project Settings" defaultOpen>
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
