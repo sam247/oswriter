@@ -6,14 +6,6 @@
 
 - Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
 - Added a resilient Harper linter bootstrap path that falls back to `LocalLinter` if the worker setup fails or hangs in the browser.
-- Added Harper telemetry and rule-effectiveness tracking for suggestion shown, accepted, and ignored events.
-- Added compact Writing Intelligence reporting with:
-  - total suggestions
-  - acceptance rate
-  - ignore rate
-  - top helpful rule
-  - top ignored rule
-- Added rule-level and content-profile Harper reporting plus noisy-rule detection for future suppression decisions.
 - Added a new Writing inspector tab with grouped Grammar, Style, and Readability suggestion counts.
 - Added Accept and Ignore actions for Harper suggestions:
   - Accept updates the current article draft immediately
@@ -110,6 +102,7 @@
 - Added reusable scheduling helpers and a schedule bulk endpoint so future queue automation can share the same scheduling architecture without redesigning the table.
 - Moved single-article publish controls into the editor toolbar beside `Rich`, `MD`, and `Split` as a compact `Publish` dropdown, and greyed it out after live publish to prevent repeat publishing.
 - Repositioned the single-article `Publish` dropdown into the export cluster so it sits beside `Export` as part of the publishing/export area.
+- Made the Project Settings accordion stack respond to the available centre-pane width and use one even small gap between `Project Settings`, `Knowledge Base`, and `Publishing`.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

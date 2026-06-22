@@ -156,7 +156,7 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
 
   return (
     <>
-      <details className="group mt-4 rounded-md border border-line bg-surface-1">
+      <details className="group w-full rounded-md border border-line bg-surface-1">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-ink">Knowledge Base <span className="font-normal text-ink-subtle">(Optional)</span></div>

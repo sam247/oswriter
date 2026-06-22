@@ -10,7 +10,6 @@ import { HarperSuggestionPanel } from "@/components/editor/HarperSuggestionPanel
 import { RichTextHighlights } from "@/components/editor/RichTextHighlights";
 import { TextareaHighlightOverlay } from "@/components/editor/TextareaHighlightOverlay";
 import { useHarperSuggestions } from "@/components/editor/useHarperSuggestions";
-import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
@@ -186,7 +185,6 @@ function Workbench() {
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
-  const [harperTelemetry, setHarperTelemetry] = useState<HarperTelemetryReport | null>(null);
   const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [pinnedArticleIds, setPinnedArticleIds] = useState<Set<string>>(new Set());
@@ -249,7 +247,6 @@ function Workbench() {
   }, [selectedArticle, updateArticleDraft]);
   const harper = useHarperSuggestions({
     articleId: selectedArticle?.id ?? null,
-    contentProfile: selectedArticle?.resolvedContentProfile ?? selectedArticle?.contentProfile ?? null,
     markdown: selectedMarkdown,
     viewMode: articleViewMode,
     textareaRef: editorRef,
@@ -410,13 +407,9 @@ function Workbench() {
     if (!projectId || analyticsProjectIdRef.current === projectId) return;
     analyticsProjectIdRef.current = projectId;
     setProjectAnalytics(null);
-    setHarperTelemetry(null);
     void fetch("/api/analytics/project", { cache: "no-store" })
       .then((res) => res.ok ? res.json() : null)
       .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
-    void fetch("/api/analytics/harper", { cache: "no-store" })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data: HarperTelemetryReport | null) => setHarperTelemetry(data));
   }, [state?.project.id]);
 
   useEffect(() => {
@@ -1784,7 +1777,6 @@ function Workbench() {
             history={runHistory}
             summary={projectSummary}
             analytics={projectAnalytics}
-            harperTelemetry={harperTelemetry}
             article={selectedArticle}
             job={selectedJob}
             markdown={selectedMarkdown}
@@ -2499,7 +2491,7 @@ function ProjectSettingsPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-2xl">
+        <div className="mx-auto w-full max-w-5xl space-y-2.5">
           <CollapsibleSettingsSection title="Project Settings" defaultOpen>
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
@@ -2638,7 +2630,7 @@ function CollapsibleSettingsSection({
   defaultOpen?: boolean;
 }) {
   return (
-    <details className="group rounded-md border border-line bg-surface-1" open={defaultOpen}>
+    <details className="group w-full rounded-md border border-line bg-surface-1" open={defaultOpen}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
         <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
         <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
@@ -4313,7 +4305,6 @@ function Inspector({
   history,
   summary,
   analytics,
-  harperTelemetry,
   article,
   job,
   markdown,
@@ -4334,7 +4325,6 @@ function Inspector({
   history: RunSummary[];
   summary: ProjectSummary | null;
   analytics: ProjectAnalyticsSummary | null;
-  harperTelemetry: HarperTelemetryReport | null;
   article: ArticleDocument | null;
   job: QueueJob | null;
   markdown: string;
@@ -4348,7 +4338,7 @@ function Inspector({
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
-      {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} harperTelemetry={harperTelemetry} />}
+      {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} />}
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
@@ -4357,7 +4347,6 @@ function Inspector({
           activeSuggestionId={harper.activeSuggestionId}
           counts={harper.counts}
           error={harper.error}
-          report={harperTelemetry}
           status={harper.status}
           suggestions={harper.suggestions}
           onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}
@@ -4387,8 +4376,7 @@ function ProjectContextPanel({
   metrics,
   history,
   summary,
-  analytics,
-  harperTelemetry
+  analytics
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -4397,7 +4385,6 @@ function ProjectContextPanel({
   history: RunSummary[];
   summary: ProjectSummary | null;
   analytics: ProjectAnalyticsSummary | null;
-  harperTelemetry: HarperTelemetryReport | null;
 }) {
   const latestRun = history[0] ?? null;
   const averageLength = articles.length && summary ? Math.round(summary.totalWords / articles.length) : null;
@@ -4450,20 +4437,6 @@ function ProjectContextPanel({
             <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
             {averageLength !== null && <MetricLine label="Avg length" value={formatNumber(averageLength)} />}
             <MetricLine label="Sources" value={formatNumber(summary.totalSources)} />
-          </div>
-        </ProjectSection>
-      ) : null}
-
-      {harperTelemetry ? (
-        <ProjectSection title="Writing intelligence">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-            <MetricLine label="Suggestions" value={formatNumber(harperTelemetry.summary.total_suggestions)} />
-            <MetricLine label="Acceptance Rate" value={`${harperTelemetry.summary.acceptance_rate}%`} />
-            <MetricLine label="Ignore Rate" value={`${harperTelemetry.summary.ignore_rate}%`} />
-            <MetricLine label="Accepted" value={formatNumber(harperTelemetry.summary.accepted_suggestions)} />
-            <MetricLine label="Ignored" value={formatNumber(harperTelemetry.summary.ignored_suggestions)} />
-            <MetricLine label="Top Helpful Rule" value={harperTelemetry.summary.top_helpful_rule?.rule_id ?? "-"} />
-            <MetricLine label="Top Ignored Rule" value={harperTelemetry.summary.top_ignored_rule?.rule_id ?? "-"} />
           </div>
         </ProjectSection>
       ) : null}
