@@ -140,7 +140,6 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
 function Workbench() {
   const [state, setState] = useState<AppState | null>(null);
   const [titles, setTitles] = useState("");
-  const [newTitlesContentProfile, setNewTitlesContentProfile] = useState<ContentProfile | "">("");
   const [postGenerationAction, setPostGenerationAction] = useState<PostGenerationPublishingAction>("generate_only");
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [selectedInventoryArticleIds, setSelectedInventoryArticleIds] = useState<Set<string>>(new Set());
@@ -512,7 +511,6 @@ function Workbench() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         titles: titles.split("\n"),
-        contentProfile: newTitlesContentProfile || undefined,
         postGenerationAction
       })
     });
@@ -1593,10 +1591,6 @@ function Workbench() {
               rows={3}
               className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
             />
-            <select value={newTitlesContentProfile} onChange={(event) => setNewTitlesContentProfile(event.target.value as ContentProfile | "")} className="mt-1.5 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none" aria-label="Content profile for new titles">
-              <option value="">Inherit project profile ({CONTENT_PROFILES[resolveContentProfile(undefined, state?.project.defaultContentProfile)].label})</option>
-              {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
             <label className="mt-1.5 block text-[11px] text-ink-muted">
               <span>After generation</span>
               <select
@@ -2054,9 +2048,24 @@ function ProjectDashboard({
           <ProjectSection title="Content inventory">
             {contentInventory.length ? (
               <>
-                <div className="mb-3 rounded-md border border-line bg-surface-2 p-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="flex items-center gap-2 text-[12px] text-ink">
+                <div className="mb-4 overflow-hidden rounded-lg border border-line bg-surface-1 shadow-[0_1px_0_rgba(16,24,40,0.02)]">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line/70 px-4 py-3">
+                    <div>
+                      <div className="text-[12px] font-medium text-ink">Bulk publishing</div>
+                      <div className="mt-1 text-[11px] text-ink-muted">Use the existing publish path to mark ready or send selected articles to WordPress.</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="mono rounded-full bg-surface-2 px-2.5 py-1 text-[10.5px] text-ink-subtle">{selectedInventoryCount} selected</span>
+                      {bulkProgress && (
+                        <span className="mono rounded-full bg-surface-2 px-2.5 py-1 text-[10.5px] text-ink-subtle">
+                          {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                          {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+                    <label className="flex h-9 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
                       <input
                         type="checkbox"
                         checked={allInventorySelected}
@@ -2064,11 +2073,10 @@ function ProjectDashboard({
                       />
                       <span>Select all</span>
                     </label>
-                    <span className="mono text-[10.5px] text-ink-subtle">{selectedInventoryCount} selected</span>
                     <select
                       value={bulkAction}
                       onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
-                      className="h-8 min-w-36 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink outline-none"
+                      className="h-9 min-w-40 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
                       aria-label="Bulk publishing action"
                     >
                       {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -2076,19 +2084,13 @@ function ProjectDashboard({
                     <button
                       onClick={onRunBulkAction}
                       disabled={!selectedInventoryCount || bulkBusy}
-                      className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                      className="h-9 rounded-md bg-ink px-3.5 text-[12px] font-medium text-white disabled:opacity-40"
                     >
                       {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
                     </button>
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[10.5px] text-ink-subtle">
-                    <span>{selectedInventoryCount ? "Bulk actions reuse the existing WordPress publish path." : "Select one or more articles to run a bulk action."}</span>
-                    {bulkProgress && (
-                      <span className="mono">
-                        {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-                        {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-                      </span>
-                    )}
+                  <div className="bg-surface-2/60 px-4 py-2.5 text-[10.5px] text-ink-subtle">
+                    {selectedInventoryCount ? "Bulk actions reuse the existing WordPress publish path." : "Select one or more articles to run a bulk action."}
                   </div>
                 </div>
                 <InventoryTable
@@ -2812,7 +2814,7 @@ function InventoryTable({
 
   return (
     <div className="overflow-hidden">
-      <div className={cn("grid gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", wrapperGridClass)}>
+      <div className={cn("grid gap-3 border-b border-line/70 px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle", wrapperGridClass)}>
         {selectable && <span className="sr-only">Select</span>}
         <span>Title</span>
         <span>Status</span>
@@ -2861,7 +2863,7 @@ function InventoryTable({
             return (
               <div
                 key={article.id}
-                className={cn("grid gap-2 px-1 py-2 text-[12px] hover:bg-surface-2", wrapperGridClass, selected && "bg-surface-2/70")}
+                className={cn("grid gap-3 rounded-md px-2 py-2.5 text-[12px] transition-colors hover:bg-surface-2", wrapperGridClass, selected && "bg-surface-2/70 ring-1 ring-line")}
               >
                 <label className="flex items-center justify-center">
                   <input
@@ -2874,7 +2876,7 @@ function InventoryTable({
                 <button
                   type="button"
                   onClick={() => onSelectArticle(article.id)}
-                  className={cn("grid min-w-0 gap-2 text-left", contentGridClass)}
+                  className={cn("grid min-w-0 gap-3 text-left", contentGridClass)}
                 >
                   {rowBody}
                 </button>
@@ -2886,7 +2888,7 @@ function InventoryTable({
             <button
               key={article.id}
               onClick={() => onSelectArticle(article.id)}
-              className={cn("grid w-full gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2", wrapperGridClass)}
+              className={cn("grid w-full gap-3 rounded-md px-2 py-2.5 text-left text-[12px] transition-colors hover:bg-surface-2", wrapperGridClass)}
             >
               {rowBody}
             </button>

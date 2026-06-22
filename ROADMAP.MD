@@ -88,6 +88,8 @@
   - selected count
   - progress feedback
   - publishing status badges
+- Removed the queue-side article type selector so new titles always inherit the project-level content profile from Project Settings.
+- Refined the Content Inventory bulk action bar with cleaner spacing, clearer hierarchy, and lighter row treatment to reduce dashboard form clutter.
 - Added a client-safe publishing status helper module so dashboard and summary UI can consume publishing workflow metadata without importing server-only WordPress publishing code into the browser bundle.
 - Updated article summary expectations to cover the new publishing workflow fields without exposing full article content in project state.
 
