@@ -20,25 +20,25 @@ export async function PATCH(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as SaveWordPressConnectionBody;
-  const projectId = body.projectId?.trim();
-  if (!projectId) {
-    return NextResponse.json({ error: "Project ID is required." }, { status: 400 });
-  }
-
-  const { store } = createRuntime();
-  const project = await getAccessibleProject(store, projectId);
-  if (!project) {
-    return NextResponse.json({ error: "Project not found." }, { status: 404 });
-  }
-
-  const existing = await store.getProjectWordPressConnection(projectId);
-  const applicationPassword = body.applicationPassword?.trim() || existingPassword(existing);
-  if (!applicationPassword) {
-    return NextResponse.json({ error: "Application password is required." }, { status: 400 });
-  }
-
   try {
+    const body = await req.json().catch(() => ({})) as SaveWordPressConnectionBody;
+    const projectId = body.projectId?.trim();
+    if (!projectId) {
+      return NextResponse.json({ error: "Project ID is required." }, { status: 400 });
+    }
+
+    const { store } = createRuntime();
+    const project = await getAccessibleProject(store, projectId);
+    if (!project) {
+      return NextResponse.json({ error: "Project not found." }, { status: 404 });
+    }
+
+    const existing = await store.getProjectWordPressConnection(projectId);
+    const applicationPassword = body.applicationPassword?.trim() || existingPassword(existing);
+    if (!applicationPassword) {
+      return NextResponse.json({ error: "Application password is required." }, { status: 400 });
+    }
+
     const validated = await testWordPressConnection({
       siteUrl: body.siteUrl ?? existing?.siteUrl ?? "",
       username: body.username ?? existing?.username ?? "",

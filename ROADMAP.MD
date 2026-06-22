@@ -24,6 +24,8 @@
 - Added project-level WordPress connections with a dedicated Publishing section in Project Settings.
 - Added connection testing against `/wp-json/wp/v2/users/me`.
 - Added encrypted storage for WordPress application passwords.
+- Added Neon schema self-bootstrap for WordPress connection storage so deployed environments can create the connector table on first use.
+- Moved WordPress connector setup reads inside route error handling so failed setup returns a surfaced error instead of a generic connector failure.
 - Added article-level publishing actions for `Publish Draft` and `Publish Now`.
 - Added persisted WordPress publish metadata on articles:
   - Published status

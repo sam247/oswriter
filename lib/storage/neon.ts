@@ -33,6 +33,7 @@ export class NeonStorageProvider implements StorageProvider {
   private readonly injectedTenant?: TenantSeed;
   private tenantReady = false;
   private generationTelemetrySchemaReady = false;
+  private wordPressConnectionSchemaReady = false;
   private readonly ensuredProjects = new Set<string>();
 
   constructor(options: NeonStorageProviderOptions = {}) {
@@ -338,6 +339,7 @@ export class NeonStorageProvider implements StorageProvider {
 
   async getProjectWordPressConnection(projectId: string): Promise<ProjectWordPressConnectionSecret | null> {
     return this.withFailureLogging("getProjectWordPressConnection", projectId, async () => {
+      await this.ensureWordPressConnectionSchema();
       const tenant = await this.ensureTenant();
       const found = rows(await this.sql`
         select document
@@ -351,6 +353,7 @@ export class NeonStorageProvider implements StorageProvider {
 
   async saveProjectWordPressConnection(connection: ProjectWordPressConnectionSecret): Promise<void> {
     return this.withFailureLogging("saveProjectWordPressConnection", connection.projectId, async () => {
+      await this.ensureWordPressConnectionSchema();
       const tenant = await this.ensureTenant();
       await this.ensureProjectRows(connection.projectId);
       const next = withProjectWordPressConnectionDefaults(connection, tenant);
@@ -384,6 +387,7 @@ export class NeonStorageProvider implements StorageProvider {
 
   async deleteProjectWordPressConnection(projectId: string): Promise<void> {
     return this.withFailureLogging("deleteProjectWordPressConnection", projectId, async () => {
+      await this.ensureWordPressConnectionSchema();
       const tenant = await this.ensureTenant();
       await this.sql`
         delete from project_wordpress_connections
@@ -1567,6 +1571,33 @@ export class NeonStorageProvider implements StorageProvider {
         add column if not exists generation_cost_pricing_source text
     `;
     this.generationTelemetrySchemaReady = true;
+  }
+
+  private async ensureWordPressConnectionSchema() {
+    if (this.wordPressConnectionSchemaReady) return;
+    await this.sql`
+      create table if not exists project_wordpress_connections (
+        project_id text primary key references projects(id) on delete cascade,
+        organisation_id text not null references organisations(id) on delete cascade,
+        created_by_user_id text not null references users(id),
+        site_url text not null,
+        username text not null,
+        encrypted_application_password text not null,
+        connection_status text not null default 'not_connected',
+        default_post_status text not null default 'draft',
+        default_category text,
+        last_validated_at timestamptz,
+        last_error text,
+        document jsonb not null,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+    await this.sql`
+      create index if not exists idx_project_wordpress_connections_org
+        on project_wordpress_connections (organisation_id, updated_at desc)
+    `;
+    this.wordPressConnectionSchemaReady = true;
   }
 
   private async getTelemetryExportStatus(id: string) {
