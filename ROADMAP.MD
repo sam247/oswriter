@@ -5,6 +5,7 @@
 ### Harper Grammar And Writing Assistant Integration (Phase 1)
 
 - Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
+- Added a resilient Harper linter bootstrap path that falls back to `LocalLinter` if the worker setup fails or hangs in the browser.
 - Added a new Writing inspector tab with grouped Grammar, Style, and Readability suggestion counts.
 - Added Accept and Ignore actions for Harper suggestions:
   - Accept updates the current article draft immediately
