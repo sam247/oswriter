@@ -97,6 +97,9 @@
 - Removed sort arrows from the centre-panel inventory headers and switched the active sort column to a bold label so sorting does not disturb column alignment.
 - Rebalanced the lower inventory fixed column widths so the `Updated` header fits cleanly alongside the selectable and publish columns.
 - Removed the `Words` column from `Needs Attention` and made `Content Inventory` use the same reduced column layout, with the bottom table differing only by its selection checkbox for bulk actions.
+- Simplified publishing workflow states by removing `Ready` and normalizing article publishing to `Not Published`, `Draft`, `Scheduled`, or `Published`.
+- Simplified bulk publishing actions to `Publish Draft`, `Publish Now`, and `Schedule`, with scheduling handled in a dedicated modal instead of inline table controls.
+- Added reusable scheduling helpers and a schedule bulk endpoint so future queue automation can share the same scheduling architecture without redesigning the table.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed
@@ -108,7 +111,8 @@
 
 ### WordPress Publishing (Next)
 
-- Schedule post
+- Execute scheduled publishing automatically when scheduled articles become due
+- Reintroduce a tighter publishing-status column in `Content Inventory` on top of the simplified shared table layout
 - Categories
 - Tags
 - Featured image

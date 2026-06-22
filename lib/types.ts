@@ -89,8 +89,17 @@ export interface SiteKnowledgePageDocument {
 
 export type WordPressConnectionStatus = "not_connected" | "connected" | "failed";
 export type WordPressPostStatus = "draft" | "publish";
-export type PublishingWorkflowStatus = "draft" | "ready" | "scheduled" | "published" | "failed";
-export type PostGenerationPublishingAction = "generate_only" | "mark_ready" | "publish_draft" | "publish_live";
+export type PublishingWorkflowStatus = "not_published" | "draft" | "scheduled" | "published";
+export type PostGenerationPublishingAction = "generate_only" | "publish_draft" | "publish_live";
+export type PublishingSchedulePattern = "all_at_once" | "one_per_day" | "two_per_week" | "custom_interval";
+export type PublishingScheduleIntervalUnit = "hours" | "days" | "weeks";
+
+export interface PublishingScheduleRequest {
+  startAt: string;
+  pattern: PublishingSchedulePattern;
+  customIntervalValue?: number;
+  customIntervalUnit?: PublishingScheduleIntervalUnit;
+}
 
 export interface ProjectWordPressConnection {
   siteUrl: string;

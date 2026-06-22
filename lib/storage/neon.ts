@@ -504,7 +504,16 @@ export class NeonStorageProvider implements StorageProvider {
       await this.ensureArticlePublishingSchema();
       const found = rows(await this.sql`
         select id, title, quality_score, word_count, status, updated_at,
-          coalesce(publishing_status, case when document #>> '{publishing,wordpress,status}' = 'publish' then 'published' when document #>> '{publishing,wordpress,status}' = 'draft' then 'draft' else 'draft' end) as publishing_status,
+          case
+            when coalesce(publishing_status, '') = 'published' then 'published'
+            when coalesce(publishing_status, '') = 'scheduled' then 'scheduled'
+            when coalesce(publishing_status, '') = 'draft'
+              and (wordpress_post_id is not null or nullif(document #>> '{publishing,wordpress,status}', '') = 'draft')
+              then 'draft'
+            when document #>> '{publishing,wordpress,status}' = 'publish' then 'published'
+            when document #>> '{publishing,wordpress,status}' = 'draft' then 'draft'
+            else 'not_published'
+          end as publishing_status,
           coalesce(published_at, nullif(document #>> '{publishing,wordpress,publishedAt}', '')::timestamptz) as published_at,
           coalesce(wordpress_post_id, nullif(document #>> '{publishing,wordpress,postId}', '')::int) as wordpress_post_id,
           coalesce(wordpress_url, nullif(document #>> '{publishing,wordpress,url}', '')) as wordpress_url,
@@ -523,7 +532,7 @@ export class NeonStorageProvider implements StorageProvider {
         evidenceScore: Number(row.evidence_score ?? 0),
         wordCount: Number(row.word_count ?? 0),
         status: String(row.status) as ArticleSummary["status"],
-        publishingStatus: String(row.publishing_status ?? "draft") as ArticleSummary["publishingStatus"],
+        publishingStatus: String(row.publishing_status ?? "not_published") as ArticleSummary["publishingStatus"],
         publishedAt: row.published_at ? new Date(row.published_at as string | number | Date).toISOString() : null,
         wordpressPostId: row.wordpress_post_id === null || row.wordpress_post_id === undefined ? null : Number(row.wordpress_post_id),
         wordpressUrl: row.wordpress_url ? String(row.wordpress_url) : null,

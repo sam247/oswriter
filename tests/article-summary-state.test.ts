@@ -44,7 +44,7 @@ describe("project state article summaries", () => {
       "wordpressPostId",
       "wordpressUrl"
     ]);
-    assert.equal(summary.publishingStatus, "draft");
+    assert.equal(summary.publishingStatus, "not_published");
     assert.equal(summary.publishedAt, null);
     assert.equal(summary.wordpressPostId, null);
     assert.equal(summary.wordpressUrl, null);

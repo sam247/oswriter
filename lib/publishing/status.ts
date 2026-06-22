@@ -1,11 +1,18 @@
 import type { ArticleDocument, PostGenerationPublishingAction, PublishingWorkflowStatus } from "@/lib/types";
 
 export function getArticlePublishingStatus(article: Pick<ArticleDocument, "publishingStatus" | "publishing">): PublishingWorkflowStatus {
-  if (article.publishingStatus) return article.publishingStatus;
+  const rawStatus = article.publishingStatus as string | undefined;
+  if (rawStatus) {
+    if (rawStatus === "ready" || rawStatus === "failed") return "not_published";
+    if (rawStatus === "draft") {
+      return article.publishing?.wordpress?.status === "draft" ? "draft" : "not_published";
+    }
+    return rawStatus as PublishingWorkflowStatus;
+  }
   const status = article.publishing?.wordpress?.status;
   if (status === "publish") return "published";
   if (status === "draft") return "draft";
-  return "draft";
+  return "not_published";
 }
 
 export function applyPublishingDefaults(article: ArticleDocument): ArticleDocument {
@@ -24,12 +31,10 @@ export function applyPublishingDefaults(article: ArticleDocument): ArticleDocume
 
 export function describePostGenerationAction(action: PostGenerationPublishingAction) {
   switch (action) {
-    case "mark_ready":
-      return "Generate + Mark Ready";
     case "publish_draft":
       return "Generate + Publish Draft";
     case "publish_live":
-      return "Generate + Publish Live";
+      return "Generate + Publish Now";
     default:
       return "Generate Only";
   }

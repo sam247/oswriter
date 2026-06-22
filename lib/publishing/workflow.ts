@@ -7,49 +7,25 @@ import type {
   WordPressPostStatus
 } from "@/lib/types";
 import { applyPublishingDefaults } from "@/lib/publishing/status";
+export { markArticleAsScheduled } from "@/lib/publishing/schedule";
 import { publishArticleToWordPress } from "@/lib/publishing/wordpress";
 export { applyPublishingDefaults, describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
 
-export function markArticleReady(article: ArticleDocument): ArticleDocument {
+export function markArticleAsNotPublished(article: ArticleDocument): ArticleDocument {
   const next = applyPublishingDefaults(article);
   return {
     ...next,
-    publishingStatus: "ready",
+    publishingStatus: "not_published",
     scheduledPublishAt: null,
-    publishingError: null,
-    updatedAt: nowIso()
-  };
-}
-
-export function markArticleAsDraft(article: ArticleDocument): ArticleDocument {
-  const next = applyPublishingDefaults(article);
-  return {
-    ...next,
-    publishingStatus: "draft",
-    scheduledPublishAt: null,
-    publishingError: null,
-    updatedAt: nowIso()
-  };
-}
-
-export function markArticleAsScheduled(article: ArticleDocument, scheduledAt: string): ArticleDocument {
-  const next = applyPublishingDefaults(article);
-  return {
-    ...next,
-    publishingStatus: "scheduled",
-    scheduledPublishAt: scheduledAt,
     publishingError: null,
     updatedAt: nowIso()
   };
 }
 
 export function markArticlePublishingFailed(article: ArticleDocument, message: string): ArticleDocument {
-  const next = applyPublishingDefaults(article);
   return {
-    ...next,
-    publishingStatus: "failed",
-    publishingError: message,
-    updatedAt: nowIso()
+    ...markArticleAsNotPublished(article),
+    publishingError: message
   };
 }
 

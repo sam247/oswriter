@@ -17,7 +17,7 @@ import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTION
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -45,28 +45,56 @@ type WordPressConnectionDraft = {
   defaultPostStatus: WordPressPostStatus;
   defaultCategory: string;
 };
-type BulkPublishingAction = "mark_ready" | "publish_draft" | "publish_live";
+type BulkPublishingAction = "publish_draft" | "publish_now" | "schedule";
 type BulkPublishingProgress = {
   action: BulkPublishingAction;
   completed: number;
   total: number;
   failed: number;
 };
+type ScheduleFormState = {
+  date: string;
+  time: string;
+  pattern: PublishingSchedulePattern;
+  customIntervalValue: number;
+  customIntervalUnit: PublishingScheduleIntervalUnit;
+};
 const POST_GENERATION_ACTION_OPTIONS: Array<{
   value: PostGenerationPublishingAction;
   label: string;
   description: string;
 }> = [
-  { value: "generate_only", label: "Generate Only", description: "Keep new articles in Draft after generation." },
-  { value: "mark_ready", label: "Generate + Mark Ready", description: "Mark new articles Ready for review or later publishing." },
+  { value: "generate_only", label: "Generate Only", description: "Keep new articles as Not Published after generation." },
   { value: "publish_draft", label: "Generate + Publish Draft", description: "Send completed articles to WordPress as drafts." },
-  { value: "publish_live", label: "Generate + Publish Live", description: "Publish completed articles to WordPress immediately." }
+  { value: "publish_live", label: "Generate + Publish Now", description: "Publish completed articles to WordPress immediately." }
 ];
 const BULK_PUBLISHING_ACTION_OPTIONS: Array<{ value: BulkPublishingAction; label: string }> = [
-  { value: "mark_ready", label: "Mark Ready" },
   { value: "publish_draft", label: "Publish Draft" },
-  { value: "publish_live", label: "Publish Live" }
+  { value: "publish_now", label: "Publish Now" },
+  { value: "schedule", label: "Schedule" }
 ];
+const SCHEDULE_PATTERN_OPTIONS: Array<{ value: PublishingSchedulePattern; label: string }> = [
+  { value: "all_at_once", label: "Publish all at once" },
+  { value: "one_per_day", label: "One article per day" },
+  { value: "two_per_week", label: "Two articles per week" },
+  { value: "custom_interval", label: "Custom interval" }
+];
+const SCHEDULE_INTERVAL_UNIT_OPTIONS: Array<{ value: PublishingScheduleIntervalUnit; label: string }> = [
+  { value: "hours", label: "Hours" },
+  { value: "days", label: "Days" },
+  { value: "weeks", label: "Weeks" }
+];
+
+function createDefaultScheduleForm(): ScheduleFormState {
+  const start = new Date(Date.now() + 60 * 60 * 1000);
+  return {
+    date: start.toISOString().slice(0, 10),
+    time: start.toTimeString().slice(0, 5),
+    pattern: "all_at_once",
+    customIntervalValue: 1,
+    customIntervalUnit: "days"
+  };
+}
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -143,15 +171,17 @@ function Workbench() {
   const [postGenerationAction, setPostGenerationAction] = useState<PostGenerationPublishingAction>("generate_only");
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [selectedInventoryArticleIds, setSelectedInventoryArticleIds] = useState<Set<string>>(new Set());
-  const [bulkAction, setBulkAction] = useState<BulkPublishingAction>("mark_ready");
+  const [bulkAction, setBulkAction] = useState<BulkPublishingAction>("publish_draft");
   const [bulkProgress, setBulkProgress] = useState<BulkPublishingProgress | null>(null);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() => createDefaultScheduleForm());
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("queue");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("Ready");
+  const [message, setMessage] = useState("Idle");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
@@ -835,37 +865,14 @@ function Workbench() {
       setMessage("Select at least one article.");
       return false;
     }
+    if (bulkAction === "schedule") {
+      setScheduleForm(createDefaultScheduleForm());
+      setScheduleModalOpen(true);
+      return true;
+    }
     setBusy(true);
     setBulkProgress({ action: bulkAction, completed: 0, total: articleIds.length, failed: 0 });
-
-    if (bulkAction === "mark_ready") {
-      const res = await fetch("/api/articles/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ articleIds, action: "mark_ready" })
-      });
-      const data = await res.json().catch(() => ({})) as {
-        updatedArticles?: ArticleDocument[];
-        failed?: Array<{ articleId: string; error: string }>;
-        message?: string;
-        error?: string;
-      };
-      setBusy(false);
-      const updatedArticles = data.updatedArticles ?? [];
-      updatedArticles.forEach((article) => applyUpdatedArticle(article));
-      setSelectedInventoryArticleIds(new Set());
-      setBulkProgress({
-        action: bulkAction,
-        completed: articleIds.length,
-        total: articleIds.length,
-        failed: data.failed?.length ?? 0
-      });
-      setMessage(res.ok ? data.message ?? "Selected articles marked ready." : data.error ?? "Bulk update failed.");
-      if (!res.ok) await refresh();
-      return res.ok;
-    }
-
-    const status: WordPressPostStatus = bulkAction === "publish_live" ? "publish" : "draft";
+    const status: WordPressPostStatus = bulkAction === "publish_now" ? "publish" : "draft";
     let completed = 0;
     let failed = 0;
     for (const articleId of articleIds) {
@@ -887,9 +894,67 @@ function Workbench() {
     setSelectedInventoryArticleIds(new Set());
     setMessage(failed
       ? `${completed - failed} article${completed - failed === 1 ? "" : "s"} completed, ${failed} failed.`
-      : `${completed} article${completed === 1 ? "" : "s"} ${bulkAction === "publish_live" ? "published live" : "published as drafts"}.`);
+      : `${completed} article${completed === 1 ? "" : "s"} ${bulkAction === "publish_now" ? "published now" : "published as drafts"}.`);
     if (failed) await refresh();
     return failed === 0;
+  }
+
+  async function confirmBulkSchedule() {
+    const articleIds = [...selectedInventoryArticleIds];
+    if (!articleIds.length) {
+      setScheduleModalOpen(false);
+      setMessage("Select at least one article.");
+      return false;
+    }
+    if (!scheduleForm.date || !scheduleForm.time) {
+      setMessage("Choose a schedule date and time.");
+      return false;
+    }
+    const startAt = new Date(`${scheduleForm.date}T${scheduleForm.time}`);
+    if (Number.isNaN(startAt.getTime())) {
+      setMessage("Enter a valid schedule date and time.");
+      return false;
+    }
+
+    setBusy(true);
+    setBulkProgress({ action: "schedule", completed: 0, total: articleIds.length, failed: 0 });
+    const res = await fetch("/api/articles/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        articleIds,
+        action: "schedule",
+        schedule: {
+          startAt: startAt.toISOString(),
+          pattern: scheduleForm.pattern,
+          customIntervalValue: scheduleForm.pattern === "custom_interval" ? scheduleForm.customIntervalValue : undefined,
+          customIntervalUnit: scheduleForm.pattern === "custom_interval" ? scheduleForm.customIntervalUnit : undefined
+        }
+      })
+    });
+    const data = await res.json().catch(() => ({})) as {
+      updatedArticles?: ArticleDocument[];
+      failed?: Array<{ articleId: string; error: string }>;
+      message?: string;
+      error?: string;
+    };
+    setBusy(false);
+    if (!res.ok) {
+      setMessage(data.error ?? "Bulk scheduling failed.");
+      await refresh();
+      return false;
+    }
+    (data.updatedArticles ?? []).forEach((article) => applyUpdatedArticle(article));
+    setSelectedInventoryArticleIds(new Set());
+    setBulkProgress({
+      action: "schedule",
+      completed: articleIds.length,
+      total: articleIds.length,
+      failed: data.failed?.length ?? 0
+    });
+    setScheduleModalOpen(false);
+    setMessage(data.message ?? `Scheduled ${articleIds.length} article${articleIds.length === 1 ? "" : "s"}.`);
+    return true;
   }
 
   async function renameProject() {
@@ -1775,6 +1840,16 @@ function Workbench() {
           onSubmit={() => void addSimilarTitlesToQueue()}
         />
       )}
+      {scheduleModalOpen && (
+        <ScheduleArticlesModal
+          selectedCount={selectedInventoryArticleIds.size}
+          value={scheduleForm}
+          submitting={busy}
+          onClose={() => setScheduleModalOpen(false)}
+          onChange={(patch) => setScheduleForm((current) => ({ ...current, ...patch }))}
+          onSubmit={() => void confirmBulkSchedule()}
+        />
+      )}
     </main>
   );
 }
@@ -1890,6 +1965,101 @@ function SimilarTitlesModal({ article, titles, selected, loading, submitting, er
               {submitting && <Loader2 className="size-3.5 animate-spin" />} Add {selected.size || ""} to queue
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScheduleArticlesModal({
+  selectedCount,
+  value,
+  submitting,
+  onClose,
+  onChange,
+  onSubmit
+}: {
+  selectedCount: number;
+  value: ScheduleFormState;
+  submitting: boolean;
+  onClose: () => void;
+  onChange: (patch: Partial<ScheduleFormState>) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/20 px-4 pt-[10vh] backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="mx-auto w-full max-w-xl overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="hairline-b px-4 py-3">
+          <div className="text-[15px] font-semibold text-ink">Schedule Articles</div>
+          <div className="mono mt-1 text-[10.5px] text-ink-subtle">Selected Articles: {selectedCount}</div>
+        </div>
+        <div className="space-y-4 p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-ink-muted">Date</span>
+              <input
+                type="date"
+                value={value.date}
+                onChange={(event) => onChange({ date: event.currentTarget.value })}
+                className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-ink-muted">Time</span>
+              <input
+                type="time"
+                value={value.time}
+                onChange={(event) => onChange({ time: event.currentTarget.value })}
+                className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+              />
+            </label>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium text-ink-muted">Publishing Pattern</div>
+            <div className="space-y-2 rounded-md border border-line bg-surface-2 p-3">
+              {SCHEDULE_PATTERN_OPTIONS.map((option) => (
+                <label key={option.value} className="flex cursor-pointer items-center gap-2 text-[12px] text-ink">
+                  <input
+                    type="radio"
+                    name="schedule-pattern"
+                    checked={value.pattern === option.value}
+                    onChange={() => onChange({ pattern: option.value })}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          {value.pattern === "custom_interval" && (
+            <div className="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)]">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-ink-muted">Every</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={value.customIntervalValue}
+                  onChange={(event) => onChange({ customIntervalValue: Number(event.currentTarget.value) || 1 })}
+                  className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-ink-muted">Interval Unit</span>
+                <select
+                  value={value.customIntervalUnit}
+                  onChange={(event) => onChange({ customIntervalUnit: event.currentTarget.value as PublishingScheduleIntervalUnit })}
+                  className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+                >
+                  {SCHEDULE_INTERVAL_UNIT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
+          )}
+        </div>
+        <div className="hairline-t flex items-center justify-between gap-3 px-4 py-3">
+          <button onClick={onClose} disabled={submitting} className="h-8 rounded px-3 text-[12px] text-ink-muted hover:bg-surface-3 disabled:opacity-50">Cancel</button>
+          <button onClick={onSubmit} disabled={submitting || selectedCount === 0} className="flex h-8 items-center gap-1.5 rounded bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
+            {submitting && <Loader2 className="size-3.5 animate-spin" />} Schedule Articles
+          </button>
         </div>
       </div>
     </div>
@@ -2087,7 +2257,7 @@ function ProjectDashboard({
                     </div>
                   </div>
                   <div className="mt-2 text-[10.5px] text-ink-subtle">
-                    {selectedInventoryCount ? "Bulk actions reuse the existing WordPress publish path." : "Select one or more articles to run a bulk action."}
+                    {selectedInventoryCount ? "Publish actions reuse the existing WordPress publish path. Scheduling opens a modal." : "Select one or more articles to publish or schedule."}
                   </div>
                 </div>
                 <InventoryTable
@@ -2879,9 +3049,7 @@ function InventoryTable({
                       <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">
                         {job
                           ? attentionSummary(article, job) ?? `Attempt ${job.attempts}`
-                          : getArticlePublishingStatus(article) === "failed"
-                            ? "Publishing failed"
-                            : `Updated ${relativeDate(article.updatedAt)}`}
+                          : `Updated ${relativeDate(article.updatedAt)}`}
                       </div>
                     )}
                   </div>
@@ -4996,18 +5164,16 @@ function statusLabel(status: JobStatus) {
 
 function publishingStatusTone(status: PublishingWorkflowStatus) {
   if (status === "published") return "bg-success/10 text-success";
-  if (status === "ready") return "bg-info/10 text-info";
   if (status === "scheduled") return "bg-[#f0e4ff] text-[#6d3bb8]";
-  if (status === "failed") return "bg-danger/10 text-danger";
+  if (status === "draft") return "bg-[#eef2ff] text-[#4256b8]";
   return "bg-surface-3 text-ink-subtle";
 }
 
 function publishingStatusLabel(status: PublishingWorkflowStatus) {
   if (status === "published") return "Published";
-  if (status === "ready") return "Ready";
   if (status === "scheduled") return "Scheduled";
-  if (status === "failed") return "Failed";
-  return "Draft";
+  if (status === "draft") return "Draft";
+  return "Not Published";
 }
 
 function bulkActionLabel(action: BulkPublishingAction) {

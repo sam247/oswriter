@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { toArticleSummary } from "@/lib/articles/summary";
-import { markArticleReady } from "@/lib/publishing/workflow";
+import { buildPublishingSchedule, markArticleAsScheduled, schedulePatternLabel } from "@/lib/publishing/schedule";
 import { getAccessibleArticle } from "@/lib/server/project-access";
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
+import type { PublishingScheduleRequest } from "@/lib/types";
 
 interface BulkArticleActionBody {
   articleIds?: string[];
-  action?: "mark_ready";
+  action?: "schedule";
+  schedule?: PublishingScheduleRequest;
 }
 
 export async function POST(req: Request) {
@@ -19,22 +21,30 @@ export async function POST(req: Request) {
   if (!articleIds.length) {
     return NextResponse.json({ error: "Select at least one article." }, { status: 400 });
   }
-  if (body.action !== "mark_ready") {
+  if (body.action !== "schedule") {
     return NextResponse.json({ error: "Unsupported bulk article action." }, { status: 400 });
+  }
+  if (!body.schedule?.startAt) {
+    return NextResponse.json({ error: "Schedule start date and time are required." }, { status: 400 });
   }
 
   const { store } = createRuntime();
   const updated = [];
   const failed: Array<{ articleId: string; error: string }> = [];
+  const scheduleTimes = buildPublishingSchedule(body.schedule.startAt, articleIds.length, {
+    pattern: body.schedule.pattern,
+    customIntervalValue: body.schedule.customIntervalValue,
+    customIntervalUnit: body.schedule.customIntervalUnit
+  });
 
-  for (const articleId of articleIds) {
+  for (const [index, articleId] of articleIds.entries()) {
     const article = await getAccessibleArticle(store, articleId);
     if (!article) {
       failed.push({ articleId, error: "Article not found." });
       continue;
     }
     try {
-      const next = markArticleReady(article);
+      const next = markArticleAsScheduled(article, scheduleTimes[index]);
       await store.updateArticle(next);
       updated.push(next);
     } catch (error) {
@@ -47,7 +57,7 @@ export async function POST(req: Request) {
     updatedSummaries: updated.map(toArticleSummary),
     failed,
     message: updated.length
-      ? `${updated.length} article${updated.length === 1 ? "" : "s"} marked ready.`
+      ? `${updated.length} article${updated.length === 1 ? "" : "s"} scheduled (${schedulePatternLabel(body.schedule.pattern)}).`
       : "No articles were updated."
   });
 }

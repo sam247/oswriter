@@ -10,9 +10,8 @@ import { pricingForModel } from "@/lib/telemetry/pricing";
 import { benchmarkPairId, benchmarkRunLabel, exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import {
-  markArticleAsDraft,
+  markArticleAsNotPublished,
   markArticlePublishingFailed,
-  markArticleReady,
   postGenerationActionToWordPressStatus,
   publishArticleViaProjectConnection,
   shouldAutoPublish
@@ -568,19 +567,13 @@ export class QueueRunner {
     log: (event: Omit<DebugEvent, "at">) => void
   ) {
     const action = job.postGenerationAction ?? "generate_only";
-    if (action === "mark_ready") {
-      const updated = markArticleReady(article);
-      await this.store.updateArticle(updated);
-      log({ stage: "queue", level: "info", message: "Article marked ready for publishing." });
-      return updated;
-    }
     if (shouldAutoPublish(action)) {
       try {
         const updated = await publishArticleViaProjectConnection(this.store, article, postGenerationActionToWordPressStatus(action));
         log({
           stage: "queue",
           level: "info",
-          message: action === "publish_live" ? "Article auto-published live." : "Article auto-published as WordPress draft."
+          message: action === "publish_live" ? "Article auto-published now." : "Article auto-published as WordPress draft."
         });
         return updated;
       } catch (error) {
@@ -591,7 +584,7 @@ export class QueueRunner {
         return failed;
       }
     }
-    const updated = markArticleAsDraft(article);
+    const updated = markArticleAsNotPublished(article);
     await this.store.updateArticle(updated);
     return updated;
   }
