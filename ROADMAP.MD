@@ -105,6 +105,9 @@
 - Repositioned the single-article `Publish` dropdown into the export cluster so it sits beside `Export` as part of the publishing/export area.
 - Made the Project Settings accordion stack respond to the available centre-pane width and use one even small gap between `Project Settings`, `Knowledge Base`, and `Publishing`.
 - Removed the centred document-style width cap from Project Settings so the accordion stack now uses the actual centre-pane workspace width.
+- Removed the legacy queue-side `After generation` selector because post-generation behavior is now controlled from the main `Generate` button.
+- Removed the remaining generic settings width cap so settings cards can use the centre pane width instead of a narrower fixed content column.
+- Turned the top project/article breadcrumb labels into clickable navigation controls so users can jump back to project overview or reopen the current article context directly from the header.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

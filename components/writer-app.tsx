@@ -239,8 +239,10 @@ function Workbench() {
     () => jobs.find((job) => job.articleId === selectedArticleId || job.id === selectedArticle?.jobId) ?? null,
     [jobs, selectedArticle?.jobId, selectedArticleId]
   );
+  const breadcrumbArticleId = selectedArticle?.id ?? selectedJob?.articleId ?? null;
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
+  const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? null;
   const handleSelectedMarkdownChange = useCallback((markdown: string) => {
     if (!selectedArticle) return;
     updateArticleDraft(selectedArticle.id, { markdown });
@@ -1358,6 +1360,22 @@ function Workbench() {
     setGlobalSearchQuery("");
   }
 
+  function openProjectBreadcrumb() {
+    setSelectedArticleId(null);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(null);
+    setTab("project");
+  }
+
+  function openArticleBreadcrumb() {
+    if (!breadcrumbArticleId) return;
+    setSelectedArticleId(breadcrumbArticleId);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(null);
+    setSidebarTab(selectedArticle ? "articles" : "queue");
+    setTab("project");
+  }
+
   function upsertJob(job: QueueJob) {
     setState((current) => current ? {
       ...current,
@@ -1390,11 +1408,23 @@ function Workbench() {
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px]">
           <span className="font-semibold tracking-tight text-ink">OS Writer V2</span>
           <ChevronRight className="size-3 text-ink-subtle" />
-          <span className="truncate text-ink-muted">{state?.project.name ?? "Loading project"}</span>
-          {selectedArticle || selectedJob ? (
+          <button
+            type="button"
+            onClick={openProjectBreadcrumb}
+            className="truncate text-ink-muted transition-colors hover:text-ink"
+          >
+            {state?.project.name ?? "Loading project"}
+          </button>
+          {breadcrumbArticleTitle ? (
             <>
               <ChevronRight className="size-3 text-ink-subtle" />
-              <span className="truncate text-ink">{selectedArticle ? selectedTitle : selectedJob?.title}</span>
+              <button
+                type="button"
+                onClick={openArticleBreadcrumb}
+                className="truncate text-ink transition-colors hover:text-ink-muted"
+              >
+                {breadcrumbArticleTitle}
+              </button>
             </>
           ) : null}
         </div>
@@ -1656,20 +1686,6 @@ function Workbench() {
               rows={3}
               className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
             />
-            <label className="mt-1.5 block text-[11px] text-ink-muted">
-              <span>After generation</span>
-              <select
-                value={postGenerationAction}
-                onChange={(event) => setPostGenerationAction(event.target.value as PostGenerationPublishingAction)}
-                className="mt-1 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none"
-                aria-label="Post-generation publishing action"
-              >
-                {POST_GENERATION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <div className="mt-1 text-[10.5px] leading-snug text-ink-subtle">
-              {describePostGenerationAction(postGenerationAction)}: {POST_GENERATION_ACTION_OPTIONS.find((option) => option.value === postGenerationAction)?.description}
-            </div>
             <div className="mt-1.5 flex gap-1">
               <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
                 <Upload className="size-3.5" /> Add
@@ -2317,8 +2333,8 @@ function SettingsPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-5xl">
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
+        <div className="w-full max-w-none">
           <SettingsSection title="Settings">
             <SettingsTextInput label="Name" value={draft.account.name} onSave={(name) => updateDraft({ account: { name } })} />
             <SettingsTextInput label="Email address" value={draft.account.email} type="email" onSave={(email) => updateDraft({ account: { email } })} />
