@@ -5,25 +5,24 @@
 ### QueueWrite Global Navigation Separation (V1)
 
 - Replaced the `OS Writer V2` top-bar brand with a `QueueWrite` global navigation trigger.
-- Added a new logo-driven global application menu for:
-  - Dashboard
-  - Projects
-  - Integrations
-  - Usage
-  - Billing
+- Reduced the QueueWrite logo menu to a minimal application menu with only:
   - Account Settings
-  - Sign Out
-- Kept telemetry, help, and changelog visible in the global menu as disabled `Coming soon` entries so application-level navigation can scale without reloading the project switcher.
+  - Billing
+  - Help
+  - Changelog
+- Removed menu headers, helper copy, secondary right-side labels, and all non-requested actions from the global menu.
+- Kept `Help` and `Changelog` visible as greyed-out items.
 - Simplified the project dropdown so it now focuses on project switching only:
   - project list
   - current project indicator
   - create project
-- Removed project management and workspace settings actions from the project dropdown.
+- Removed the old right-side `Open` labels from project rows and restored compact per-project settings and delete icon controls.
 - Added a dedicated `Project Settings` button to the project dashboard header so project-scoped management remains accessible outside the switcher.
 - Preserved clickable breadcrumbs for fast movement between the project dashboard and the currently selected article.
 - Adjusted the first pass after UI review so the header project name is breadcrumb-only again, while the pure project switcher lives in the left sidebar where users expect it.
 - Raised the sidebar project switcher layering so the menu opens above dashboard content instead of behind center-pane elements.
 - Flattened the sidebar project switcher presentation by removing the nested inner list container around project rows.
+- Added a light divider between the project list and `Create Project` to keep the footer action visually separate.
 - Raised the header layer so the QueueWrite logo menu can open reliably above the workspace surfaces again.
 - Updated the app metadata title to `QueueWrite` to match the new global navigation label.
 

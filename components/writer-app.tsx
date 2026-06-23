@@ -1476,19 +1476,11 @@ function Workbench() {
             </button>
             {globalMenuOpen && (
               <GlobalMenu
-                onOpenDashboard={openProjectBreadcrumb}
-                onOpenProjects={openProjectSwitcher}
-                onOpenIntegrations={openWorkspaceSettings}
-                onOpenUsage={() => {
-                  setGlobalMenuOpen(false);
-                  window.location.href = "/settings/billing#usage";
-                }}
                 onOpenBilling={() => {
                   setGlobalMenuOpen(false);
                   window.location.href = "/settings/billing";
                 }}
                 onOpenAccountSettings={openWorkspaceSettings}
-                onSignOut={() => void signOut()}
               />
             )}
           </div>
@@ -1640,6 +1632,13 @@ function Workbench() {
                     currentProjectId={state?.project.id ?? ""}
                     projects={projects}
                     onSwitch={switchProject}
+                    onProjectSettings={(projectId) => {
+                      setSelectedArticleId(null);
+                      setSettingsOpen(false);
+                      setProjectSettingsProjectId(projectId);
+                      setProjectMenuOpen(false);
+                    }}
+                    onDelete={deleteProject}
                     onNew={createProject}
                   />
                 )}
@@ -3350,11 +3349,15 @@ function ProjectMenu({
   currentProjectId,
   projects,
   onSwitch,
+  onProjectSettings,
+  onDelete,
   onNew
 }: {
   currentProjectId: string;
   projects: ProjectDocument[];
   onSwitch: (projectId: string) => void;
+  onProjectSettings: (projectId: string) => void;
+  onDelete: (projectId?: string) => void;
   onNew: () => void;
 }) {
   return (
@@ -3365,27 +3368,51 @@ function ProjectMenu({
       {projects.length > 0 && (
         <div className="my-1 max-h-56 overflow-auto">
           {projects.map((project) => (
-            <button
+            <div
               key={project.id}
-              type="button"
-              onClick={() => onSwitch(project.id)}
-              disabled={project.id === currentProjectId}
               className={cn(
-                "flex h-9 w-full items-center justify-between gap-3 rounded-md px-2 text-left text-[12px]",
+                "group flex h-9 items-center gap-1 rounded-md px-2",
                 project.id === currentProjectId
                   ? "bg-surface-2 shadow-sm"
-                  : "hover:bg-surface-3",
-                project.id === currentProjectId && "cursor-default"
+                  : "hover:bg-surface-3"
               )}
             >
-              <span className="truncate text-ink">{project.name}</span>
-              <span className={cn(
-                "mono shrink-0 text-[10.5px]",
-                project.id === currentProjectId ? "text-ink" : "text-ink-subtle"
-              )}>
-                {project.id === currentProjectId ? "Current" : "Open"}
-              </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onSwitch(project.id)}
+                disabled={project.id === currentProjectId}
+                className="flex min-w-0 flex-1 items-center text-left text-[12px] text-ink disabled:cursor-default"
+              >
+                <span className="truncate">{project.name}</span>
+              </button>
+              {project.id === currentProjectId ? <span className="mono shrink-0 text-[10.5px] text-ink">Current</span> : null}
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onProjectSettings(project.id);
+                }}
+                className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-surface-3 hover:text-ink group-hover:opacity-100"
+                title={`Edit ${project.name} project settings`}
+                aria-label={`Edit ${project.name} project settings`}
+              >
+                <Settings className="size-3" />
+              </button>
+              {project.id !== "default" && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete(project.id);
+                  }}
+                  className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                  title={`Delete ${project.name}`}
+                  aria-label={`Delete ${project.name}`}
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -3396,39 +3423,18 @@ function ProjectMenu({
 }
 
 function GlobalMenu({
-  onOpenDashboard,
-  onOpenProjects,
-  onOpenIntegrations,
-  onOpenUsage,
   onOpenBilling,
-  onOpenAccountSettings,
-  onSignOut
+  onOpenAccountSettings
 }: {
-  onOpenDashboard: () => void;
-  onOpenProjects: () => void;
-  onOpenIntegrations: () => void;
-  onOpenUsage: () => void;
   onOpenBilling: () => void;
   onOpenAccountSettings: () => void;
-  onSignOut: () => void;
 }) {
   return (
-    <div className="absolute left-0 top-10 z-[70] w-[260px] rounded-md border border-line bg-surface-1 p-2 shadow-2xl">
-      <div className="px-2 pb-2 pt-1">
-        <div className="text-[13px] font-semibold text-ink">QueueWrite</div>
-        <div className="mono mt-1 text-[10.5px] text-ink-subtle">Global application navigation</div>
-      </div>
-      <GlobalMenuAction label="Dashboard" detail="Workspace home" onClick={onOpenDashboard} />
-      <GlobalMenuAction label="Projects" detail="Switch project" onClick={onOpenProjects} />
-      <GlobalMenuAction label="Integrations" detail="Global settings" onClick={onOpenIntegrations} />
-      <GlobalMenuAction label="Usage" detail="Limits and usage" onClick={onOpenUsage} />
-      <GlobalMenuAction label="Telemetry" detail="Coming soon" disabled />
-      <GlobalMenuAction label="Billing" detail="Plans and billing" onClick={onOpenBilling} />
-      <GlobalMenuAction label="Account Settings" detail="Workspace preferences" onClick={onOpenAccountSettings} />
-      <GlobalMenuAction label="Help" detail="Coming soon" disabled />
-      <GlobalMenuAction label="Changelog" detail="Coming soon" disabled />
-      <div className="my-1 h-px bg-line" />
-      <GlobalMenuAction label="Sign Out" detail="Lock workspace" onClick={onSignOut} danger />
+    <div className="absolute left-0 top-10 z-[70] w-[220px] rounded-md border border-line bg-surface-1 p-1.5 shadow-2xl">
+      <GlobalMenuAction label="Account Settings" onClick={onOpenAccountSettings} />
+      <GlobalMenuAction label="Billing" onClick={onOpenBilling} />
+      <GlobalMenuAction label="Help" disabled />
+      <GlobalMenuAction label="Changelog" disabled />
     </div>
   );
 }
@@ -3442,19 +3448,18 @@ function ProjectMenuAction({ label, detail, onClick, danger = false, disabled = 
   );
 }
 
-function GlobalMenuAction({ label, detail, onClick, danger = false, disabled = false }: { label: string; detail: string; onClick?: () => void; danger?: boolean; disabled?: boolean }) {
+function GlobalMenuAction({ label, onClick, disabled = false }: { label: string; onClick?: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50",
-        danger ? "text-danger" : "text-ink"
+        "flex h-9 w-full items-center rounded-md px-2 text-left text-[13px] hover:bg-surface-3 disabled:cursor-not-allowed",
+        disabled ? "text-ink-subtle" : "text-ink"
       )}
     >
       <span>{label}</span>
-      <span className="mono text-[10.5px] text-ink-subtle">{detail}</span>
     </button>
   );
 }
