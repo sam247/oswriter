@@ -1403,6 +1403,14 @@ function Workbench() {
     setTab("project");
   }
 
+  function openProjectSwitcher() {
+    setGlobalMenuOpen(false);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(null);
+    setShowLeftPane(true);
+    setProjectMenuOpen(true);
+  }
+
   function openCurrentProjectSettings() {
     if (!state?.project.id) return;
     setSelectedArticleId(null);
@@ -1469,10 +1477,7 @@ function Workbench() {
             {globalMenuOpen && (
               <GlobalMenu
                 onOpenDashboard={openProjectBreadcrumb}
-                onOpenProjects={() => {
-                  setGlobalMenuOpen(false);
-                  setProjectMenuOpen(true);
-                }}
+                onOpenProjects={openProjectSwitcher}
                 onOpenIntegrations={openWorkspaceSettings}
                 onOpenUsage={() => {
                   setGlobalMenuOpen(false);
@@ -1487,32 +1492,14 @@ function Workbench() {
               />
             )}
           </div>
-          <div ref={projectMenuRef} className="relative min-w-0 shrink">
-            <button
-              type="button"
-              onClick={() => {
-                setProjectMenuOpen((open) => !open);
-                setGlobalMenuOpen(false);
-              }}
-              className={cn(
-                "flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-surface-3",
-                projectMenuOpen && "bg-surface-3"
-              )}
-              aria-expanded={projectMenuOpen}
-              aria-haspopup="menu"
-            >
-              <span className="truncate font-medium text-ink">{state?.project.name ?? "Loading project"}</span>
-              <ChevronDown className={cn("size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
-            </button>
-            {projectMenuOpen && (
-              <ProjectMenu
-                currentProjectId={state?.project.id ?? ""}
-                projects={projects}
-                onSwitch={switchProject}
-                onNew={createProject}
-              />
-            )}
-          </div>
+          <ChevronRight className="size-3 text-ink-subtle" />
+          <button
+            type="button"
+            onClick={openProjectBreadcrumb}
+            className="truncate text-ink-muted transition-colors hover:text-ink"
+          >
+            {state?.project.name ?? "Loading project"}
+          </button>
           {breadcrumbArticleTitle ? (
             <>
               <ChevronRight className="size-3 text-ink-subtle" />
@@ -1622,11 +1609,23 @@ function Workbench() {
         !showLeftPane && showRightPane && "grid-cols-[minmax(460px,1fr)_380px]",
         !showLeftPane && !showRightPane && "grid-cols-1"
       )}>
-        {showLeftPane && <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
+        {showLeftPane && <aside className="hairline-r relative z-20 flex min-h-0 flex-col overflow-visible bg-surface-2 text-[13px]">
           <div className="hairline-b px-3 pb-3 pt-3">
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5">
+              <div ref={projectMenuRef} className="relative min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProjectMenuOpen((open) => !open);
+                    setGlobalMenuOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-surface-3",
+                    projectMenuOpen && "bg-surface-3"
+                  )}
+                  aria-expanded={projectMenuOpen}
+                  aria-haspopup="menu"
+                >
                   <span className="grid size-7 shrink-0 place-items-center rounded-md bg-ink text-white">
                     <PanelLeft className="size-3.5" />
                   </span>
@@ -1634,7 +1633,16 @@ function Workbench() {
                     <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
                     <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{projectSummary?.articleCount ?? articles.length} articles · {stats.queued + stats.processing} active</span>
                   </span>
-                </div>
+                  <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
+                </button>
+                {projectMenuOpen && (
+                  <ProjectMenu
+                    currentProjectId={state?.project.id ?? ""}
+                    projects={projects}
+                    onSwitch={switchProject}
+                    onNew={createProject}
+                  />
+                )}
               </div>
               <ProjectExportMenu summary={projectSummary} />
             </div>
@@ -3350,7 +3358,7 @@ function ProjectMenu({
   onNew: () => void;
 }) {
   return (
-    <div className="absolute left-0 top-10 z-30 w-[280px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
+    <div className="absolute left-0 top-10 z-[70] w-[280px] rounded-md border border-line bg-surface-1 p-2 shadow-2xl">
       <div className="px-2 pb-2 pt-1">
         <div className="text-[13px] font-semibold text-ink">Projects</div>
         <div className="mono mt-1 text-[10.5px] text-ink-subtle">Switch project context only.</div>
@@ -3406,7 +3414,7 @@ function GlobalMenu({
   onSignOut: () => void;
 }) {
   return (
-    <div className="absolute left-0 top-10 z-30 w-[260px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
+    <div className="absolute left-0 top-10 z-[70] w-[260px] rounded-md border border-line bg-surface-1 p-2 shadow-2xl">
       <div className="px-2 pb-2 pt-1">
         <div className="text-[13px] font-semibold text-ink">QueueWrite</div>
         <div className="mono mt-1 text-[10.5px] text-ink-subtle">Global application navigation</div>

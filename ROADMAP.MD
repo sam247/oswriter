@@ -22,6 +22,8 @@
 - Removed project management and workspace settings actions from the project dropdown.
 - Added a dedicated `Project Settings` button to the project dashboard header so project-scoped management remains accessible outside the switcher.
 - Preserved clickable breadcrumbs for fast movement between the project dashboard and the currently selected article.
+- Adjusted the first pass after UI review so the header project name is breadcrumb-only again, while the pure project switcher lives in the left sidebar where users expect it.
+- Raised the sidebar project switcher layering so the menu opens above dashboard content instead of behind center-pane elements.
 - Updated the app metadata title to `QueueWrite` to match the new global navigation label.
 
 ### Harper Grammar And Writing Assistant Integration (Phase 1)
