@@ -2,6 +2,12 @@
 
 ## Completed
 
+### Navigation Polish Recovery
+
+- Restored the `52cbe6d` menu/header UI state in `writer-app.tsx` after later changes replaced the approved design.
+- Reintroduced `Sign Out` in the global menu as a separate danger action below a muted divider.
+- Restored the project dropdown refinement that removes the `Current` row label and keeps divider contrast quieter for better hierarchy.
+
 ### Harper Grammar And Writing Assistant Integration (Phase 1)
 
 - Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.

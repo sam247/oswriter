@@ -10,14 +10,14 @@ import { HarperSuggestionPanel } from "@/components/editor/HarperSuggestionPanel
 import { RichTextHighlights } from "@/components/editor/RichTextHighlights";
 import { TextareaHighlightOverlay } from "@/components/editor/TextareaHighlightOverlay";
 import { useHarperSuggestions } from "@/components/editor/useHarperSuggestions";
-import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
+import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -29,7 +29,7 @@ type InspectorTab = "project" | "pipeline" | "research" | "validation" | "writin
 type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
-type InventorySortKey = "quality" | "research" | "evidence" | "words" | "updated";
+type InventorySortKey = "quality" | "research" | "evidence" | "updated";
 type SortDirection = "asc" | "desc";
 type WorkspacePreferencePatch = {
   account?: Partial<WorkspacePreferencesDocument["account"]>;
@@ -45,6 +45,56 @@ type WordPressConnectionDraft = {
   defaultPostStatus: WordPressPostStatus;
   defaultCategory: string;
 };
+type BulkPublishingAction = "publish_draft" | "publish_now" | "schedule";
+type BulkPublishingProgress = {
+  action: BulkPublishingAction;
+  completed: number;
+  total: number;
+  failed: number;
+};
+type ScheduleFormState = {
+  date: string;
+  time: string;
+  pattern: PublishingSchedulePattern;
+  customIntervalValue: number;
+  customIntervalUnit: PublishingScheduleIntervalUnit;
+};
+const POST_GENERATION_ACTION_OPTIONS: Array<{
+  value: PostGenerationPublishingAction;
+  label: string;
+  description: string;
+}> = [
+  { value: "generate_only", label: "Generate Only", description: "Keep new articles as Not Published after generation." },
+  { value: "publish_draft", label: "Generate + Publish Draft", description: "Send completed articles to WordPress as drafts." },
+  { value: "publish_live", label: "Generate + Publish Now", description: "Publish completed articles to WordPress immediately." }
+];
+const BULK_PUBLISHING_ACTION_OPTIONS: Array<{ value: BulkPublishingAction; label: string }> = [
+  { value: "publish_draft", label: "Publish Draft" },
+  { value: "publish_now", label: "Publish Now" },
+  { value: "schedule", label: "Schedule" }
+];
+const SCHEDULE_PATTERN_OPTIONS: Array<{ value: PublishingSchedulePattern; label: string }> = [
+  { value: "all_at_once", label: "Publish all at once" },
+  { value: "one_per_day", label: "One article per day" },
+  { value: "two_per_week", label: "Two articles per week" },
+  { value: "custom_interval", label: "Custom interval" }
+];
+const SCHEDULE_INTERVAL_UNIT_OPTIONS: Array<{ value: PublishingScheduleIntervalUnit; label: string }> = [
+  { value: "hours", label: "Hours" },
+  { value: "days", label: "Days" },
+  { value: "weeks", label: "Weeks" }
+];
+
+function createDefaultScheduleForm(): ScheduleFormState {
+  const start = new Date(Date.now() + 60 * 60 * 1000);
+  return {
+    date: start.toISOString().slice(0, 10),
+    time: start.toTimeString().slice(0, 5),
+    pattern: "all_at_once",
+    customIntervalValue: 1,
+    customIntervalUnit: "days"
+  };
+}
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -96,7 +146,7 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
     <main className="grid min-h-screen place-items-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-lg border border-line bg-surface-1 p-5 shadow-sm">
         <div className="mb-4">
-          <h1 className="text-lg font-semibold tracking-tight text-ink">OS Writer</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-ink">QueueWrite</h1>
           <p className="mt-1 text-sm text-ink-muted">Enter the workspace password to open the production queue.</p>
         </div>
         <input
@@ -118,18 +168,23 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
 function Workbench() {
   const [state, setState] = useState<AppState | null>(null);
   const [titles, setTitles] = useState("");
-  const [newTitlesContentProfile, setNewTitlesContentProfile] = useState<ContentProfile | "">("");
+  const [postGenerationAction, setPostGenerationAction] = useState<PostGenerationPublishingAction>("generate_only");
+  const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
+  const [selectedInventoryArticleIds, setSelectedInventoryArticleIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<BulkPublishingAction>("publish_draft");
+  const [bulkProgress, setBulkProgress] = useState<BulkPublishingProgress | null>(null);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() => createDefaultScheduleForm());
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("queue");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("Ready");
+  const [message, setMessage] = useState("Idle");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
-  const [harperReport, setHarperReport] = useState<HarperTelemetryReport | null>(null);
   const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [pinnedArticleIds, setPinnedArticleIds] = useState<Set<string>>(new Set());
@@ -138,6 +193,7 @@ function Workbench() {
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [globalMenuOpen, setGlobalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
@@ -161,7 +217,9 @@ function Workbench() {
   const activeRequest = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const richEditorRef = useRef<HTMLDivElement | null>(null);
+  const globalMenuRef = useRef<HTMLDivElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
+  const generateMenuRef = useRef<HTMLDivElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const saveRevisionRef = useRef(0);
   const warningsRef = useRef<HTMLDivElement | null>(null);
@@ -183,17 +241,17 @@ function Workbench() {
     () => jobs.find((job) => job.articleId === selectedArticleId || job.id === selectedArticle?.jobId) ?? null,
     [jobs, selectedArticle?.jobId, selectedArticleId]
   );
+  const breadcrumbArticleId = selectedArticle?.id ?? selectedJob?.articleId ?? null;
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
+  const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? null;
   const handleSelectedMarkdownChange = useCallback((markdown: string) => {
     if (!selectedArticle) return;
     updateArticleDraft(selectedArticle.id, { markdown });
   }, [selectedArticle, updateArticleDraft]);
   const harper = useHarperSuggestions({
     articleId: selectedArticle?.id ?? null,
-    contentProfile: resolveContentProfile(selectedArticle?.contentProfile, state?.project.defaultContentProfile) ?? null,
     markdown: selectedMarkdown,
-    project: state?.project ?? null,
     viewMode: articleViewMode,
     textareaRef: editorRef,
     richEditorRef,
@@ -335,6 +393,15 @@ function Workbench() {
   }, [selectedArticleId, tab]);
 
   useEffect(() => {
+    setSelectedInventoryArticleIds((current) => {
+      if (!current.size) return current;
+      const allowed = new Set(inventoryArticles.map((article) => article.id));
+      const next = new Set([...current].filter((id) => allowed.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [inventoryArticles]);
+
+  useEffect(() => {
     if (selectedArticleId && settingsOpen) setSettingsOpen(false);
     if (selectedArticleId && projectSettingsProjectId) setProjectSettingsProjectId(null);
   }, [selectedArticleId, settingsOpen, projectSettingsProjectId]);
@@ -348,20 +415,6 @@ function Workbench() {
       .then((res) => res.ok ? res.json() : null)
       .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
   }, [state?.project.id]);
-
-  useEffect(() => {
-    const projectId = state?.project.id;
-    if (!projectId || tab !== "writing" || !selectedArticle) {
-      if (!projectId) setHarperReport(null);
-      return;
-    }
-    const controller = new AbortController();
-    void fetch("/api/analytics/harper", { cache: "no-store", signal: controller.signal })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data: HarperTelemetryReport | null) => setHarperReport(data))
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [harper.suggestions.length, selectedArticle, state?.project.id, tab]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -384,12 +437,25 @@ function Workbench() {
       }
       if (event.key === "Escape") {
         setGlobalSearchOpen(false);
+        setGlobalMenuOpen(false);
         setProjectMenuOpen(false);
+        setGenerateMenuOpen(false);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!globalMenuOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && globalMenuRef.current?.contains(target)) return;
+      setGlobalMenuOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [globalMenuOpen]);
 
   useEffect(() => {
     if (!projectMenuOpen) return;
@@ -401,6 +467,17 @@ function Workbench() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!generateMenuOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && generateMenuRef.current?.contains(target)) return;
+      setGenerateMenuOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [generateMenuOpen]);
 
   useEffect(() => {
     if (!globalSearchOpen) return;
@@ -449,12 +526,39 @@ function Workbench() {
     return () => controller.abort();
   }, [selectedArticleId, articles.some((article) => article.id === selectedArticleId)]);
 
+  function applyUpdatedArticle(updated: ArticleDocument) {
+    setSelectedArticle((current) => current?.id === updated.id ? updated : current);
+    setState((current) => current ? {
+      ...current,
+      articles: current.articles.map((article) => article.id === updated.id ? toArticleSummary(updated) : article)
+    } : current);
+  }
+
+  function toggleInventoryArticleSelection(articleId: string) {
+    setSelectedInventoryArticleIds((current) => {
+      const next = new Set(current);
+      if (next.has(articleId)) next.delete(articleId);
+      else next.add(articleId);
+      return next;
+    });
+  }
+
+  function toggleAllInventoryArticleSelections(articleIds: string[]) {
+    setSelectedInventoryArticleIds((current) => {
+      const allSelected = articleIds.length > 0 && articleIds.every((articleId) => current.has(articleId));
+      return allSelected ? new Set() : new Set(articleIds);
+    });
+  }
+
   async function addTitles() {
     setBusy(true);
     const res = await fetch("/api/jobs/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ titles: titles.split("\n"), contentProfile: newTitlesContentProfile || undefined })
+      body: JSON.stringify({
+        titles: titles.split("\n"),
+        postGenerationAction
+      })
     });
     const data = await res.json().catch(() => ({})) as { state?: AppState; jobs?: QueueJob[]; error?: string };
     setBusy(false);
@@ -766,12 +870,106 @@ function Workbench() {
       setMessage(data.error ?? "WordPress publish failed.");
       return false;
     }
-    setSelectedArticle(data.article);
-    setState((current) => current ? {
-      ...current,
-      articles: current.articles.map((article) => article.id === data.article?.id ? toArticleSummary(data.article) : article)
-    } : current);
+    applyUpdatedArticle(data.article);
     setMessage(data.message ?? (status === "draft" ? "Draft published successfully" : "Article published successfully"));
+    return true;
+  }
+
+  async function runBulkPublishingAction() {
+    const articleIds = [...selectedInventoryArticleIds];
+    if (!articleIds.length) {
+      setMessage("Select at least one article.");
+      return false;
+    }
+    if (bulkAction === "schedule") {
+      setScheduleForm(createDefaultScheduleForm());
+      setScheduleModalOpen(true);
+      return true;
+    }
+    setBusy(true);
+    setBulkProgress({ action: bulkAction, completed: 0, total: articleIds.length, failed: 0 });
+    const status: WordPressPostStatus = bulkAction === "publish_now" ? "publish" : "draft";
+    let completed = 0;
+    let failed = 0;
+    for (const articleId of articleIds) {
+      const res = await fetch(`/api/articles/${articleId}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+      const data = await res.json().catch(() => ({})) as { article?: ArticleDocument };
+      if (res.ok && data.article) {
+        applyUpdatedArticle(data.article);
+      } else {
+        failed += 1;
+      }
+      completed += 1;
+      setBulkProgress({ action: bulkAction, completed, total: articleIds.length, failed });
+    }
+    setBusy(false);
+    setSelectedInventoryArticleIds(new Set());
+    setMessage(failed
+      ? `${completed - failed} article${completed - failed === 1 ? "" : "s"} completed, ${failed} failed.`
+      : `${completed} article${completed === 1 ? "" : "s"} ${bulkAction === "publish_now" ? "published now" : "published as drafts"}.`);
+    if (failed) await refresh();
+    return failed === 0;
+  }
+
+  async function confirmBulkSchedule() {
+    const articleIds = [...selectedInventoryArticleIds];
+    if (!articleIds.length) {
+      setScheduleModalOpen(false);
+      setMessage("Select at least one article.");
+      return false;
+    }
+    if (!scheduleForm.date || !scheduleForm.time) {
+      setMessage("Choose a schedule date and time.");
+      return false;
+    }
+    const startAt = new Date(`${scheduleForm.date}T${scheduleForm.time}`);
+    if (Number.isNaN(startAt.getTime())) {
+      setMessage("Enter a valid schedule date and time.");
+      return false;
+    }
+
+    setBusy(true);
+    setBulkProgress({ action: "schedule", completed: 0, total: articleIds.length, failed: 0 });
+    const res = await fetch("/api/articles/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        articleIds,
+        action: "schedule",
+        schedule: {
+          startAt: startAt.toISOString(),
+          pattern: scheduleForm.pattern,
+          customIntervalValue: scheduleForm.pattern === "custom_interval" ? scheduleForm.customIntervalValue : undefined,
+          customIntervalUnit: scheduleForm.pattern === "custom_interval" ? scheduleForm.customIntervalUnit : undefined
+        }
+      })
+    });
+    const data = await res.json().catch(() => ({})) as {
+      updatedArticles?: ArticleDocument[];
+      failed?: Array<{ articleId: string; error: string }>;
+      message?: string;
+      error?: string;
+    };
+    setBusy(false);
+    if (!res.ok) {
+      setMessage(data.error ?? "Bulk scheduling failed.");
+      await refresh();
+      return false;
+    }
+    (data.updatedArticles ?? []).forEach((article) => applyUpdatedArticle(article));
+    setSelectedInventoryArticleIds(new Set());
+    setBulkProgress({
+      action: "schedule",
+      completed: articleIds.length,
+      total: articleIds.length,
+      failed: data.failed?.length ?? 0
+    });
+    setScheduleModalOpen(false);
+    setMessage(data.message ?? `Scheduled ${articleIds.length} article${articleIds.length === 1 ? "" : "s"}.`);
     return true;
   }
 
@@ -1176,6 +1374,59 @@ function Workbench() {
     setGlobalSearchQuery("");
   }
 
+  function openProjectBreadcrumb() {
+    setSelectedArticleId(null);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(null);
+    setTab("project");
+  }
+
+  function openArticleBreadcrumb() {
+    if (!breadcrumbArticleId) return;
+    setSelectedArticleId(breadcrumbArticleId);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(null);
+    setSidebarTab(selectedArticle ? "articles" : "queue");
+    setTab("project");
+  }
+
+  function openWorkspaceSettings() {
+    setSelectedArticleId(null);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
+    setProjectSettingsProjectId(null);
+    setSettingsOpen(true);
+    setTab("project");
+  }
+
+  function openProjectSwitcher() {
+    setGlobalMenuOpen(false);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(null);
+    setShowLeftPane(true);
+    setProjectMenuOpen(true);
+  }
+
+  function openCurrentProjectSettings() {
+    if (!state?.project.id) return;
+    setSelectedArticleId(null);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(state.project.id);
+    setTab("project");
+  }
+
+  async function signOut() {
+    setGlobalMenuOpen(false);
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    window.location.reload();
+  }
+
   function upsertJob(job: QueueJob) {
     setState((current) => current ? {
       ...current,
@@ -1204,20 +1455,59 @@ function Workbench() {
 
   return (
     <main className="flex h-screen w-screen flex-col overflow-hidden bg-background text-ink">
-      <header className="hairline-b flex h-10 select-none items-center bg-surface-2/85 px-3 backdrop-blur">
+      <header className="hairline-b relative z-30 flex h-10 select-none items-center overflow-visible bg-surface-2/85 px-3 backdrop-blur">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px]">
-          <span className="font-semibold tracking-tight text-ink">OS Writer V2</span>
+          <div ref={globalMenuRef} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setGlobalMenuOpen((open) => !open);
+                setProjectMenuOpen(false);
+              }}
+              className={cn(
+                "flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-surface-3",
+                globalMenuOpen && "bg-surface-3"
+              )}
+              aria-expanded={globalMenuOpen}
+              aria-haspopup="menu"
+            >
+              <span className="grid size-5 place-items-center rounded bg-ink text-[10px] font-semibold text-white">QW</span>
+              <span className="font-semibold tracking-tight text-ink">QueueWrite</span>
+            </button>
+            {globalMenuOpen && (
+              <GlobalMenu
+                onOpenBilling={() => {
+                  setGlobalMenuOpen(false);
+                  window.location.href = "/settings/billing";
+                }}
+                onOpenAccountSettings={openWorkspaceSettings}
+                onSignOut={() => void signOut()}
+              />
+            )}
+          </div>
           <ChevronRight className="size-3 text-ink-subtle" />
-          <span className="truncate text-ink-muted">{state?.project.name ?? "Loading project"}</span>
-          {selectedArticle || selectedJob ? (
+          <button
+            type="button"
+            onClick={openProjectBreadcrumb}
+            className="truncate text-ink-muted transition-colors hover:text-ink"
+          >
+            {state?.project.name ?? "Loading project"}
+          </button>
+          {breadcrumbArticleTitle ? (
             <>
               <ChevronRight className="size-3 text-ink-subtle" />
-              <span className="truncate text-ink">{selectedArticle ? selectedTitle : selectedJob?.title}</span>
+              <button
+                type="button"
+                onClick={openArticleBreadcrumb}
+                className="truncate text-ink transition-colors hover:text-ink-muted"
+              >
+                {breadcrumbArticleTitle}
+              </button>
             </>
           ) : null}
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
+          <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 w-[7.5rem] items-center justify-between gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
             <Search className="size-3.5" />
             <span>Search</span>
             <span className="mono rounded bg-surface-3 px-1 py-0.5 text-[10px] text-ink-subtle">⌘K</span>
@@ -1228,17 +1518,62 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <button
-            onClick={processNext}
-            disabled={generateButton.disabled}
-            title={generateButton.title}
-            className={cn(
-              "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
-              generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+          <div ref={generateMenuRef} className="relative">
+            <div className="flex items-center">
+              <button
+                onClick={() => void processNext()}
+                disabled={generateButton.disabled}
+                title={generateButton.title}
+                className={cn(
+                  "flex h-7 items-center gap-1.5 rounded-l-md px-2.5 text-[12px] font-medium transition-colors",
+                  generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+                )}
+              >
+                <Play className="size-3 fill-current" /> {generateButton.label}
+              </button>
+              <button
+                onClick={() => setGenerateMenuOpen((open) => !open)}
+                className={cn(
+                  "grid h-7 w-7 place-items-center rounded-r-md border-l text-[12px] transition-colors",
+                  generateButton.disabled
+                    ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
+                    : "border-white/15 bg-ink text-white hover:bg-ink/90"
+                )}
+                title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
+              >
+                <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
+              </button>
+            </div>
+            {generateMenuOpen && (
+              <div className="absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
+                <div className="hairline-b px-3 py-2">
+                  <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
+                  <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
+                </div>
+                <div className="p-1.5">
+                  {POST_GENERATION_ACTION_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setPostGenerationAction(option.value);
+                        setGenerateMenuOpen(false);
+                      }}
+                      className={cn(
+                        "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
+                        postGenerationAction === option.value && "bg-surface-2"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] font-medium text-ink">{option.label}</span>
+                        {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
+                      </div>
+                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
-          >
-            <Play className="size-3 fill-current" /> {generateButton.label}
-          </button>
+          </div>
           {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
             <button
               onClick={stopRun}
@@ -1267,11 +1602,23 @@ function Workbench() {
         !showLeftPane && showRightPane && "grid-cols-[minmax(460px,1fr)_380px]",
         !showLeftPane && !showRightPane && "grid-cols-1"
       )}>
-        {showLeftPane && <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
+        {showLeftPane && <aside className="hairline-r relative z-20 flex min-h-0 flex-col overflow-visible bg-surface-2 text-[13px]">
           <div className="hairline-b px-3 pb-3 pt-3">
             <div className="flex items-start justify-between gap-3">
               <div ref={projectMenuRef} className="relative min-w-0 flex-1">
-                <button onClick={() => setProjectMenuOpen((open) => !open)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProjectMenuOpen((open) => !open);
+                    setGlobalMenuOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-surface-3",
+                    projectMenuOpen && "bg-surface-3"
+                  )}
+                  aria-expanded={projectMenuOpen}
+                  aria-haspopup="menu"
+                >
                   <span className="grid size-7 shrink-0 place-items-center rounded-md bg-ink text-white">
                     <PanelLeft className="size-3.5" />
                   </span>
@@ -1283,32 +1630,17 @@ function Workbench() {
                 </button>
                 {projectMenuOpen && (
                   <ProjectMenu
-                    projectName={state?.project.name ?? "Project"}
                     currentProjectId={state?.project.id ?? ""}
                     projects={projects}
                     onSwitch={switchProject}
-                    onOverview={() => {
-                      setSelectedArticleId(null);
-                      setSettingsOpen(false);
-                      setProjectSettingsProjectId(null);
-                      setProjectMenuOpen(false);
-                    }}
-                    onSettings={() => {
-                      setSelectedArticleId(null);
-                      setSettingsOpen(true);
-                      setProjectSettingsProjectId(null);
-                      setProjectMenuOpen(false);
-                    }}
                     onProjectSettings={(projectId) => {
                       setSelectedArticleId(null);
                       setSettingsOpen(false);
                       setProjectSettingsProjectId(projectId);
                       setProjectMenuOpen(false);
                     }}
-                    onNew={createProject}
-                    onRename={renameProject}
                     onDelete={deleteProject}
-                    queueBlockedReason={queueMutationBlockedReason}
+                    onNew={createProject}
                   />
                 )}
               </div>
@@ -1429,10 +1761,6 @@ function Workbench() {
               rows={3}
               className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
             />
-            <select value={newTitlesContentProfile} onChange={(event) => setNewTitlesContentProfile(event.target.value as ContentProfile | "")} className="mt-1.5 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none" aria-label="Content profile for new titles">
-              <option value="">Inherit project profile ({CONTENT_PROFILES[resolveContentProfile(undefined, state?.project.defaultContentProfile)].label})</option>
-              {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
             <div className="mt-1.5 flex gap-1">
               <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
                 <Upload className="size-3.5" /> Add
@@ -1441,7 +1769,7 @@ function Workbench() {
           </div>
         </aside>}
 
-        <section className="flex min-h-0 flex-col bg-background">
+        <section className={cn("flex min-h-0 flex-col bg-background", showRightPane && "border-r border-line")}>
           {projectSettingsProject && state ? (
             <ProjectSettingsPanel
               key={projectSettingsProject.id}
@@ -1479,15 +1807,12 @@ function Workbench() {
               />
               <ArticleToolbar
                 article={selectedArticle}
+                connection={state?.project.publishing?.wordpress}
+                busy={busy}
                 viewMode={articleViewMode}
                 onViewModeChange={setArticleViewMode}
                 onFormat={applyFormat}
                 onCopyAll={copySelectedArticle}
-              />
-              <ArticlePublishingBar
-                article={selectedArticle}
-                connection={state?.project.publishing?.wordpress}
-                busy={busy}
                 onConnectWordPress={() => setProjectSettingsProjectId(state?.project.id ?? null)}
                 onPublishDraft={() => void publishSelectedArticle("draft")}
                 onPublishNow={() => void publishSelectedArticle("publish")}
@@ -1514,12 +1839,21 @@ function Workbench() {
               jobs={displayJobs}
               summary={projectSummary}
               sourceCounts={articleSourceCounts}
+              selectedArticleIds={selectedInventoryArticleIds}
+              bulkAction={bulkAction}
+              bulkProgress={bulkProgress}
+              bulkBusy={busy}
               onSelectArticle={setSelectedArticleId}
+              onToggleArticleSelection={toggleInventoryArticleSelection}
+              onToggleSelectAll={toggleAllInventoryArticleSelections}
+              onBulkActionChange={setBulkAction}
+              onRunBulkAction={() => void runBulkPublishingAction()}
+              onOpenProjectSettings={openCurrentProjectSettings}
             />
           )}
         </section>
 
-        {showRightPane && <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
+        {showRightPane && <aside className="flex min-h-0 flex-col bg-surface-2">
           <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
             {(["project", "pipeline", "research", "validation", "writing", "seo", "debug"] as const).map((item) => (
               <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
@@ -1544,7 +1878,6 @@ function Workbench() {
             setSelectedStage={setSelectedStage}
             warningsRef={warningsRef}
             highlightWarnings={highlightWarnings}
-            harperReport={harperReport}
             harper={harper}
           />
         </aside>}
@@ -1554,7 +1887,7 @@ function Workbench() {
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />{message}</span>
         <div className="ml-auto flex items-center gap-1">
           <UsageIndicator />
-          <button onClick={shareAccountStats} className="rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
+          <button onClick={shareAccountStats} className="rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable QueueWrite stat">
           Words {formatNumber(accountStats.words)} · Sources {formatNumber(accountStats.sources)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
           </button>
         </div>
@@ -1594,6 +1927,16 @@ function Workbench() {
           })}
           onSelectAll={() => setSelectedSimilarTitles((current) => current.size === similarTitles.length ? new Set() : new Set(similarTitles))}
           onSubmit={() => void addSimilarTitlesToQueue()}
+        />
+      )}
+      {scheduleModalOpen && (
+        <ScheduleArticlesModal
+          selectedCount={selectedInventoryArticleIds.size}
+          value={scheduleForm}
+          submitting={busy}
+          onClose={() => setScheduleModalOpen(false)}
+          onChange={(patch) => setScheduleForm((current) => ({ ...current, ...patch }))}
+          onSubmit={() => void confirmBulkSchedule()}
         />
       )}
     </main>
@@ -1717,6 +2060,101 @@ function SimilarTitlesModal({ article, titles, selected, loading, submitting, er
   );
 }
 
+function ScheduleArticlesModal({
+  selectedCount,
+  value,
+  submitting,
+  onClose,
+  onChange,
+  onSubmit
+}: {
+  selectedCount: number;
+  value: ScheduleFormState;
+  submitting: boolean;
+  onClose: () => void;
+  onChange: (patch: Partial<ScheduleFormState>) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/20 px-4 pt-[10vh] backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="mx-auto w-full max-w-xl overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="hairline-b px-4 py-3">
+          <div className="text-[15px] font-semibold text-ink">Schedule Articles</div>
+          <div className="mono mt-1 text-[10.5px] text-ink-subtle">Selected Articles: {selectedCount}</div>
+        </div>
+        <div className="space-y-4 p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-ink-muted">Date</span>
+              <input
+                type="date"
+                value={value.date}
+                onChange={(event) => onChange({ date: event.currentTarget.value })}
+                className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-ink-muted">Time</span>
+              <input
+                type="time"
+                value={value.time}
+                onChange={(event) => onChange({ time: event.currentTarget.value })}
+                className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+              />
+            </label>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium text-ink-muted">Publishing Pattern</div>
+            <div className="space-y-2 rounded-md border border-line bg-surface-2 p-3">
+              {SCHEDULE_PATTERN_OPTIONS.map((option) => (
+                <label key={option.value} className="flex cursor-pointer items-center gap-2 text-[12px] text-ink">
+                  <input
+                    type="radio"
+                    name="schedule-pattern"
+                    checked={value.pattern === option.value}
+                    onChange={() => onChange({ pattern: option.value })}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          {value.pattern === "custom_interval" && (
+            <div className="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)]">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-ink-muted">Every</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={value.customIntervalValue}
+                  onChange={(event) => onChange({ customIntervalValue: Number(event.currentTarget.value) || 1 })}
+                  className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-ink-muted">Interval Unit</span>
+                <select
+                  value={value.customIntervalUnit}
+                  onChange={(event) => onChange({ customIntervalUnit: event.currentTarget.value as PublishingScheduleIntervalUnit })}
+                  className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+                >
+                  {SCHEDULE_INTERVAL_UNIT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
+          )}
+        </div>
+        <div className="hairline-t flex items-center justify-between gap-3 px-4 py-3">
+          <button onClick={onClose} disabled={submitting} className="h-8 rounded px-3 text-[12px] text-ink-muted hover:bg-surface-3 disabled:opacity-50">Cancel</button>
+          <button onClick={onSubmit} disabled={submitting || selectedCount === 0} className="flex h-8 items-center gap-1.5 rounded bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
+            {submitting && <Loader2 className="size-3.5 animate-spin" />} Schedule Articles
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GlobalSearchModal({
   query,
   onQueryChange,
@@ -1790,14 +2228,32 @@ function ProjectDashboard({
   jobs,
   summary,
   sourceCounts,
-  onSelectArticle
+  selectedArticleIds,
+  bulkAction,
+  bulkProgress,
+  bulkBusy,
+  onSelectArticle,
+  onToggleArticleSelection,
+  onToggleSelectAll,
+  onBulkActionChange,
+  onRunBulkAction,
+  onOpenProjectSettings
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
   jobs: QueueJob[];
   summary: ProjectSummary | null;
   sourceCounts: Record<string, number>;
+  selectedArticleIds: Set<string>;
+  bulkAction: BulkPublishingAction;
+  bulkProgress: BulkPublishingProgress | null;
+  bulkBusy: boolean;
   onSelectArticle: (id: string) => void;
+  onToggleArticleSelection: (id: string) => void;
+  onToggleSelectAll: (articleIds: string[]) => void;
+  onBulkActionChange: (action: BulkPublishingAction) => void;
+  onRunBulkAction: () => void;
+  onOpenProjectSettings: () => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -1807,6 +2263,9 @@ function ProjectDashboard({
     sortDirection
   );
   const contentInventory = inventoryRows;
+  const contentInventoryIds = contentInventory.map(({ article }) => article.id);
+  const allInventorySelected = contentInventoryIds.length > 0 && contentInventoryIds.every((articleId) => selectedArticleIds.has(articleId));
+  const selectedInventoryCount = selectedArticleIds.size;
   const attentionRows = inventoryRows
     .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "processing")
     .slice(0, 8);
@@ -1833,7 +2292,17 @@ function ProjectDashboard({
               </div>
             )}
           </div>
-          <ProjectExportMenu summary={summary} />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenProjectSettings}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-2 px-3 text-[12px] font-medium text-ink hover:border-line-strong hover:bg-surface-3"
+            >
+              <Settings className="size-3.5 text-ink-subtle" />
+              Project Settings
+            </button>
+            <ProjectExportMenu summary={summary} />
+          </div>
         </div>
       </div>
 
@@ -1849,7 +2318,61 @@ function ProjectDashboard({
 
           <ProjectSection title="Content inventory">
             {contentInventory.length ? (
-              <InventoryTable rows={contentInventory} sourceCounts={sourceCounts} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} />
+              <>
+                <div className="mb-3 rounded-lg border border-line bg-surface-1 px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="text-[12px] font-medium text-ink">Bulk publishing</div>
+                      <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
+                      {bulkProgress && (
+                        <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
+                          {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                          {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
+                      <input
+                        type="checkbox"
+                        checked={allInventorySelected}
+                        onChange={() => onToggleSelectAll(contentInventoryIds)}
+                      />
+                      <span>Select all</span>
+                      </label>
+                      <select
+                        value={bulkAction}
+                        onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
+                        className="h-8 min-w-36 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
+                        aria-label="Bulk publishing action"
+                      >
+                        {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                      <button
+                        onClick={onRunBulkAction}
+                        disabled={!selectedInventoryCount || bulkBusy}
+                        className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                      >
+                        {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[10.5px] text-ink-subtle">
+                    {selectedInventoryCount ? "Publish actions reuse the existing WordPress publish path. Scheduling opens a modal." : "Select one or more articles to publish or schedule."}
+                  </div>
+                </div>
+                <InventoryTable
+                  rows={contentInventory}
+                  sourceCounts={sourceCounts}
+                  selectedArticleIds={selectedArticleIds}
+                  onToggleArticleSelection={onToggleArticleSelection}
+                  onSelectArticle={onSelectArticle}
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={changeSort}
+                  selectable
+                />
+              </>
             ) : (
               <Empty text="Saved articles will appear here." />
             )}
@@ -1898,8 +2421,8 @@ function SettingsPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-5xl">
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
+        <div className="w-full max-w-none">
           <SettingsSection title="Settings">
             <SettingsTextInput label="Name" value={draft.account.name} onSave={(name) => updateDraft({ account: { name } })} />
             <SettingsTextInput label="Email address" value={draft.account.email} type="email" onSave={(email) => updateDraft({ account: { email } })} />
@@ -2071,9 +2594,9 @@ function ProjectSettingsPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-2xl">
-          <SettingsSection title="Project Settings">
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
+        <div className="w-full max-w-none space-y-2.5">
+          <CollapsibleSettingsSection title="Project Settings" defaultOpen>
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
@@ -2106,14 +2629,14 @@ function ProjectSettingsPanel({
               <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
               <button onClick={save} disabled={!dirty || Boolean(settingsBlockedReason)} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save project settings</button>
             </div>
-          </SettingsSection>
+          </CollapsibleSettingsSection>
           <KnowledgeBaseSettings
             projectId={project.id}
             knowledgeBase={project.knowledgeBase}
             disabledReason={settingsBlockedReason}
             onSave={onUpdateKnowledgeBase}
           />
-          <SettingsSection title="Publishing">
+          <CollapsibleSettingsSection title="Publishing">
             <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
               <div>
                 <div className="text-[13px] font-medium text-ink">WordPress Connection</div>
@@ -2194,10 +2717,32 @@ function ProjectSettingsPanel({
                 {wordpressBusy === "saving" ? "Saving..." : "Save Connection"}
               </button>
             </div>
-          </SettingsSection>
+          </CollapsibleSettingsSection>
         </div>
       </div>
     </div>
+  );
+}
+
+function CollapsibleSettingsSection({
+  title,
+  children,
+  defaultOpen = false
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details className="group w-full rounded-md border border-line bg-surface-1" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
+        <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
+        <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="border-t border-line px-4 pb-4 pt-3">
+        <div className="space-y-2">{children}</div>
+      </div>
+    </details>
   );
 }
 
@@ -2527,55 +3072,102 @@ function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | nu
 function InventoryTable({
   rows,
   sourceCounts,
+  selectedArticleIds,
+  onToggleArticleSelection,
   onSelectArticle,
   sortKey,
   sortDirection,
   onSort,
-  compact = false
+  compact = false,
+  selectable = false
 }: {
   rows: Array<{ article: ArticleSummary; job: QueueJob | null }>;
   sourceCounts: Record<string, number>;
+  selectedArticleIds?: Set<string>;
+  onToggleArticleSelection?: (id: string) => void;
   onSelectArticle: (id: string) => void;
   sortKey: InventorySortKey;
   sortDirection: SortDirection;
   onSort: (key: InventorySortKey) => void;
   compact?: boolean;
+  selectable?: boolean;
 }) {
+  const updatedColClass = selectable ? "w-[104px]" : "w-[88px]";
+
   return (
     <div className="overflow-hidden">
-      <div className="grid grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
-        <span>Title</span>
-        <span>Status</span>
-        <InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <span className="text-right">Src</span>
-        <InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} />
-        <InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} />
-      </div>
-      <div className="divide-y divide-line/70">
-        {rows.map(({ article, job }) => {
-          return (
-            <button
-              key={article.id}
-              onClick={() => onSelectArticle(article.id)}
-              className="grid w-full grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2"
-            >
-              <span className="min-w-0">
-                <span className="block truncate font-medium text-ink">{article.title}</span>
-                {!compact && <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">{job ? attentionSummary(article, job) ?? `Attempt ${job.attempts}` : `Updated ${relativeDate(article.updatedAt)}`}</span>}
-              </span>
-              <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.researchScore}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</span>
-              <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</span>
-            </button>
-          );
-        })}
-      </div>
+      <table className="w-full table-fixed border-collapse">
+        <colgroup>
+          {selectable && <col className="w-[32px]" />}
+          <col />
+          <col className="w-[132px]" />
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+          <col className={updatedColClass} />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-line/70 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+            {selectable && <th className="px-3 py-2 text-left"><span className="sr-only">Select</span></th>}
+            <th className="px-3 py-2 text-left">Title</th>
+            <th className="px-3 py-2 text-left">Status</th>
+            <th className="px-3 py-2 text-right">Src</th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ article, job }) => {
+            const selected = selectedArticleIds?.has(article.id) ?? false;
+            return (
+              <tr
+                key={article.id}
+                onClick={() => onSelectArticle(article.id)}
+                className={cn(
+                  "cursor-pointer border-b border-line/70 text-[12px] transition-colors hover:bg-surface-2",
+                  selected && "bg-surface-2/70"
+                )}
+              >
+                {selectable && onToggleArticleSelection && selectedArticleIds && (
+                  <td className="px-3 py-2.5" onClick={(event) => event.stopPropagation()}>
+                    <label className="flex items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => onToggleArticleSelection(article.id)}
+                        aria-label={`Select ${article.title}`}
+                      />
+                    </label>
+                  </td>
+                )}
+                <td className="px-3 py-2.5 align-middle">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-ink">{article.title}</div>
+                    {!compact && (
+                      <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">
+                        {job
+                          ? attentionSummary(article, job) ?? `Attempt ${job.attempts}`
+                          : `Updated ${relativeDate(article.updatedAt)}`}
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-2.5 align-middle">
+                  <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
+                </td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.researchScore}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</td>
+                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -2587,7 +3179,21 @@ function InventorySortHeader({ label, metric, active, direction, onSort }: {
   direction: SortDirection;
   onSort: (metric: InventorySortKey) => void;
 }) {
-  return <button onClick={() => onSort(metric)} className={cn("text-right hover:text-ink", active === metric && "text-ink")} title={`Sort by ${label}`}>{label}{active === metric ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
+  const isActive = active === metric;
+  const directionLabel = direction === "desc" ? "descending" : "ascending";
+  return (
+    <button
+      onClick={() => onSort(metric)}
+      className={cn(
+        "w-full text-right hover:text-ink",
+        isActive ? "font-bold text-ink" : "font-semibold text-ink-subtle"
+      )}
+      title={isActive ? `Sorted by ${label} (${directionLabel})` : `Sort by ${label}`}
+      aria-label={isActive ? `${label}, sorted ${directionLabel}` : `Sort by ${label}`}
+    >
+      {label}
+    </button>
+  );
 }
 
 function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob | null }>, key: InventorySortKey, direction: SortDirection) {
@@ -2603,7 +3209,6 @@ function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob 
 }
 
 function inventorySortValue(article: ArticleSummary, key: InventorySortKey) {
-  if (key === "words") return article.wordCount;
   if (key === "updated") return article.updatedAt;
   return key === "quality" ? article.qualityScore : key === "research" ? article.researchScore : article.evidenceScore;
 }
@@ -2742,57 +3347,39 @@ function ProjectSection({ title, children }: { title: string; children: React.Re
 }
 
 function ProjectMenu({
-  projectName,
   currentProjectId,
   projects,
   onSwitch,
-  onOverview,
-  onSettings,
   onProjectSettings,
-  onNew,
-  onRename,
   onDelete,
-  queueBlockedReason
+  onNew
 }: {
-  projectName: string;
   currentProjectId: string;
   projects: ProjectDocument[];
   onSwitch: (projectId: string) => void;
-  onOverview: () => void;
-  onSettings: () => void;
   onProjectSettings: (projectId: string) => void;
-  onNew: () => void;
-  onRename: () => void;
   onDelete: (projectId?: string) => void;
-  queueBlockedReason: string | null;
+  onNew: () => void;
 }) {
   return (
-    <div className="absolute left-0 top-12 z-30 w-[320px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
+    <div className="absolute left-0 top-10 z-[70] w-[280px] rounded-md border border-line bg-surface-1 p-2 shadow-2xl">
       <div className="px-2 pb-2 pt-1">
         <div className="text-[13px] font-semibold text-ink">Projects</div>
-        <div className="mono mt-1 truncate text-[10.5px] text-ink-subtle">Current workspace: {projectName}</div>
       </div>
-      <button onClick={onOverview} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
-        <span>Project overview</span>
-        <span className="mono text-[10.5px] text-ink-subtle">Open</span>
-      </button>
-      <button onClick={onSettings} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
-        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Settings</span>
-        <span className="mono text-[10.5px] text-ink-subtle">Workspace</span>
-      </button>
       {projects.length > 0 && (
-        <div className="my-1 max-h-48 overflow-auto rounded border border-line bg-background p-1">
+        <div className="my-1 max-h-56 overflow-auto">
           {projects.map((project) => (
             <div
               key={project.id}
               className={cn(
-                "group flex h-8 items-center gap-1 rounded px-2",
+                "group flex h-9 items-center gap-1 rounded-md px-2",
                 project.id === currentProjectId
-                  ? "border border-line bg-surface-2 shadow-sm"
-                  : "border border-transparent hover:bg-surface-3"
+                  ? "bg-surface-2 shadow-sm"
+                  : "hover:bg-surface-3"
               )}
             >
               <button
+                type="button"
                 onClick={() => onSwitch(project.id)}
                 disabled={project.id === currentProjectId}
                 className="flex min-w-0 flex-1 items-center text-left text-[12px] text-ink disabled:cursor-default"
@@ -2800,11 +3387,12 @@ function ProjectMenu({
                 <span className="truncate">{project.name}</span>
               </button>
               <button
+                type="button"
                 onClick={(event) => {
                   event.stopPropagation();
                   onProjectSettings(project.id);
                 }}
-                className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-surface-3 hover:text-ink group-hover:opacity-100"
+                className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-surface-3 hover:text-ink group-hover:opacity-100"
                 title={`Edit ${project.name} project settings`}
                 aria-label={`Edit ${project.name} project settings`}
               >
@@ -2812,12 +3400,14 @@ function ProjectMenu({
               </button>
               {project.id !== "default" && (
                 <button
+                  type="button"
                   onClick={(event) => {
                     event.stopPropagation();
                     onDelete(project.id);
                   }}
-                  className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                  className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
                   title={`Delete ${project.name}`}
+                  aria-label={`Delete ${project.name}`}
                 >
                   <Trash2 className="size-3" />
                 </button>
@@ -2826,10 +3416,29 @@ function ProjectMenu({
           ))}
         </div>
       )}
-      <div className="my-1 h-px bg-line" />
-      <ProjectMenuAction label="New project" detail="Create workspace" onClick={onNew} />
-      <ProjectMenuAction label="Rename project" detail="Edit name" onClick={onRename} />
-      <ProjectMenuAction label="Reset current project" detail={queueBlockedReason ? "Locked" : "Clear current"} onClick={() => onDelete()} danger disabled={Boolean(queueBlockedReason)} title={queueBlockedReason ?? "Reset current project"} />
+      <div className="my-1 h-px bg-line/70" />
+      <ProjectMenuAction label="Create Project" detail="New workspace" onClick={onNew} />
+    </div>
+  );
+}
+
+function GlobalMenu({
+  onOpenBilling,
+  onOpenAccountSettings,
+  onSignOut
+}: {
+  onOpenBilling: () => void;
+  onOpenAccountSettings: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="absolute left-0 top-10 z-[70] w-[220px] rounded-md border border-line bg-surface-1 p-1.5 shadow-2xl">
+      <GlobalMenuAction label="Account Settings" onClick={onOpenAccountSettings} />
+      <GlobalMenuAction label="Billing" onClick={onOpenBilling} />
+      <GlobalMenuAction label="Help" disabled />
+      <GlobalMenuAction label="Changelog" disabled />
+      <div className="my-1 h-px bg-line/70" />
+      <GlobalMenuAction label="Sign Out" onClick={onSignOut} danger />
     </div>
   );
 }
@@ -2839,6 +3448,22 @@ function ProjectMenuAction({ label, detail, onClick, danger = false, disabled = 
     <button onClick={onClick} disabled={disabled} title={title} className={cn("flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50", danger ? "text-danger" : "text-ink")}>
       <span>{label}</span>
       <span className="mono text-[10.5px] text-ink-subtle">{detail}</span>
+    </button>
+  );
+}
+
+function GlobalMenuAction({ label, onClick, disabled = false, danger = false }: { label: string; onClick?: () => void; disabled?: boolean; danger?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex h-9 w-full items-center rounded-md px-2 text-left text-[13px] hover:bg-surface-3 disabled:cursor-not-allowed",
+        disabled ? "text-ink-subtle" : danger ? "text-danger" : "text-ink"
+      )}
+    >
+      <span>{label}</span>
     </button>
   );
 }
@@ -3115,17 +3740,28 @@ function ArticleLibraryItem({
 
 function ArticleToolbar({
   article,
+  connection,
+  busy,
   viewMode,
   onViewModeChange,
   onFormat,
-  onCopyAll
+  onCopyAll,
+  onConnectWordPress,
+  onPublishDraft,
+  onPublishNow
 }: {
   article: ArticleDocument | null;
+  connection?: ProjectWordPressConnection;
+  busy: boolean;
   viewMode: ArticleViewMode;
   onViewModeChange: (mode: ArticleViewMode) => void;
   onFormat: (command: FormatCommand) => void;
   onCopyAll: () => void;
+  onConnectWordPress: () => void;
+  onPublishDraft: () => void;
+  onPublishNow: () => void;
 }) {
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const formatting = [
     { command: "bold" as const, icon: Bold, title: "Bold" },
     { command: "italic" as const, icon: Italic, title: "Italic" },
@@ -3136,9 +3772,63 @@ function ArticleToolbar({
     { command: "bullet" as const, icon: List, title: "Bullet list" },
     { command: "numbered" as const, icon: ListOrdered, title: "Numbered list" }
   ];
+  const connected = connection?.applicationPasswordConfigured && connection.connectionStatus === "connected";
+  const publishStatus = article ? getArticlePublishingStatus(article) : null;
+  const publishDisabled = !article || !connected || busy || publishStatus === "published";
+  const publishTitle = !article
+    ? "Select an article to publish."
+    : !connected
+      ? "Connect WordPress in Project Settings before publishing."
+      : publishStatus === "published"
+        ? "This article is already published."
+        : "Publish to WordPress";
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
+      <div className="relative">
+        <button
+          onClick={() => {
+            if (publishDisabled) {
+              if (!connected && article && !busy) onConnectWordPress();
+              return;
+            }
+            setPublishMenuOpen((open) => !open);
+          }}
+          disabled={!article || busy || publishStatus === "published"}
+          title={publishTitle}
+          className={cn(
+            "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-medium transition-colors",
+            publishDisabled
+              ? "cursor-not-allowed border-line bg-surface-3 text-ink-subtle"
+              : "border-line bg-surface-1 text-ink hover:bg-surface-3"
+          )}
+        >
+          Publish
+          <ChevronDown className={cn("size-3 transition-transform", publishMenuOpen && "rotate-180")} />
+        </button>
+        {publishMenuOpen && !publishDisabled && (
+          <div className="absolute left-0 top-8 z-30 w-40 overflow-hidden rounded-md border border-line bg-surface-1 p-1 shadow-lg">
+            <button
+              onClick={() => {
+                setPublishMenuOpen(false);
+                onPublishDraft();
+              }}
+              className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
+            >
+              Publish Draft
+            </button>
+            <button
+              onClick={() => {
+                setPublishMenuOpen(false);
+                onPublishNow();
+              }}
+              className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
+            >
+              Publish Live
+            </button>
+          </div>
+        )}
+      </div>
       <button
         onClick={onCopyAll}
         disabled={!article}
@@ -3167,68 +3857,6 @@ function ArticleToolbar({
           </button>
         ))}
       </div>
-    </div>
-  );
-}
-
-function ArticlePublishingBar({
-  article,
-  connection,
-  busy,
-  onConnectWordPress,
-  onPublishDraft,
-  onPublishNow
-}: {
-  article: ArticleDocument | null;
-  connection?: ProjectWordPressConnection;
-  busy: boolean;
-  onConnectWordPress: () => void;
-  onPublishDraft: () => void;
-  onPublishNow: () => void;
-}) {
-  if (!article) return null;
-  const publishable = article.status === "generated" || article.status === "needs_review" || Boolean(article.publishing?.wordpress);
-  if (!publishable) return null;
-  const published = article.publishing?.wordpress;
-  const connected = connection?.applicationPasswordConfigured && connection.connectionStatus === "connected";
-  return (
-    <div className="hairline-b bg-surface-2/35 px-5 py-3 lg:px-7">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-[13px] font-medium text-ink">Publishing Actions</div>
-          <div className="mt-0.5 text-[11px] text-ink-muted">
-            {connected ? "Publish directly to this project's WordPress site." : "Connect WordPress in Project Settings to publish without leaving QueueWrite."}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {connected ? (
-            <>
-              <button onClick={onPublishDraft} disabled={busy} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40">
-                Publish Draft
-              </button>
-              <button onClick={onPublishNow} disabled={busy} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
-                Publish Now
-              </button>
-            </>
-          ) : (
-            <button onClick={onConnectWordPress} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white">
-              Connect WordPress
-            </button>
-          )}
-        </div>
-      </div>
-      {published && (
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <MetricLine label="Published Status" value={published.status === "draft" ? "Draft" : "Published"} />
-          <MetricLine label="WordPress Post ID" value={published.postId} />
-          <MetricLine label="Published Date" value={formatDate(published.publishedAt)} />
-          <span className="text-ink-subtle">WordPress URL</span>
-          <a href={published.url} target="_blank" rel="noreferrer" className="flex items-center justify-end gap-1 text-right text-ink hover:underline">
-            <span className="truncate">{published.url}</span>
-            <ExternalLink className="size-3 shrink-0" />
-          </a>
-        </div>
-      )}
     </div>
   );
 }
@@ -3810,7 +4438,6 @@ function Inspector({
   setSelectedStage,
   warningsRef,
   highlightWarnings,
-  harperReport,
   harper
 }: {
   tab: InspectorTab;
@@ -3831,7 +4458,6 @@ function Inspector({
   setSelectedStage: (stage: string) => void;
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
-  harperReport: HarperTelemetryReport | null;
   harper: ReturnType<typeof useHarperSuggestions>;
 }) {
   return (
@@ -3845,7 +4471,7 @@ function Inspector({
           activeSuggestionId={harper.activeSuggestionId}
           counts={harper.counts}
           error={harper.error}
-          report={harperReport}
+          report={null}
           status={harper.status}
           suggestions={harper.suggestions}
           onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}
@@ -4661,6 +5287,24 @@ function statusLabel(status: JobStatus) {
     failed: "Failed",
     skipped: "Skipped"
   }[status];
+}
+
+function publishingStatusTone(status: PublishingWorkflowStatus) {
+  if (status === "published") return "bg-success/10 text-success";
+  if (status === "scheduled") return "bg-[#f0e4ff] text-[#6d3bb8]";
+  if (status === "draft") return "bg-[#eef2ff] text-[#4256b8]";
+  return "bg-surface-3 text-ink-subtle";
+}
+
+function publishingStatusLabel(status: PublishingWorkflowStatus) {
+  if (status === "published") return "Published";
+  if (status === "scheduled") return "Scheduled";
+  if (status === "draft") return "Draft";
+  return "Not Published";
+}
+
+function bulkActionLabel(action: BulkPublishingAction) {
+  return BULK_PUBLISHING_ACTION_OPTIONS.find((option) => option.value === action)?.label ?? action;
 }
 
 function formatMarkdown(markdown: string, start: number, end: number, command: FormatCommand) {
