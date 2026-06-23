@@ -2,35 +2,23 @@
 
 ## Completed
 
-### QueueWrite Global Navigation Separation (V1)
-
-- Replaced the `OS Writer V2` top-bar brand with a `QueueWrite` global navigation trigger.
-- Reduced the QueueWrite logo menu to a minimal application menu with only:
-  - Account Settings
-  - Billing
-  - Help
-  - Changelog
-- Reintroduced `Sign Out` in the global menu as a separate action below a muted divider line.
-- Removed menu headers, helper copy, secondary right-side labels, and all non-requested actions from the global menu.
-- Kept `Help` and `Changelog` visible as greyed-out items.
-- Simplified the project dropdown so it now focuses on project switching only:
-  - project list
-  - create project
-- Removed the old right-side `Open` labels from project rows and restored compact per-project settings and delete icon controls.
-- Removed the `Current` label from the project dropdown rows.
-- Added a dedicated `Project Settings` button to the project dashboard header so project-scoped management remains accessible outside the switcher.
-- Preserved clickable breadcrumbs for fast movement between the project dashboard and the currently selected article.
-- Adjusted the first pass after UI review so the header project name is breadcrumb-only again, while the pure project switcher lives in the left sidebar where users expect it.
-- Raised the sidebar project switcher layering so the menu opens above dashboard content instead of behind center-pane elements.
-- Flattened the sidebar project switcher presentation by removing the nested inner list container around project rows.
-- Added a muted divider between the project list and `Create Project` to keep the footer action visually separate.
-- Raised the header layer so the QueueWrite logo menu can open reliably above the workspace surfaces again.
-- Updated the app metadata title to `QueueWrite` to match the new global navigation label.
-
 ### Harper Grammar And Writing Assistant Integration (Phase 1)
 
 - Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
 - Added a resilient Harper linter bootstrap path that falls back to `LocalLinter` if the worker setup fails or hangs in the browser.
+- Added Harper telemetry and rule-effectiveness tracking for suggestion shown, accepted, and ignored events.
+- Added compact Writing Intelligence reporting with:
+  - total suggestions
+  - acceptance rate
+  - ignore rate
+  - top helpful rule
+  - top ignored rule
+- Added rule-level and content-profile Harper reporting plus noisy-rule detection for future suppression decisions.
+- Added Harper workbook exports for the telemetry spreadsheet:
+  - Harper Summary
+  - Harper Rule Metrics
+  - Harper Noisy Rules
+  - Harper Content Profiles
 - Added a new Writing inspector tab with grouped Grammar, Style, and Readability suggestion counts.
 - Added Accept and Ignore actions for Harper suggestions:
   - Accept updates the current article draft immediately
@@ -43,7 +31,6 @@
   - no provider logic changes
   - no telemetry, publishing, billing, auth, or generation workflow changes
 - Added markdown normalization coverage for Harper span mapping.
-- Restored the Harper deploy path by wiring the Writing panel to the expanded suggestion props and re-adding the missing Neon Harper telemetry schema bootstrap and aggregate helpers required by the analytics route.
 
 ### WordPress Publishing Integration (Phase 1)
 
@@ -128,13 +115,6 @@
 - Added reusable scheduling helpers and a schedule bulk endpoint so future queue automation can share the same scheduling architecture without redesigning the table.
 - Moved single-article publish controls into the editor toolbar beside `Rich`, `MD`, and `Split` as a compact `Publish` dropdown, and greyed it out after live publish to prevent repeat publishing.
 - Repositioned the single-article `Publish` dropdown into the export cluster so it sits beside `Export` as part of the publishing/export area.
-- Made the Project Settings accordion stack respond to the available centre-pane width and use one even small gap between `Project Settings`, `Knowledge Base`, and `Publishing`.
-- Removed the centred document-style width cap from Project Settings so the accordion stack now uses the actual centre-pane workspace width.
-- Removed the legacy queue-side `After generation` selector because post-generation behavior is now controlled from the main `Generate` button.
-- Removed the remaining generic settings width cap so settings cards can use the centre pane width instead of a narrower fixed content column.
-- Turned the top project/article breadcrumb labels into clickable navigation controls so users can jump back to project overview or reopen the current article context directly from the header.
-- Increased the header search trigger width so the global search control reads more clearly in the top toolbar.
-- Added a visible divider between the centre workspace and right inspector so the pane boundary stays readable against the light UI surfaces.
 - Made the Project Settings page sections collapsible with the requested defaults:
   - Project Settings expanded
   - Knowledge Base collapsed

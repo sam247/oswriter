@@ -10,6 +10,7 @@ import { HarperSuggestionPanel } from "@/components/editor/HarperSuggestionPanel
 import { RichTextHighlights } from "@/components/editor/RichTextHighlights";
 import { TextareaHighlightOverlay } from "@/components/editor/TextareaHighlightOverlay";
 import { useHarperSuggestions } from "@/components/editor/useHarperSuggestions";
+import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
@@ -146,7 +147,7 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
     <main className="grid min-h-screen place-items-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-lg border border-line bg-surface-1 p-5 shadow-sm">
         <div className="mb-4">
-          <h1 className="text-lg font-semibold tracking-tight text-ink">QueueWrite</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-ink">OS Writer</h1>
           <p className="mt-1 text-sm text-ink-muted">Enter the workspace password to open the production queue.</p>
         </div>
         <input
@@ -185,6 +186,7 @@ function Workbench() {
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
+  const [harperTelemetry, setHarperTelemetry] = useState<HarperTelemetryReport | null>(null);
   const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [pinnedArticleIds, setPinnedArticleIds] = useState<Set<string>>(new Set());
@@ -193,7 +195,6 @@ function Workbench() {
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
-  const [globalMenuOpen, setGlobalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
@@ -217,7 +218,6 @@ function Workbench() {
   const activeRequest = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const richEditorRef = useRef<HTMLDivElement | null>(null);
-  const globalMenuRef = useRef<HTMLDivElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const generateMenuRef = useRef<HTMLDivElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -241,22 +241,16 @@ function Workbench() {
     () => jobs.find((job) => job.articleId === selectedArticleId || job.id === selectedArticle?.jobId) ?? null,
     [jobs, selectedArticle?.jobId, selectedArticleId]
   );
-  const breadcrumbArticleId = selectedArticle?.id ?? selectedJob?.articleId ?? null;
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
-  const selectedProject = selectedArticle
-    ? projects.find((project) => project.id === selectedArticle.projectId) ?? state?.project ?? null
-    : state?.project ?? null;
-  const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? null;
   const handleSelectedMarkdownChange = useCallback((markdown: string) => {
     if (!selectedArticle) return;
     updateArticleDraft(selectedArticle.id, { markdown });
   }, [selectedArticle, updateArticleDraft]);
   const harper = useHarperSuggestions({
     articleId: selectedArticle?.id ?? null,
-    contentProfile: selectedArticle?.resolvedContentProfile ?? selectedArticle?.contentProfile ?? selectedProject?.defaultContentProfile ?? null,
+    contentProfile: selectedArticle?.resolvedContentProfile ?? selectedArticle?.contentProfile ?? null,
     markdown: selectedMarkdown,
-    project: selectedProject,
     viewMode: articleViewMode,
     textareaRef: editorRef,
     richEditorRef,
@@ -416,9 +410,13 @@ function Workbench() {
     if (!projectId || analyticsProjectIdRef.current === projectId) return;
     analyticsProjectIdRef.current = projectId;
     setProjectAnalytics(null);
+    setHarperTelemetry(null);
     void fetch("/api/analytics/project", { cache: "no-store" })
       .then((res) => res.ok ? res.json() : null)
       .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
+    void fetch("/api/analytics/harper", { cache: "no-store" })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: HarperTelemetryReport | null) => setHarperTelemetry(data));
   }, [state?.project.id]);
 
   useEffect(() => {
@@ -442,7 +440,6 @@ function Workbench() {
       }
       if (event.key === "Escape") {
         setGlobalSearchOpen(false);
-        setGlobalMenuOpen(false);
         setProjectMenuOpen(false);
         setGenerateMenuOpen(false);
       }
@@ -450,17 +447,6 @@ function Workbench() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-
-  useEffect(() => {
-    if (!globalMenuOpen) return;
-    function onPointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (target instanceof Node && globalMenuRef.current?.contains(target)) return;
-      setGlobalMenuOpen(false);
-    }
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [globalMenuOpen]);
 
   useEffect(() => {
     if (!projectMenuOpen) return;
@@ -1379,59 +1365,6 @@ function Workbench() {
     setGlobalSearchQuery("");
   }
 
-  function openProjectBreadcrumb() {
-    setSelectedArticleId(null);
-    setGlobalMenuOpen(false);
-    setProjectMenuOpen(false);
-    setSettingsOpen(false);
-    setProjectSettingsProjectId(null);
-    setTab("project");
-  }
-
-  function openArticleBreadcrumb() {
-    if (!breadcrumbArticleId) return;
-    setSelectedArticleId(breadcrumbArticleId);
-    setGlobalMenuOpen(false);
-    setProjectMenuOpen(false);
-    setSettingsOpen(false);
-    setProjectSettingsProjectId(null);
-    setSidebarTab(selectedArticle ? "articles" : "queue");
-    setTab("project");
-  }
-
-  function openWorkspaceSettings() {
-    setSelectedArticleId(null);
-    setGlobalMenuOpen(false);
-    setProjectMenuOpen(false);
-    setProjectSettingsProjectId(null);
-    setSettingsOpen(true);
-    setTab("project");
-  }
-
-  function openProjectSwitcher() {
-    setGlobalMenuOpen(false);
-    setSettingsOpen(false);
-    setProjectSettingsProjectId(null);
-    setShowLeftPane(true);
-    setProjectMenuOpen(true);
-  }
-
-  function openCurrentProjectSettings() {
-    if (!state?.project.id) return;
-    setSelectedArticleId(null);
-    setGlobalMenuOpen(false);
-    setProjectMenuOpen(false);
-    setSettingsOpen(false);
-    setProjectSettingsProjectId(state.project.id);
-    setTab("project");
-  }
-
-  async function signOut() {
-    setGlobalMenuOpen(false);
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
-    window.location.reload();
-  }
-
   function upsertJob(job: QueueJob) {
     setState((current) => current ? {
       ...current,
@@ -1460,59 +1393,20 @@ function Workbench() {
 
   return (
     <main className="flex h-screen w-screen flex-col overflow-hidden bg-background text-ink">
-      <header className="hairline-b relative z-30 flex h-10 select-none items-center overflow-visible bg-surface-2/85 px-3 backdrop-blur">
+      <header className="hairline-b flex h-10 select-none items-center bg-surface-2/85 px-3 backdrop-blur">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px]">
-          <div ref={globalMenuRef} className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                setGlobalMenuOpen((open) => !open);
-                setProjectMenuOpen(false);
-              }}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-surface-3",
-                globalMenuOpen && "bg-surface-3"
-              )}
-              aria-expanded={globalMenuOpen}
-              aria-haspopup="menu"
-            >
-              <span className="grid size-5 place-items-center rounded bg-ink text-[10px] font-semibold text-white">QW</span>
-              <span className="font-semibold tracking-tight text-ink">QueueWrite</span>
-            </button>
-            {globalMenuOpen && (
-              <GlobalMenu
-                onOpenBilling={() => {
-                  setGlobalMenuOpen(false);
-                  window.location.href = "/settings/billing";
-                }}
-                onOpenAccountSettings={openWorkspaceSettings}
-                onSignOut={() => void signOut()}
-              />
-            )}
-          </div>
+          <span className="font-semibold tracking-tight text-ink">OS Writer V2</span>
           <ChevronRight className="size-3 text-ink-subtle" />
-          <button
-            type="button"
-            onClick={openProjectBreadcrumb}
-            className="truncate text-ink-muted transition-colors hover:text-ink"
-          >
-            {state?.project.name ?? "Loading project"}
-          </button>
-          {breadcrumbArticleTitle ? (
+          <span className="truncate text-ink-muted">{state?.project.name ?? "Loading project"}</span>
+          {selectedArticle || selectedJob ? (
             <>
               <ChevronRight className="size-3 text-ink-subtle" />
-              <button
-                type="button"
-                onClick={openArticleBreadcrumb}
-                className="truncate text-ink transition-colors hover:text-ink-muted"
-              >
-                {breadcrumbArticleTitle}
-              </button>
+              <span className="truncate text-ink">{selectedArticle ? selectedTitle : selectedJob?.title}</span>
             </>
           ) : null}
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 w-[7.5rem] items-center justify-between gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
+          <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
             <Search className="size-3.5" />
             <span>Search</span>
             <span className="mono rounded bg-surface-3 px-1 py-0.5 text-[10px] text-ink-subtle">⌘K</span>
@@ -1607,23 +1501,11 @@ function Workbench() {
         !showLeftPane && showRightPane && "grid-cols-[minmax(460px,1fr)_380px]",
         !showLeftPane && !showRightPane && "grid-cols-1"
       )}>
-        {showLeftPane && <aside className="hairline-r relative z-20 flex min-h-0 flex-col overflow-visible bg-surface-2 text-[13px]">
+        {showLeftPane && <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
           <div className="hairline-b px-3 pb-3 pt-3">
             <div className="flex items-start justify-between gap-3">
               <div ref={projectMenuRef} className="relative min-w-0 flex-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProjectMenuOpen((open) => !open);
-                    setGlobalMenuOpen(false);
-                  }}
-                  className={cn(
-                    "flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-surface-3",
-                    projectMenuOpen && "bg-surface-3"
-                  )}
-                  aria-expanded={projectMenuOpen}
-                  aria-haspopup="menu"
-                >
+                <button onClick={() => setProjectMenuOpen((open) => !open)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-3">
                   <span className="grid size-7 shrink-0 place-items-center rounded-md bg-ink text-white">
                     <PanelLeft className="size-3.5" />
                   </span>
@@ -1635,17 +1517,32 @@ function Workbench() {
                 </button>
                 {projectMenuOpen && (
                   <ProjectMenu
+                    projectName={state?.project.name ?? "Project"}
                     currentProjectId={state?.project.id ?? ""}
                     projects={projects}
                     onSwitch={switchProject}
+                    onOverview={() => {
+                      setSelectedArticleId(null);
+                      setSettingsOpen(false);
+                      setProjectSettingsProjectId(null);
+                      setProjectMenuOpen(false);
+                    }}
+                    onSettings={() => {
+                      setSelectedArticleId(null);
+                      setSettingsOpen(true);
+                      setProjectSettingsProjectId(null);
+                      setProjectMenuOpen(false);
+                    }}
                     onProjectSettings={(projectId) => {
                       setSelectedArticleId(null);
                       setSettingsOpen(false);
                       setProjectSettingsProjectId(projectId);
                       setProjectMenuOpen(false);
                     }}
-                    onDelete={deleteProject}
                     onNew={createProject}
+                    onRename={renameProject}
+                    onDelete={deleteProject}
+                    queueBlockedReason={queueMutationBlockedReason}
                   />
                 )}
               </div>
@@ -1766,6 +1663,20 @@ function Workbench() {
               rows={3}
               className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
             />
+            <label className="mt-1.5 block text-[11px] text-ink-muted">
+              <span>After generation</span>
+              <select
+                value={postGenerationAction}
+                onChange={(event) => setPostGenerationAction(event.target.value as PostGenerationPublishingAction)}
+                className="mt-1 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none"
+                aria-label="Post-generation publishing action"
+              >
+                {POST_GENERATION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <div className="mt-1 text-[10.5px] leading-snug text-ink-subtle">
+              {describePostGenerationAction(postGenerationAction)}: {POST_GENERATION_ACTION_OPTIONS.find((option) => option.value === postGenerationAction)?.description}
+            </div>
             <div className="mt-1.5 flex gap-1">
               <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
                 <Upload className="size-3.5" /> Add
@@ -1774,7 +1685,7 @@ function Workbench() {
           </div>
         </aside>}
 
-        <section className={cn("flex min-h-0 flex-col bg-background", showRightPane && "border-r border-line")}>
+        <section className="flex min-h-0 flex-col bg-background">
           {projectSettingsProject && state ? (
             <ProjectSettingsPanel
               key={projectSettingsProject.id}
@@ -1829,7 +1740,7 @@ function Workbench() {
                     viewMode={articleViewMode}
                     editorRef={editorRef}
                     richEditorRef={richEditorRef}
-                    suggestions={harper.visibleSuggestions}
+                    suggestions={harper.suggestions}
                     activeSuggestionId={harper.activeSuggestionId}
                     onChange={handleSelectedMarkdownChange}
                   />
@@ -1853,12 +1764,11 @@ function Workbench() {
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onBulkActionChange={setBulkAction}
               onRunBulkAction={() => void runBulkPublishingAction()}
-              onOpenProjectSettings={openCurrentProjectSettings}
             />
           )}
         </section>
 
-        {showRightPane && <aside className="flex min-h-0 flex-col bg-surface-2">
+        {showRightPane && <aside className="hairline-l flex min-h-0 flex-col bg-surface-2">
           <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
             {(["project", "pipeline", "research", "validation", "writing", "seo", "debug"] as const).map((item) => (
               <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
@@ -1874,6 +1784,7 @@ function Workbench() {
             history={runHistory}
             summary={projectSummary}
             analytics={projectAnalytics}
+            harperTelemetry={harperTelemetry}
             article={selectedArticle}
             job={selectedJob}
             markdown={selectedMarkdown}
@@ -1892,7 +1803,7 @@ function Workbench() {
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />{message}</span>
         <div className="ml-auto flex items-center gap-1">
           <UsageIndicator />
-          <button onClick={shareAccountStats} className="rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable QueueWrite stat">
+          <button onClick={shareAccountStats} className="rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
           Words {formatNumber(accountStats.words)} · Sources {formatNumber(accountStats.sources)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
           </button>
         </div>
@@ -2241,8 +2152,7 @@ function ProjectDashboard({
   onToggleArticleSelection,
   onToggleSelectAll,
   onBulkActionChange,
-  onRunBulkAction,
-  onOpenProjectSettings
+  onRunBulkAction
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -2258,7 +2168,6 @@ function ProjectDashboard({
   onToggleSelectAll: (articleIds: string[]) => void;
   onBulkActionChange: (action: BulkPublishingAction) => void;
   onRunBulkAction: () => void;
-  onOpenProjectSettings: () => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2297,17 +2206,7 @@ function ProjectDashboard({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenProjectSettings}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-2 px-3 text-[12px] font-medium text-ink hover:border-line-strong hover:bg-surface-3"
-            >
-              <Settings className="size-3.5 text-ink-subtle" />
-              Project Settings
-            </button>
-            <ProjectExportMenu summary={summary} />
-          </div>
+          <ProjectExportMenu summary={summary} />
         </div>
       </div>
 
@@ -2426,8 +2325,8 @@ function SettingsPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
-        <div className="w-full max-w-none">
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
           <SettingsSection title="Settings">
             <SettingsTextInput label="Name" value={draft.account.name} onSave={(name) => updateDraft({ account: { name } })} />
             <SettingsTextInput label="Email address" value={draft.account.email} type="email" onSave={(email) => updateDraft({ account: { email } })} />
@@ -2599,8 +2498,8 @@ function ProjectSettingsPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
-        <div className="w-full max-w-none space-y-2.5">
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-2xl">
           <CollapsibleSettingsSection title="Project Settings" defaultOpen>
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
@@ -2739,7 +2638,7 @@ function CollapsibleSettingsSection({
   defaultOpen?: boolean;
 }) {
   return (
-    <details className="group w-full rounded-md border border-line bg-surface-1" open={defaultOpen}>
+    <details className="group rounded-md border border-line bg-surface-1" open={defaultOpen}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
         <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
         <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
@@ -3352,39 +3251,57 @@ function ProjectSection({ title, children }: { title: string; children: React.Re
 }
 
 function ProjectMenu({
+  projectName,
   currentProjectId,
   projects,
   onSwitch,
+  onOverview,
+  onSettings,
   onProjectSettings,
+  onNew,
+  onRename,
   onDelete,
-  onNew
+  queueBlockedReason
 }: {
+  projectName: string;
   currentProjectId: string;
   projects: ProjectDocument[];
   onSwitch: (projectId: string) => void;
+  onOverview: () => void;
+  onSettings: () => void;
   onProjectSettings: (projectId: string) => void;
-  onDelete: (projectId?: string) => void;
   onNew: () => void;
+  onRename: () => void;
+  onDelete: (projectId?: string) => void;
+  queueBlockedReason: string | null;
 }) {
   return (
-    <div className="absolute left-0 top-10 z-[70] w-[280px] rounded-md border border-line bg-surface-1 p-2 shadow-2xl">
+    <div className="absolute left-0 top-12 z-30 w-[320px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
       <div className="px-2 pb-2 pt-1">
         <div className="text-[13px] font-semibold text-ink">Projects</div>
+        <div className="mono mt-1 truncate text-[10.5px] text-ink-subtle">Current workspace: {projectName}</div>
       </div>
+      <button onClick={onOverview} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
+        <span>Project overview</span>
+        <span className="mono text-[10.5px] text-ink-subtle">Open</span>
+      </button>
+      <button onClick={onSettings} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
+        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Settings</span>
+        <span className="mono text-[10.5px] text-ink-subtle">Workspace</span>
+      </button>
       {projects.length > 0 && (
-        <div className="my-1 max-h-56 overflow-auto">
+        <div className="my-1 max-h-48 overflow-auto rounded border border-line bg-background p-1">
           {projects.map((project) => (
             <div
               key={project.id}
               className={cn(
-                "group flex h-9 items-center gap-1 rounded-md px-2",
+                "group flex h-8 items-center gap-1 rounded px-2",
                 project.id === currentProjectId
-                  ? "bg-surface-2 shadow-sm"
-                  : "hover:bg-surface-3"
+                  ? "border border-line bg-surface-2 shadow-sm"
+                  : "border border-transparent hover:bg-surface-3"
               )}
             >
               <button
-                type="button"
                 onClick={() => onSwitch(project.id)}
                 disabled={project.id === currentProjectId}
                 className="flex min-w-0 flex-1 items-center text-left text-[12px] text-ink disabled:cursor-default"
@@ -3392,12 +3309,11 @@ function ProjectMenu({
                 <span className="truncate">{project.name}</span>
               </button>
               <button
-                type="button"
                 onClick={(event) => {
                   event.stopPropagation();
                   onProjectSettings(project.id);
                 }}
-                className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-surface-3 hover:text-ink group-hover:opacity-100"
+                className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-surface-3 hover:text-ink group-hover:opacity-100"
                 title={`Edit ${project.name} project settings`}
                 aria-label={`Edit ${project.name} project settings`}
               >
@@ -3405,14 +3321,12 @@ function ProjectMenu({
               </button>
               {project.id !== "default" && (
                 <button
-                  type="button"
                   onClick={(event) => {
                     event.stopPropagation();
                     onDelete(project.id);
                   }}
-                  className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                  className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
                   title={`Delete ${project.name}`}
-                  aria-label={`Delete ${project.name}`}
                 >
                   <Trash2 className="size-3" />
                 </button>
@@ -3421,29 +3335,10 @@ function ProjectMenu({
           ))}
         </div>
       )}
-      <div className="my-1 h-px bg-line/70" />
-      <ProjectMenuAction label="Create Project" detail="New workspace" onClick={onNew} />
-    </div>
-  );
-}
-
-function GlobalMenu({
-  onOpenBilling,
-  onOpenAccountSettings,
-  onSignOut
-}: {
-  onOpenBilling: () => void;
-  onOpenAccountSettings: () => void;
-  onSignOut: () => void;
-}) {
-  return (
-    <div className="absolute left-0 top-10 z-[70] w-[220px] rounded-md border border-line bg-surface-1 p-1.5 shadow-2xl">
-      <GlobalMenuAction label="Account Settings" onClick={onOpenAccountSettings} />
-      <GlobalMenuAction label="Billing" onClick={onOpenBilling} />
-      <GlobalMenuAction label="Help" disabled />
-      <GlobalMenuAction label="Changelog" disabled />
-      <div className="my-1 h-px bg-line/70" />
-      <GlobalMenuAction label="Sign Out" onClick={onSignOut} danger />
+      <div className="my-1 h-px bg-line" />
+      <ProjectMenuAction label="New project" detail="Create workspace" onClick={onNew} />
+      <ProjectMenuAction label="Rename project" detail="Edit name" onClick={onRename} />
+      <ProjectMenuAction label="Reset current project" detail={queueBlockedReason ? "Locked" : "Clear current"} onClick={() => onDelete()} danger disabled={Boolean(queueBlockedReason)} title={queueBlockedReason ?? "Reset current project"} />
     </div>
   );
 }
@@ -3453,22 +3348,6 @@ function ProjectMenuAction({ label, detail, onClick, danger = false, disabled = 
     <button onClick={onClick} disabled={disabled} title={title} className={cn("flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50", danger ? "text-danger" : "text-ink")}>
       <span>{label}</span>
       <span className="mono text-[10.5px] text-ink-subtle">{detail}</span>
-    </button>
-  );
-}
-
-function GlobalMenuAction({ label, onClick, disabled = false, danger = false }: { label: string; onClick?: () => void; disabled?: boolean; danger?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "flex h-9 w-full items-center rounded-md px-2 text-left text-[13px] hover:bg-surface-3 disabled:cursor-not-allowed",
-        disabled ? "text-ink-subtle" : danger ? "text-danger" : "text-ink"
-      )}
-    >
-      <span>{label}</span>
     </button>
   );
 }
@@ -4288,7 +4167,7 @@ function ArticleWorkspace({
   viewMode: ArticleViewMode;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   richEditorRef: RefObject<HTMLDivElement | null>;
-  suggestions: ReturnType<typeof useHarperSuggestions>["visibleSuggestions"];
+  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
   activeSuggestionId: string | null;
   onChange: (markdown: string) => void;
 }) {
@@ -4342,7 +4221,7 @@ function RichMarkdownEditor({
   markdown: string;
   onChange: (markdown: string) => void;
   editorRef: RefObject<HTMLDivElement | null>;
-  suggestions: ReturnType<typeof useHarperSuggestions>["visibleSuggestions"];
+  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
   activeSuggestionId: string | null;
 }) {
   const lastMarkdownRef = useRef(markdown);
@@ -4390,7 +4269,7 @@ function MarkdownEditor({
   markdown: string;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (markdown: string) => void;
-  suggestions: ReturnType<typeof useHarperSuggestions>["visibleSuggestions"];
+  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
   activeSuggestionId: string | null;
   compact?: boolean;
 }) {
@@ -4434,6 +4313,7 @@ function Inspector({
   history,
   summary,
   analytics,
+  harperTelemetry,
   article,
   job,
   markdown,
@@ -4454,6 +4334,7 @@ function Inspector({
   history: RunSummary[];
   summary: ProjectSummary | null;
   analytics: ProjectAnalyticsSummary | null;
+  harperTelemetry: HarperTelemetryReport | null;
   article: ArticleDocument | null;
   job: QueueJob | null;
   markdown: string;
@@ -4467,7 +4348,7 @@ function Inspector({
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
-      {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} />}
+      {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} harperTelemetry={harperTelemetry} />}
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
@@ -4476,13 +4357,11 @@ function Inspector({
           activeSuggestionId={harper.activeSuggestionId}
           counts={harper.counts}
           error={harper.error}
-          report={null}
+          report={harperTelemetry}
           status={harper.status}
           suggestions={harper.suggestions}
           onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}
-          onAcceptCategory={(category) => harper.acceptCategory(category)}
           onIgnore={(suggestionId) => void harper.ignoreSuggestion(suggestionId)}
-          onIgnoreCategory={(category) => void harper.ignoreCategory(category)}
           onJump={(suggestionId) => harper.jumpToSuggestion({ suggestionId })}
         />
       ) : <Empty text="Writing suggestions appear while editing an article." />)}
@@ -4508,7 +4387,8 @@ function ProjectContextPanel({
   metrics,
   history,
   summary,
-  analytics
+  analytics,
+  harperTelemetry
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -4517,6 +4397,7 @@ function ProjectContextPanel({
   history: RunSummary[];
   summary: ProjectSummary | null;
   analytics: ProjectAnalyticsSummary | null;
+  harperTelemetry: HarperTelemetryReport | null;
 }) {
   const latestRun = history[0] ?? null;
   const averageLength = articles.length && summary ? Math.round(summary.totalWords / articles.length) : null;
@@ -4569,6 +4450,20 @@ function ProjectContextPanel({
             <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
             {averageLength !== null && <MetricLine label="Avg length" value={formatNumber(averageLength)} />}
             <MetricLine label="Sources" value={formatNumber(summary.totalSources)} />
+          </div>
+        </ProjectSection>
+      ) : null}
+
+      {harperTelemetry ? (
+        <ProjectSection title="Writing intelligence">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <MetricLine label="Suggestions" value={formatNumber(harperTelemetry.summary.total_suggestions)} />
+            <MetricLine label="Acceptance Rate" value={`${harperTelemetry.summary.acceptance_rate}%`} />
+            <MetricLine label="Ignore Rate" value={`${harperTelemetry.summary.ignore_rate}%`} />
+            <MetricLine label="Accepted" value={formatNumber(harperTelemetry.summary.accepted_suggestions)} />
+            <MetricLine label="Ignored" value={formatNumber(harperTelemetry.summary.ignored_suggestions)} />
+            <MetricLine label="Top Helpful Rule" value={harperTelemetry.summary.top_helpful_rule?.rule_id ?? "-"} />
+            <MetricLine label="Top Ignored Rule" value={harperTelemetry.summary.top_ignored_rule?.rule_id ?? "-"} />
           </div>
         </ProjectSection>
       ) : null}

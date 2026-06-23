@@ -11,7 +11,7 @@ import type { WorkerObservationTimings } from "@/lib/storage/storage";
 import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
-import { emptyHarperTelemetryReport, type HarperContentProfileMetric, type HarperRuleMetric, type HarperTelemetryEventInput, type HarperTelemetryReport, type HarperTopRuleMetric } from "@/lib/analytics/harper";
+import { emptyHarperTelemetryReport, type HarperContentProfileMetric, type HarperRuleMetric, type HarperTelemetryEventInput, type HarperTelemetryReport, type HarperTelemetrySummary, type HarperTopRuleMetric } from "@/lib/analytics/harper";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -1962,7 +1962,7 @@ export class NeonStorageProvider implements StorageProvider {
         rule_id text not null,
         suggestion_id text not null,
         category text not null,
-        action text not null check (action in ('shown', 'accepted', 'ignored')),
+        action text not null,
         timestamp timestamptz not null default now(),
         created_at timestamptz not null default now()
       )
@@ -2632,6 +2632,51 @@ function organisationFromRow(row: Record<string, unknown>): OrganisationDocument
   };
 }
 
+function harperRuleMetricFromRow(row: Record<string, unknown>): HarperRuleMetric {
+  return {
+    rule_id: String(row.rule_id ?? ""),
+    category: String(row.category ?? "usage") as HarperRuleMetric["category"],
+    total_occurrences: Number(row.total_occurrences ?? 0),
+    accepted_count: Number(row.accepted_count ?? 0),
+    ignored_count: Number(row.ignored_count ?? 0),
+    acceptance_rate: Number(row.acceptance_rate ?? 0),
+    ignore_rate: Number(row.ignore_rate ?? 0)
+  };
+}
+
+function harperContentProfileMetricFromRow(row: Record<string, unknown>): HarperContentProfileMetric {
+  return {
+    content_profile: String(row.content_profile ?? "unknown"),
+    total_suggestions: Number(row.total_suggestions ?? 0),
+    accepted_count: Number(row.accepted_count ?? 0),
+    ignored_count: Number(row.ignored_count ?? 0),
+    acceptance_rate: Number(row.acceptance_rate ?? 0),
+    ignore_rate: Number(row.ignore_rate ?? 0)
+  };
+}
+
+function chooseTopHelpfulRule(ruleMetrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
+  if (!ruleMetrics.length) return null;
+  return [...ruleMetrics]
+    .sort((left, right) =>
+      right.accepted_count - left.accepted_count ||
+      right.acceptance_rate - left.acceptance_rate ||
+      right.total_occurrences - left.total_occurrences ||
+      left.rule_id.localeCompare(right.rule_id)
+    )[0] ?? null;
+}
+
+function chooseTopIgnoredRule(ruleMetrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
+  if (!ruleMetrics.length) return null;
+  return [...ruleMetrics]
+    .sort((left, right) =>
+      right.ignored_count - left.ignored_count ||
+      right.ignore_rate - left.ignore_rate ||
+      right.total_occurrences - left.total_occurrences ||
+      left.rule_id.localeCompare(right.rule_id)
+    )[0] ?? null;
+}
+
 function versionFromRow(row: Record<string, unknown>): DocumentVersion {
   return {
     id: String(row.id),
@@ -2846,51 +2891,6 @@ function generationTelemetryFromRow(row: Record<string, unknown>): GenerationTel
   };
 }
 
-function harperRuleMetricFromRow(row: Record<string, unknown>): HarperRuleMetric {
-  return {
-    rule_id: String(row.rule_id ?? ""),
-    category: normalizeHarperTelemetryCategory(row.category),
-    total_occurrences: Number(row.total_occurrences ?? 0),
-    accepted_count: Number(row.accepted_count ?? 0),
-    ignored_count: Number(row.ignored_count ?? 0),
-    acceptance_rate: Number(row.acceptance_rate ?? 0),
-    ignore_rate: Number(row.ignore_rate ?? 0)
-  };
-}
-
-function harperContentProfileMetricFromRow(row: Record<string, unknown>): HarperContentProfileMetric {
-  return {
-    content_profile: String(row.content_profile ?? "unknown"),
-    total_suggestions: Number(row.total_suggestions ?? 0),
-    accepted_count: Number(row.accepted_count ?? 0),
-    ignored_count: Number(row.ignored_count ?? 0),
-    acceptance_rate: Number(row.acceptance_rate ?? 0),
-    ignore_rate: Number(row.ignore_rate ?? 0)
-  };
-}
-
-function chooseTopHelpfulRule(metrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
-  const candidates = metrics.filter((metric) => metric.accepted_count > 0);
-  if (!candidates.length) return null;
-  return [...candidates].sort((left, right) => (
-    right.accepted_count - left.accepted_count
-    || right.acceptance_rate - left.acceptance_rate
-    || right.total_occurrences - left.total_occurrences
-    || left.rule_id.localeCompare(right.rule_id)
-  ))[0];
-}
-
-function chooseTopIgnoredRule(metrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
-  const candidates = metrics.filter((metric) => metric.ignored_count > 0);
-  if (!candidates.length) return null;
-  return [...candidates].sort((left, right) => (
-    right.ignored_count - left.ignored_count
-    || right.ignore_rate - left.ignore_rate
-    || right.total_occurrences - left.total_occurrences
-    || left.rule_id.localeCompare(right.rule_id)
-  ))[0];
-}
-
 function telemetryExportStatusFromRow(row: Record<string, unknown>): TelemetryExportStatusDocument {
   return {
     id: String(row.id),
@@ -2951,19 +2951,6 @@ function emptySearchGroups(): Record<GlobalSearchResultType, GlobalSearchResult[
 
 function stringArray(value: unknown) {
   return Array.isArray(value) ? value.map(String) : [];
-}
-
-function normalizeHarperTelemetryCategory(value: unknown): HarperRuleMetric["category"] {
-  switch (String(value ?? "")) {
-    case "grammar":
-    case "style":
-    case "readability":
-    case "spelling":
-    case "usage":
-      return String(value) as HarperRuleMetric["category"];
-    default:
-      return "usage";
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
