@@ -22,13 +22,13 @@ type HarperSuggestionPanelProps = {
 
 const CATEGORY_LABELS: Record<HarperSuggestionCategory, string> = {
   grammar: "Grammar",
+  punctuation: "Punctuation",
   spelling: "Spelling",
   style: "Style",
-  readability: "Readability",
-  terminology: "Terminology"
+  readability: "Readability"
 };
 
-const CATEGORIES: HarperSuggestionCategory[] = ["grammar", "spelling", "style", "readability", "terminology"];
+const CATEGORIES: HarperSuggestionCategory[] = ["grammar", "punctuation", "spelling", "style", "readability"];
 
 export function HarperSuggestionPanel({
   activeSuggestionId,
@@ -43,6 +43,8 @@ export function HarperSuggestionPanel({
   onIgnoreCategory,
   onJump
 }: HarperSuggestionPanelProps) {
+  const totalIssues = suggestions.length;
+
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
@@ -53,6 +55,11 @@ export function HarperSuggestionPanel({
             <div className="text-xs text-ink-muted">issues</div>
           </div>
         ))}
+        <div className="rounded-md border border-line bg-surface-1 p-2.5">
+          <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">Total</div>
+          <div className="mt-1 text-lg font-semibold text-ink">{totalIssues}</div>
+          <div className="text-xs text-ink-muted">issues shown</div>
+        </div>
       </div>
 
       {status === "loading" && (
@@ -70,7 +77,7 @@ export function HarperSuggestionPanel({
 
       {status !== "loading" && suggestions.length === 0 && !error && (
         <div className="rounded-md border border-line bg-background px-3 py-4 text-sm text-ink-muted">
-          No writing suggestions right now.
+          No significant grammar or spelling issues found.
         </div>
       )}
 
@@ -115,7 +122,7 @@ export function HarperSuggestionPanel({
                       <div className="text-sm font-medium text-ink">{item.message}</div>
                       <div className="mt-1 text-xs text-ink-muted">
                         <span className="font-medium text-ink">{item.problemText || "Suggested wording improvement"}</span>
-                        {item.occurrenceCount > 1 && <span className="ml-2">{item.occurrenceCount} occurrences</span>}
+                        {item.occurrenceCount > 1 && <span className="ml-2">{item.occurrenceCount} occurrences found</span>}
                       </div>
                       {item.replacementText && (
                         <div className="mt-2 rounded bg-surface-2 px-2 py-1 text-xs text-ink">

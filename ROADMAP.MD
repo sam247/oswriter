@@ -8,10 +8,19 @@
 - Added a resilient Harper linter bootstrap path that falls back to `LocalLinter` if the worker setup fails or hangs in the browser.
 - Restored the Harper telemetry storage contract after an incomplete rollback removed the workspace store and Neon reporting methods.
 - Restored the Writing inspector wiring so the Harper sidebar receives telemetry reports and category-level accept/ignore actions again.
-- Added a new Writing inspector tab with grouped Grammar, Style, and Readability suggestion counts.
+- Added a new Writing inspector tab with grouped Grammar, Punctuation, Spelling, Style, and Readability counts plus a total-issues summary.
 - Added Accept and Ignore actions for Harper suggestions:
   - Accept updates the current article draft immediately
   - Ignore hides the suggestion for the current session
+- Added a Harper trust pass focused on signal over volume:
+  - confidence-based spelling and style suppression
+  - smart suppression for brands, codes, URLs, domains, emails, versions, and technical tokens
+  - occurrence grouping for repeated issues so one card can represent many matches
+  - usefulness-based ordering that prioritizes Grammar, Punctuation, Spelling, Style, then Readability
+  - quieter empty states when no high-confidence issues remain
+- Expanded the built-in Harper dictionary with QueueWrite, OpenAI, Anthropic, Claude, Gemini, DeepL, Ahrefs, Semrush, SerpAPI, Cloudflare, Supabase, Vercel, Shopify, WordPress, Next.js, GPT, GPT-4, GPT-5, API, APIs, and s278.
+- Added project-level `projectDictionaryTerms` support in the project document contract so future settings can feed custom terms without a separate migration.
+- Added non-user-facing Harper suppression metrics logging for total found, suppressed, and displayed issue counts per analysis pass.
 - Added inline writing highlights:
   - custom highlight styling in the rich editor
   - mirrored overlay highlighting for markdown and split editor modes
@@ -20,6 +29,7 @@
   - no provider logic changes
   - no telemetry, publishing, billing, auth, or generation workflow changes
 - Added markdown normalization coverage for Harper span mapping.
+- Added regression coverage for false-positive suppression, including `DeepL -> Deep`, `Waze -> Wade`, `QueueWrite -> Queue Write`, and `s278 -> sac`.
 - Restored Neon article summary normalization so publishing metadata stays present on compact article lists as well as full article reads.
 
 ### WordPress Publishing Integration (Phase 1)

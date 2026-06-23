@@ -15,7 +15,7 @@ type RichTextHighlightsProps = {
   }>;
 };
 
-const HIGHLIGHT_NAMES = ["harper-grammar", "harper-spelling", "harper-style", "harper-readability", "harper-terminology", "harper-active"] as const;
+const HIGHLIGHT_NAMES = ["harper-grammar", "harper-punctuation", "harper-spelling", "harper-style", "harper-readability", "harper-active"] as const;
 
 export function RichTextHighlights({ activeSuggestionId, editor, suggestions }: RichTextHighlightsProps) {
   useEffect(() => {
@@ -26,10 +26,10 @@ export function RichTextHighlights({ activeSuggestionId, editor, suggestions }: 
 
     const grouped = {
       "harper-grammar": [] as Range[],
+      "harper-punctuation": [] as Range[],
       "harper-spelling": [] as Range[],
       "harper-style": [] as Range[],
       "harper-readability": [] as Range[],
-      "harper-terminology": [] as Range[],
       "harper-active": [] as Range[]
     };
 
@@ -54,9 +54,9 @@ export function RichTextHighlights({ activeSuggestionId, editor, suggestions }: 
 
 function highlightNameForCategory(category: HarperSuggestionCategory) {
   if (category === "grammar") return "harper-grammar";
+  if (category === "punctuation") return "harper-punctuation";
   if (category === "spelling") return "harper-spelling";
   if (category === "readability") return "harper-readability";
-  if (category === "terminology") return "harper-terminology";
   return "harper-style";
 }
 

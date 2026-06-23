@@ -6,6 +6,7 @@ import { slugId } from "@/lib/text";
 import { getQueueMutationBlocker, getSettingsMutationBlocker } from "@/lib/queue/safety";
 import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
+import { normalizeProjectDictionaryTerms } from "@/lib/editor/harper/dictionary";
 import type { ProjectKnowledgeBase, ProjectProfile } from "@/lib/types";
 import { normalizeContentProfile } from "@/lib/content-profiles";
 
@@ -13,7 +14,7 @@ export async function PATCH(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; projectId?: string; name?: string; profile?: Partial<ProjectProfile>; knowledgeBase?: Partial<ProjectKnowledgeBase>; defaultContentProfile?: string };
+  const body = await req.json().catch(() => ({})) as { activeProjectId?: string; projectId?: string; name?: string; profile?: Partial<ProjectProfile>; knowledgeBase?: Partial<ProjectKnowledgeBase>; defaultContentProfile?: string; projectDictionaryTerms?: string[] };
   const { store } = createRuntime();
 
   const activeProjectId = body.activeProjectId?.trim();
@@ -26,9 +27,9 @@ export async function PATCH(req: Request) {
   }
 
   const name = body.name?.trim();
-  if (!name && !body.profile && !body.knowledgeBase && body.defaultContentProfile === undefined) return NextResponse.json({ error: "Project changes are required." }, { status: 400 });
+  if (!name && !body.profile && !body.knowledgeBase && body.defaultContentProfile === undefined && body.projectDictionaryTerms === undefined) return NextResponse.json({ error: "Project changes are required." }, { status: 400 });
   const targetProjectId = body.projectId?.trim();
-  if (body.profile || body.knowledgeBase || body.defaultContentProfile !== undefined) {
+  if (body.profile || body.knowledgeBase || body.defaultContentProfile !== undefined || body.projectDictionaryTerms !== undefined) {
     const blocker = await getSettingsMutationBlocker(store, targetProjectId);
     if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
   }
@@ -41,6 +42,7 @@ export async function PATCH(req: Request) {
     ...(body.profile ? { profile: normalizeProjectProfile({ ...project.profile, ...body.profile }, settings.controls.lengthTargetWords) } : {}),
     ...(body.knowledgeBase ? { knowledgeBase: normalizeProjectKnowledgeBase(body.knowledgeBase) } : {}),
     ...(body.defaultContentProfile !== undefined ? { defaultContentProfile: normalizeContentProfile(body.defaultContentProfile) ?? "industry_explainer" } : {}),
+    ...(body.projectDictionaryTerms !== undefined ? { projectDictionaryTerms: normalizeProjectDictionaryTerms(body.projectDictionaryTerms) } : {}),
     updatedAt: nowIso()
   };
   await store.saveProject(updated);
@@ -52,7 +54,7 @@ export async function POST(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const body = await req.json().catch(() => ({})) as { name?: string; profile?: Partial<ProjectProfile>; defaultContentProfile?: string };
+  const body = await req.json().catch(() => ({})) as { name?: string; profile?: Partial<ProjectProfile>; defaultContentProfile?: string; projectDictionaryTerms?: string[] };
   const name = body.name?.trim() || "Untitled Project";
   const { store } = createRuntime();
   const now = nowIso();
@@ -63,6 +65,7 @@ export async function POST(req: Request) {
     name,
     profile: normalizeProjectProfile(body.profile),
     defaultContentProfile: normalizeContentProfile(body.defaultContentProfile) ?? "industry_explainer",
+    projectDictionaryTerms: normalizeProjectDictionaryTerms(body.projectDictionaryTerms),
     createdAt: now,
     updatedAt: now
   };

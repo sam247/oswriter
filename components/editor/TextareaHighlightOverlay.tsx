@@ -80,10 +80,10 @@ export function TextareaHighlightOverlay({
             className={cn(
               "text-transparent",
               fragment.category === "grammar" && "harper-overlay-grammar",
+              fragment.category === "punctuation" && "harper-overlay-punctuation",
               fragment.category === "spelling" && "harper-overlay-spelling",
               fragment.category === "style" && "harper-overlay-style",
               fragment.category === "readability" && "harper-overlay-readability",
-              fragment.category === "terminology" && "harper-overlay-terminology",
               fragment.active && "harper-overlay-active"
             )}
           >

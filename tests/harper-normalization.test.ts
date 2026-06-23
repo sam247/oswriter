@@ -38,6 +38,7 @@ describe("Harper markdown normalization", () => {
   it("builds a project dictionary from brand and knowledge base terms", () => {
     const dictionary = buildHarperProjectDictionary({
       name: "QueueWrite",
+      projectDictionaryTerms: ["CustomTerm", "DeepL"],
       knowledgeBase: {
         brandName: "OpenRedaction",
         website: "",
@@ -51,8 +52,11 @@ describe("Harper markdown normalization", () => {
     });
 
     assert.equal(isDictionaryTerm("QueueWrite", dictionary), true);
+    assert.equal(isDictionaryTerm("DeepL", dictionary), true);
+    assert.equal(isDictionaryTerm("GPT-5", dictionary), true);
     assert.equal(isDictionaryTerm("PA23", dictionary), true);
     assert.equal(isDictionaryTerm("Next.js", dictionary), true);
+    assert.equal(isDictionaryTerm("CustomTerm", dictionary), true);
     assert.equal(isDictionaryTerm("agreements", dictionary), false);
   });
 });

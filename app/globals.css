@@ -125,6 +125,14 @@ input {
   text-decoration-thickness: 1.5px;
 }
 
+.harper-overlay-punctuation {
+  background: rgba(194, 65, 45, 0.08);
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(194, 65, 45, 0.75);
+  text-decoration-thickness: 1.5px;
+}
+
 .harper-overlay-spelling {
   background: rgba(194, 65, 45, 0.08);
   text-decoration-line: underline;
@@ -149,14 +157,6 @@ input {
   text-decoration-thickness: 1.5px;
 }
 
-.harper-overlay-terminology {
-  background: rgba(92, 76, 143, 0.08);
-  text-decoration-line: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: rgba(92, 76, 143, 0.75);
-  text-decoration-thickness: 1.5px;
-}
-
 .harper-overlay-active {
   background: rgba(17, 20, 24, 0.12);
 }
@@ -165,6 +165,13 @@ input {
   background: rgba(194, 65, 45, 0.08);
   text-decoration-line: underline;
   text-decoration-style: wavy;
+  text-decoration-color: rgba(194, 65, 45, 0.75);
+}
+
+::highlight(harper-punctuation) {
+  background: rgba(194, 65, 45, 0.08);
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
   text-decoration-color: rgba(194, 65, 45, 0.75);
 }
 
@@ -187,13 +194,6 @@ input {
   text-decoration-line: underline;
   text-decoration-style: solid;
   text-decoration-color: rgba(183, 121, 31, 0.7);
-}
-
-::highlight(harper-terminology) {
-  background: rgba(92, 76, 143, 0.08);
-  text-decoration-line: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: rgba(92, 76, 143, 0.75);
 }
 
 ::highlight(harper-active) {

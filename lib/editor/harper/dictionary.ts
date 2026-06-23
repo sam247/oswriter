@@ -1,17 +1,36 @@
 import type { ProjectDocument, ProjectKnowledgeBase } from "@/lib/types";
 
 const BUILT_IN_TERMS = [
+  "Ahrefs",
+  "Anthropic",
+  "API",
+  "APIs",
   "BYOK",
+  "Claude",
+  "Cloudflare",
+  "DeepL",
   "Disclosurely",
   "GA4",
+  "Gemini",
   "GSC",
+  "GPT",
+  "GPT-4",
+  "GPT-5",
   "Next.js",
+  "OpenAI",
   "OpenRedaction",
   "PA23",
-  "QueueWrite"
+  "QueueWrite",
+  "Semrush",
+  "SerpAPI",
+  "Shopify",
+  "Supabase",
+  "s278",
+  "Vercel",
+  "WordPress"
 ];
 
-export function buildHarperProjectDictionary(project?: Pick<ProjectDocument, "name" | "slug" | "knowledgeBase" | "profile"> | null) {
+export function buildHarperProjectDictionary(project?: Pick<ProjectDocument, "name" | "slug" | "knowledgeBase" | "profile" | "projectDictionaryTerms"> | null) {
   const terms = new Set<string>();
 
   for (const term of BUILT_IN_TERMS) addDictionaryTerm(terms, term);
@@ -22,8 +41,21 @@ export function buildHarperProjectDictionary(project?: Pick<ProjectDocument, "na
   addDictionaryTerm(terms, project.profile?.industryLabel);
   addDictionaryTerm(terms, project.profile?.customIndustryLabel);
   addKnowledgeBaseTerms(terms, project.knowledgeBase);
+  for (const term of normalizeProjectDictionaryTerms(project.projectDictionaryTerms)) addDictionaryTerm(terms, term);
 
   return terms;
+}
+
+export function normalizeProjectDictionaryTerms(value?: string[] | null) {
+  if (!Array.isArray(value)) return [];
+  const terms = new Set<string>();
+  for (const term of value) {
+    if (typeof term !== "string") continue;
+    const trimmed = term.trim();
+    if (!trimmed) continue;
+    terms.add(trimmed);
+  }
+  return [...terms];
 }
 
 export function isDictionaryTerm(value: string, dictionary: ReadonlySet<string>) {

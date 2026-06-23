@@ -5,6 +5,7 @@ import { SuggestionKind, type Lint, type Suggestion } from "harper.js";
 import type { HarperTelemetryAction, HarperTelemetryEventInput } from "@/lib/analytics/harper";
 import { getHarperLinter, warmHarperLinter } from "@/lib/editor/harper/client";
 import { buildHarperProjectDictionary, isDictionaryTerm } from "@/lib/editor/harper/dictionary";
+import { HARPER_CATEGORY_ORDER, isActionableHarperReplacement, shouldSurfaceHarperSuggestion } from "@/lib/editor/harper/filtering";
 import { mapMarkdownRangeToPlainSpan, mapPlainSpanToMarkdownRange, normalizeMarkdownForHarper } from "@/lib/editor/harper/normalization";
 import type { HarperSuggestionCategory, HarperTelemetryCategory, HarperTextMapping } from "@/lib/editor/harper/types";
 import type { ProjectDocument } from "@/lib/types";
@@ -48,7 +49,7 @@ type UseHarperSuggestionsParams = {
   articleId: string | null;
   contentProfile?: string | null;
   markdown: string;
-  project?: Pick<ProjectDocument, "name" | "slug" | "knowledgeBase" | "profile"> | null;
+  project?: Pick<ProjectDocument, "name" | "slug" | "knowledgeBase" | "profile" | "projectDictionaryTerms"> | null;
   viewMode: ArticleViewMode;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   richEditorRef: RefObject<HTMLDivElement | null>;
@@ -126,9 +127,11 @@ export function useHarperSuggestions({
         const linter = await getHarperLinter();
         const lintGroups = await linter.organizedLints(mapping.text, { language: "plaintext", dedup: true });
         const rawSuggestions: HarperSuggestionItem[] = [];
+        let totalIssuesFound = 0;
 
         for (const [ruleId, lints] of Object.entries(lintGroups)) {
           for (const lint of lints) {
+            totalIssuesFound += 1;
             const span = lint.span();
             const alignedSpan = alignLintSpan(mapping.text, span.start, span.end, lint.get_problem_text());
             const markdownRange = mapPlainSpanToMarkdownRange(mapping, alignedSpan.start, alignedSpan.end);
@@ -138,8 +141,17 @@ export function useHarperSuggestions({
             const lintSuggestions = lint.suggestions();
             const problemText = mapping.text.slice(exactPlainSpan.start, exactPlainSpan.end) || lint.get_problem_text();
             const category = categorizeLint(lint.lint_kind(), lint.message(), problemText, lintSuggestions);
-            const replacementText = getConfidentReplacement(problemText, lintSuggestions, category);
-            if (isDictionaryTerm(problemText, dictionary) || !shouldSurfaceLint(problemText, replacementText, lint.lint_kind(), lint.message(), category)) continue;
+            const replacementCandidate = lintSuggestions[0]?.get_replacement_text()?.trim() ?? null;
+            const filteringInput = {
+              category,
+              dictionary,
+              kind: lint.lint_kind(),
+              message: lint.message(),
+              problemText,
+              replacementText: replacementCandidate
+            };
+            if (isDictionaryTerm(problemText, dictionary) || !shouldSurfaceHarperSuggestion(filteringInput)) continue;
+            const replacementText = isActionableHarperReplacement(filteringInput) ? replacementCandidate : null;
 
             rawSuggestions.push({
               id: `${ruleId}:${hash.toString()}-${exactPlainSpan.start}-${exactPlainSpan.end}`,
@@ -175,7 +187,12 @@ export function useHarperSuggestions({
         }
 
         const nextSuggestions = groupDuplicateSuggestions(rawSuggestions);
-        nextSuggestions.sort((left, right) => left.plainStart - right.plainStart || left.plainEnd - right.plainEnd);
+        nextSuggestions.sort((left, right) => compareSuggestionPriority(left, right));
+        console.info("harper_suppression_metrics", {
+          totalIssuesFound,
+          issuesSuppressed: Math.max(totalIssuesFound - nextSuggestions.length, 0),
+          issuesDisplayed: nextSuggestions.length
+        });
 
         if (analysisRevisionRef.current !== revision) return;
         setSuggestions(nextSuggestions);
@@ -229,10 +246,10 @@ export function useHarperSuggestions({
 
   const counts = useMemo(() => ({
     grammar: suggestions.filter((item) => item.category === "grammar").length,
+    punctuation: suggestions.filter((item) => item.category === "punctuation").length,
     spelling: suggestions.filter((item) => item.category === "spelling").length,
     style: suggestions.filter((item) => item.category === "style").length,
-    readability: suggestions.filter((item) => item.category === "readability").length,
-    terminology: suggestions.filter((item) => item.category === "terminology").length
+    readability: suggestions.filter((item) => item.category === "readability").length
   }), [suggestions]);
 
   const acceptSuggestion = useCallback(async (suggestionId: string) => {
@@ -330,16 +347,15 @@ export function useHarperSuggestions({
   };
 }
 
-function categorizeLint(kind: string, message = "", problemText = "", suggestions: Suggestion[] = []): HarperSuggestionCategory {
+function categorizeLint(kind: string, _message = "", _problemText = "", _suggestions: Suggestion[] = []): HarperSuggestionCategory {
   if (kind === "Readability") return "readability";
-  if (isTerminologyLint(kind, message, problemText, suggestions)) return "terminology";
+  if (kind === "Punctuation") return "punctuation";
   if (kind === "Spelling" || kind === "Typo") return "spelling";
   if ([
     "Agreement",
     "BoundaryError",
     "Capitalization",
-    "Grammar",
-    "Punctuation",
+    "Grammar"
   ].includes(kind)) return "grammar";
   return "style";
 }
@@ -377,45 +393,12 @@ function isWordCharacter(character = "") {
   return /[\p{L}\p{N}'-]/u.test(character);
 }
 
-function isTerminologyLint(kind: string, message: string, problemText: string, suggestions: Suggestion[]) {
-  if (kind !== "Spelling" && kind !== "Typo") return false;
-  if (/unknown|unrecognized|dictionary|spelling/i.test(message) && !suggestions.length) return true;
-  return /[A-Z]{2,}|\d|[.+#-]/.test(problemText);
-}
-
-function getConfidentReplacement(problemText: string, suggestions: Suggestion[], category: HarperSuggestionCategory) {
-  const replacement = suggestions[0]?.get_replacement_text()?.trim() ?? null;
-  if (!replacement) return null;
-  if (category === "terminology") return null;
-  if (isLowConfidenceReplacement(problemText, replacement)) return null;
-  return replacement;
-}
-
-function shouldSurfaceLint(problemText: string, replacementText: string | null, kind: string, message: string, category: HarperSuggestionCategory) {
-  const trimmed = problemText.trim();
-  if (!trimmed || trimmed.length < 2) return false;
-  if (category === "terminology") return true;
-  if (kind === "Spelling" || kind === "Typo") return Boolean(replacementText) || /unknown|unrecognized/i.test(message);
-  return true;
-}
-
-function isLowConfidenceReplacement(problemText: string, replacement: string) {
-  const source = problemText.trim();
-  if (!source || !replacement) return true;
-  if (source.toLowerCase() === replacement.toLowerCase()) return true;
-  if (/\d/.test(source) && !/\d/.test(replacement)) return true;
-  if (/[A-Z]{2,}/.test(source) && replacement === replacement.toLowerCase()) return true;
-  if (source.length <= 4 && levenshteinDistance(source.toLowerCase(), replacement.toLowerCase()) > 1) return true;
-  return false;
-}
-
 function groupDuplicateSuggestions(items: HarperSuggestionItem[]) {
   const grouped = new Map<string, HarperSuggestionItem>();
 
   for (const item of items) {
     const key = [
       item.category,
-      item.ruleId,
       item.message.toLowerCase(),
       item.problemText.toLowerCase(),
       item.replacementText?.toLowerCase() ?? ""
@@ -471,31 +454,8 @@ function applySuggestionOccurrences(markdown: string, occurrences: HarperSuggest
 
 function normalizeIssueTitle(message: string, category: HarperSuggestionCategory) {
   const cleanMessage = message.replace(/\s+/g, " ").trim();
-  if (category === "terminology") return "Unknown term";
   if (cleanMessage.length <= 80) return cleanMessage;
   return `${cleanMessage.slice(0, 77)}...`;
-}
-
-function levenshteinDistance(left: string, right: string) {
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-
-  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
-    let last = leftIndex;
-    previous[0] = leftIndex + 1;
-
-    for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
-      const old = previous[rightIndex + 1];
-      const cost = left[leftIndex] === right[rightIndex] ? 0 : 1;
-      previous[rightIndex + 1] = Math.min(
-        previous[rightIndex + 1] + 1,
-        previous[rightIndex] + 1,
-        last + cost
-      );
-      last = old;
-    }
-  }
-
-  return previous[right.length];
 }
 
 function telemetryCategoryForLint(kind: string): HarperTelemetryCategory {
@@ -504,6 +464,14 @@ function telemetryCategoryForLint(kind: string): HarperTelemetryCategory {
   if (kind === "Capitalization" || kind === "RepeatedWords" || kind === "WordChoice" || kind === "Usage") return "usage";
   if (categorizeLint(kind) === "style") return "style";
   return "grammar";
+}
+
+function compareSuggestionPriority(left: HarperSuggestionItem, right: HarperSuggestionItem) {
+  const leftPriority = HARPER_CATEGORY_ORDER.indexOf(left.category);
+  const rightPriority = HARPER_CATEGORY_ORDER.indexOf(right.category);
+  if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+  if (left.occurrenceCount !== right.occurrenceCount) return right.occurrenceCount - left.occurrenceCount;
+  return left.plainStart - right.plainStart || left.plainEnd - right.plainEnd;
 }
 
 function buildTelemetryEvent(

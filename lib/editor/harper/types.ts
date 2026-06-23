@@ -1,4 +1,4 @@
-export type HarperSuggestionCategory = "grammar" | "spelling" | "style" | "readability" | "terminology";
+export type HarperSuggestionCategory = "grammar" | "punctuation" | "spelling" | "style" | "readability";
 export type HarperTelemetryCategory = "grammar" | "style" | "readability" | "spelling" | "usage";
 
 export type HarperTextMapping = {
