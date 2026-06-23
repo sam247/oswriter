@@ -7,6 +7,7 @@
 - Restored the `52cbe6d` menu/header UI state in `writer-app.tsx` after later changes replaced the approved design.
 - Reintroduced `Sign Out` in the global menu as a separate danger action below a muted divider.
 - Restored the project dropdown refinement that removes the `Current` row label and keeps divider contrast quieter for better hierarchy.
+- Safely reconnected the restored `writer-app.tsx` to the existing Harper trust-pass code by passing project/content-profile context back into `useHarperSuggestions` and restoring the writing-panel telemetry report fetch without changing the recovered navigation layout.
 
 ### Harper Grammar And Writing Assistant Integration (Phase 1)
 

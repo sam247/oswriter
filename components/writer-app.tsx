@@ -10,6 +10,7 @@ import { HarperSuggestionPanel } from "@/components/editor/HarperSuggestionPanel
 import { RichTextHighlights } from "@/components/editor/RichTextHighlights";
 import { TextareaHighlightOverlay } from "@/components/editor/TextareaHighlightOverlay";
 import { useHarperSuggestions } from "@/components/editor/useHarperSuggestions";
+import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
@@ -185,6 +186,7 @@ function Workbench() {
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
+  const [harperReport, setHarperReport] = useState<HarperTelemetryReport | null>(null);
   const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [pinnedArticleIds, setPinnedArticleIds] = useState<Set<string>>(new Set());
@@ -251,7 +253,9 @@ function Workbench() {
   }, [selectedArticle, updateArticleDraft]);
   const harper = useHarperSuggestions({
     articleId: selectedArticle?.id ?? null,
+    contentProfile: resolveContentProfile(selectedArticle?.contentProfile, state?.project.defaultContentProfile) ?? null,
     markdown: selectedMarkdown,
+    project: state?.project ?? null,
     viewMode: articleViewMode,
     textareaRef: editorRef,
     richEditorRef,
@@ -415,6 +419,20 @@ function Workbench() {
       .then((res) => res.ok ? res.json() : null)
       .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
   }, [state?.project.id]);
+
+  useEffect(() => {
+    const projectId = state?.project.id;
+    if (!projectId || tab !== "writing" || !selectedArticle) {
+      if (!projectId) setHarperReport(null);
+      return;
+    }
+    const controller = new AbortController();
+    void fetch("/api/analytics/harper", { cache: "no-store", signal: controller.signal })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: HarperTelemetryReport | null) => setHarperReport(data))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [harper.suggestions.length, selectedArticle, state?.project.id, tab]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -1878,6 +1896,7 @@ function Workbench() {
             setSelectedStage={setSelectedStage}
             warningsRef={warningsRef}
             highlightWarnings={highlightWarnings}
+            harperReport={harperReport}
             harper={harper}
           />
         </aside>}
@@ -4438,6 +4457,7 @@ function Inspector({
   setSelectedStage,
   warningsRef,
   highlightWarnings,
+  harperReport,
   harper
 }: {
   tab: InspectorTab;
@@ -4458,6 +4478,7 @@ function Inspector({
   setSelectedStage: (stage: string) => void;
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
+  harperReport: HarperTelemetryReport | null;
   harper: ReturnType<typeof useHarperSuggestions>;
 }) {
   return (
@@ -4471,7 +4492,7 @@ function Inspector({
           activeSuggestionId={harper.activeSuggestionId}
           counts={harper.counts}
           error={harper.error}
-          report={null}
+          report={harperReport}
           status={harper.status}
           suggestions={harper.suggestions}
           onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}
