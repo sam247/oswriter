@@ -146,7 +146,7 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
     <main className="grid min-h-screen place-items-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-lg border border-line bg-surface-1 p-5 shadow-sm">
         <div className="mb-4">
-          <h1 className="text-lg font-semibold tracking-tight text-ink">OS Writer</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-ink">QueueWrite</h1>
           <p className="mt-1 text-sm text-ink-muted">Enter the workspace password to open the production queue.</p>
         </div>
         <input
@@ -193,6 +193,7 @@ function Workbench() {
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [globalMenuOpen, setGlobalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
@@ -216,6 +217,7 @@ function Workbench() {
   const activeRequest = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const richEditorRef = useRef<HTMLDivElement | null>(null);
+  const globalMenuRef = useRef<HTMLDivElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const generateMenuRef = useRef<HTMLDivElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -435,6 +437,7 @@ function Workbench() {
       }
       if (event.key === "Escape") {
         setGlobalSearchOpen(false);
+        setGlobalMenuOpen(false);
         setProjectMenuOpen(false);
         setGenerateMenuOpen(false);
       }
@@ -442,6 +445,17 @@ function Workbench() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!globalMenuOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && globalMenuRef.current?.contains(target)) return;
+      setGlobalMenuOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [globalMenuOpen]);
 
   useEffect(() => {
     if (!projectMenuOpen) return;
@@ -1362,6 +1376,8 @@ function Workbench() {
 
   function openProjectBreadcrumb() {
     setSelectedArticleId(null);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
     setSettingsOpen(false);
     setProjectSettingsProjectId(null);
     setTab("project");
@@ -1370,10 +1386,37 @@ function Workbench() {
   function openArticleBreadcrumb() {
     if (!breadcrumbArticleId) return;
     setSelectedArticleId(breadcrumbArticleId);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
     setSettingsOpen(false);
     setProjectSettingsProjectId(null);
     setSidebarTab(selectedArticle ? "articles" : "queue");
     setTab("project");
+  }
+
+  function openWorkspaceSettings() {
+    setSelectedArticleId(null);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
+    setProjectSettingsProjectId(null);
+    setSettingsOpen(true);
+    setTab("project");
+  }
+
+  function openCurrentProjectSettings() {
+    if (!state?.project.id) return;
+    setSelectedArticleId(null);
+    setGlobalMenuOpen(false);
+    setProjectMenuOpen(false);
+    setSettingsOpen(false);
+    setProjectSettingsProjectId(state.project.id);
+    setTab("project");
+  }
+
+  async function signOut() {
+    setGlobalMenuOpen(false);
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    window.location.reload();
   }
 
   function upsertJob(job: QueueJob) {
@@ -1406,15 +1449,70 @@ function Workbench() {
     <main className="flex h-screen w-screen flex-col overflow-hidden bg-background text-ink">
       <header className="hairline-b flex h-10 select-none items-center bg-surface-2/85 px-3 backdrop-blur">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px]">
-          <span className="font-semibold tracking-tight text-ink">OS Writer V2</span>
-          <ChevronRight className="size-3 text-ink-subtle" />
-          <button
-            type="button"
-            onClick={openProjectBreadcrumb}
-            className="truncate text-ink-muted transition-colors hover:text-ink"
-          >
-            {state?.project.name ?? "Loading project"}
-          </button>
+          <div ref={globalMenuRef} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setGlobalMenuOpen((open) => !open);
+                setProjectMenuOpen(false);
+              }}
+              className={cn(
+                "flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-surface-3",
+                globalMenuOpen && "bg-surface-3"
+              )}
+              aria-expanded={globalMenuOpen}
+              aria-haspopup="menu"
+            >
+              <span className="grid size-5 place-items-center rounded bg-ink text-[10px] font-semibold text-white">QW</span>
+              <span className="font-semibold tracking-tight text-ink">QueueWrite</span>
+            </button>
+            {globalMenuOpen && (
+              <GlobalMenu
+                onOpenDashboard={openProjectBreadcrumb}
+                onOpenProjects={() => {
+                  setGlobalMenuOpen(false);
+                  setProjectMenuOpen(true);
+                }}
+                onOpenIntegrations={openWorkspaceSettings}
+                onOpenUsage={() => {
+                  setGlobalMenuOpen(false);
+                  window.location.href = "/settings/billing#usage";
+                }}
+                onOpenBilling={() => {
+                  setGlobalMenuOpen(false);
+                  window.location.href = "/settings/billing";
+                }}
+                onOpenAccountSettings={openWorkspaceSettings}
+                onSignOut={() => void signOut()}
+              />
+            )}
+          </div>
+          <div ref={projectMenuRef} className="relative min-w-0 shrink">
+            <button
+              type="button"
+              onClick={() => {
+                setProjectMenuOpen((open) => !open);
+                setGlobalMenuOpen(false);
+              }}
+              className={cn(
+                "flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-surface-3",
+                projectMenuOpen && "bg-surface-3"
+              )}
+              aria-expanded={projectMenuOpen}
+              aria-haspopup="menu"
+            >
+              <span className="truncate font-medium text-ink">{state?.project.name ?? "Loading project"}</span>
+              <ChevronDown className={cn("size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
+            </button>
+            {projectMenuOpen && (
+              <ProjectMenu
+                currentProjectId={state?.project.id ?? ""}
+                projects={projects}
+                onSwitch={switchProject}
+                onNew={createProject}
+              />
+            )}
+          </div>
           {breadcrumbArticleTitle ? (
             <>
               <ChevronRight className="size-3 text-ink-subtle" />
@@ -1527,8 +1625,8 @@ function Workbench() {
         {showLeftPane && <aside className="hairline-r flex min-h-0 flex-col bg-surface-2 text-[13px]">
           <div className="hairline-b px-3 pb-3 pt-3">
             <div className="flex items-start justify-between gap-3">
-              <div ref={projectMenuRef} className="relative min-w-0 flex-1">
-                <button onClick={() => setProjectMenuOpen((open) => !open)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-0.5">
                   <span className="grid size-7 shrink-0 place-items-center rounded-md bg-ink text-white">
                     <PanelLeft className="size-3.5" />
                   </span>
@@ -1536,38 +1634,7 @@ function Workbench() {
                     <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
                     <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{projectSummary?.articleCount ?? articles.length} articles · {stats.queued + stats.processing} active</span>
                   </span>
-                  <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
-                </button>
-                {projectMenuOpen && (
-                  <ProjectMenu
-                    projectName={state?.project.name ?? "Project"}
-                    currentProjectId={state?.project.id ?? ""}
-                    projects={projects}
-                    onSwitch={switchProject}
-                    onOverview={() => {
-                      setSelectedArticleId(null);
-                      setSettingsOpen(false);
-                      setProjectSettingsProjectId(null);
-                      setProjectMenuOpen(false);
-                    }}
-                    onSettings={() => {
-                      setSelectedArticleId(null);
-                      setSettingsOpen(true);
-                      setProjectSettingsProjectId(null);
-                      setProjectMenuOpen(false);
-                    }}
-                    onProjectSettings={(projectId) => {
-                      setSelectedArticleId(null);
-                      setSettingsOpen(false);
-                      setProjectSettingsProjectId(projectId);
-                      setProjectMenuOpen(false);
-                    }}
-                    onNew={createProject}
-                    onRename={renameProject}
-                    onDelete={deleteProject}
-                    queueBlockedReason={queueMutationBlockedReason}
-                  />
-                )}
+                </div>
               </div>
               <ProjectExportMenu summary={projectSummary} />
             </div>
@@ -1773,6 +1840,7 @@ function Workbench() {
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onBulkActionChange={setBulkAction}
               onRunBulkAction={() => void runBulkPublishingAction()}
+              onOpenProjectSettings={openCurrentProjectSettings}
             />
           )}
         </section>
@@ -1811,7 +1879,7 @@ function Workbench() {
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />{message}</span>
         <div className="ml-auto flex items-center gap-1">
           <UsageIndicator />
-          <button onClick={shareAccountStats} className="rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable OS Writer stat">
+          <button onClick={shareAccountStats} className="rounded px-1.5 py-0.5 text-ink-subtle hover:bg-surface-3 hover:text-ink" title="Copy a shareable QueueWrite stat">
           Words {formatNumber(accountStats.words)} · Sources {formatNumber(accountStats.sources)} · Articles {formatNumber(accountStats.articles)} · Time {formatSavedTime(accountStats.savedMinutes)}
           </button>
         </div>
@@ -2160,7 +2228,8 @@ function ProjectDashboard({
   onToggleArticleSelection,
   onToggleSelectAll,
   onBulkActionChange,
-  onRunBulkAction
+  onRunBulkAction,
+  onOpenProjectSettings
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -2176,6 +2245,7 @@ function ProjectDashboard({
   onToggleSelectAll: (articleIds: string[]) => void;
   onBulkActionChange: (action: BulkPublishingAction) => void;
   onRunBulkAction: () => void;
+  onOpenProjectSettings: () => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2214,7 +2284,17 @@ function ProjectDashboard({
               </div>
             )}
           </div>
-          <ProjectExportMenu summary={summary} />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenProjectSettings}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-2 px-3 text-[12px] font-medium text-ink hover:border-line-strong hover:bg-surface-3"
+            >
+              <Settings className="size-3.5 text-ink-subtle" />
+              Project Settings
+            </button>
+            <ProjectExportMenu summary={summary} />
+          </div>
         </div>
       </div>
 
@@ -3259,94 +3339,89 @@ function ProjectSection({ title, children }: { title: string; children: React.Re
 }
 
 function ProjectMenu({
-  projectName,
   currentProjectId,
   projects,
   onSwitch,
-  onOverview,
-  onSettings,
-  onProjectSettings,
-  onNew,
-  onRename,
-  onDelete,
-  queueBlockedReason
+  onNew
 }: {
-  projectName: string;
   currentProjectId: string;
   projects: ProjectDocument[];
   onSwitch: (projectId: string) => void;
-  onOverview: () => void;
-  onSettings: () => void;
-  onProjectSettings: (projectId: string) => void;
   onNew: () => void;
-  onRename: () => void;
-  onDelete: (projectId?: string) => void;
-  queueBlockedReason: string | null;
 }) {
   return (
-    <div className="absolute left-0 top-12 z-30 w-[320px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
+    <div className="absolute left-0 top-10 z-30 w-[280px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
       <div className="px-2 pb-2 pt-1">
         <div className="text-[13px] font-semibold text-ink">Projects</div>
-        <div className="mono mt-1 truncate text-[10.5px] text-ink-subtle">Current workspace: {projectName}</div>
+        <div className="mono mt-1 text-[10.5px] text-ink-subtle">Switch project context only.</div>
       </div>
-      <button onClick={onOverview} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
-        <span>Project overview</span>
-        <span className="mono text-[10.5px] text-ink-subtle">Open</span>
-      </button>
-      <button onClick={onSettings} className="flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] text-ink hover:bg-surface-3">
-        <span className="flex items-center gap-2"><Settings className="size-3.5 text-ink-subtle" /> Settings</span>
-        <span className="mono text-[10.5px] text-ink-subtle">Workspace</span>
-      </button>
       {projects.length > 0 && (
-        <div className="my-1 max-h-48 overflow-auto rounded border border-line bg-background p-1">
+        <div className="my-1 max-h-56 overflow-auto rounded border border-line bg-background p-1">
           {projects.map((project) => (
-            <div
+            <button
               key={project.id}
+              type="button"
+              onClick={() => onSwitch(project.id)}
+              disabled={project.id === currentProjectId}
               className={cn(
-                "group flex h-8 items-center gap-1 rounded px-2",
+                "flex h-9 w-full items-center justify-between gap-3 rounded px-2 text-left text-[12px]",
                 project.id === currentProjectId
                   ? "border border-line bg-surface-2 shadow-sm"
-                  : "border border-transparent hover:bg-surface-3"
+                  : "border border-transparent hover:bg-surface-3",
+                project.id === currentProjectId && "cursor-default"
               )}
             >
-              <button
-                onClick={() => onSwitch(project.id)}
-                disabled={project.id === currentProjectId}
-                className="flex min-w-0 flex-1 items-center text-left text-[12px] text-ink disabled:cursor-default"
-              >
-                <span className="truncate">{project.name}</span>
-              </button>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onProjectSettings(project.id);
-                }}
-                className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-surface-3 hover:text-ink group-hover:opacity-100"
-                title={`Edit ${project.name} project settings`}
-                aria-label={`Edit ${project.name} project settings`}
-              >
-                <Settings className="size-3" />
-              </button>
-              {project.id !== "default" && (
-                <button
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDelete(project.id);
-                  }}
-                  className="grid size-6 shrink-0 place-items-center rounded text-ink-subtle opacity-0 hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
-                  title={`Delete ${project.name}`}
-                >
-                  <Trash2 className="size-3" />
-                </button>
-              )}
-            </div>
+              <span className="truncate text-ink">{project.name}</span>
+              <span className={cn(
+                "mono shrink-0 text-[10.5px]",
+                project.id === currentProjectId ? "text-ink" : "text-ink-subtle"
+              )}>
+                {project.id === currentProjectId ? "Current" : "Open"}
+              </span>
+            </button>
           ))}
         </div>
       )}
       <div className="my-1 h-px bg-line" />
-      <ProjectMenuAction label="New project" detail="Create workspace" onClick={onNew} />
-      <ProjectMenuAction label="Rename project" detail="Edit name" onClick={onRename} />
-      <ProjectMenuAction label="Reset current project" detail={queueBlockedReason ? "Locked" : "Clear current"} onClick={() => onDelete()} danger disabled={Boolean(queueBlockedReason)} title={queueBlockedReason ?? "Reset current project"} />
+      <ProjectMenuAction label="Create Project" detail="New workspace" onClick={onNew} />
+    </div>
+  );
+}
+
+function GlobalMenu({
+  onOpenDashboard,
+  onOpenProjects,
+  onOpenIntegrations,
+  onOpenUsage,
+  onOpenBilling,
+  onOpenAccountSettings,
+  onSignOut
+}: {
+  onOpenDashboard: () => void;
+  onOpenProjects: () => void;
+  onOpenIntegrations: () => void;
+  onOpenUsage: () => void;
+  onOpenBilling: () => void;
+  onOpenAccountSettings: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="absolute left-0 top-10 z-30 w-[260px] rounded-md border border-line bg-surface-1 p-2 shadow-lg">
+      <div className="px-2 pb-2 pt-1">
+        <div className="text-[13px] font-semibold text-ink">QueueWrite</div>
+        <div className="mono mt-1 text-[10.5px] text-ink-subtle">Global application navigation</div>
+      </div>
+      <GlobalMenuAction label="Dashboard" detail="Workspace home" onClick={onOpenDashboard} />
+      <GlobalMenuAction label="Projects" detail="Switch project" onClick={onOpenProjects} />
+      <GlobalMenuAction label="Integrations" detail="Global settings" onClick={onOpenIntegrations} />
+      <GlobalMenuAction label="Usage" detail="Limits and usage" onClick={onOpenUsage} />
+      <GlobalMenuAction label="Telemetry" detail="Coming soon" disabled />
+      <GlobalMenuAction label="Billing" detail="Plans and billing" onClick={onOpenBilling} />
+      <GlobalMenuAction label="Account Settings" detail="Workspace preferences" onClick={onOpenAccountSettings} />
+      <GlobalMenuAction label="Help" detail="Coming soon" disabled />
+      <GlobalMenuAction label="Changelog" detail="Coming soon" disabled />
+      <div className="my-1 h-px bg-line" />
+      <GlobalMenuAction label="Sign Out" detail="Lock workspace" onClick={onSignOut} danger />
     </div>
   );
 }
@@ -3354,6 +3429,23 @@ function ProjectMenu({
 function ProjectMenuAction({ label, detail, onClick, danger = false, disabled = false, title }: { label: string; detail: string; onClick: () => void; danger?: boolean; disabled?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={disabled} title={title} className={cn("flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50", danger ? "text-danger" : "text-ink")}>
+      <span>{label}</span>
+      <span className="mono text-[10.5px] text-ink-subtle">{detail}</span>
+    </button>
+  );
+}
+
+function GlobalMenuAction({ label, detail, onClick, danger = false, disabled = false }: { label: string; detail: string; onClick?: () => void; danger?: boolean; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex h-9 w-full items-center justify-between rounded px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50",
+        danger ? "text-danger" : "text-ink"
+      )}
+    >
       <span>{label}</span>
       <span className="mono text-[10.5px] text-ink-subtle">{detail}</span>
     </button>

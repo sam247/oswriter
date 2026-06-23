@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "OS Writer V2",
+  title: "QueueWrite",
   description: "Reliable queue-first article production workstation"
 };
 

@@ -2,6 +2,28 @@
 
 ## Completed
 
+### QueueWrite Global Navigation Separation (V1)
+
+- Replaced the `OS Writer V2` top-bar brand with a `QueueWrite` global navigation trigger.
+- Added a new logo-driven global application menu for:
+  - Dashboard
+  - Projects
+  - Integrations
+  - Usage
+  - Billing
+  - Account Settings
+  - Sign Out
+- Kept telemetry, help, and changelog visible in the global menu as disabled `Coming soon` entries so application-level navigation can scale without reloading the project switcher.
+- Moved the primary project switcher into the top-left header beside the QueueWrite logo.
+- Simplified the project dropdown so it now focuses on project switching only:
+  - project list
+  - current project indicator
+  - create project
+- Removed project management and workspace settings actions from the project dropdown.
+- Added a dedicated `Project Settings` button to the project dashboard header so project-scoped management remains accessible outside the switcher.
+- Preserved clickable breadcrumbs for fast movement between the project dashboard and the currently selected article.
+- Updated the app metadata title to `QueueWrite` to match the new global navigation label.
+
 ### Harper Grammar And Writing Assistant Integration (Phase 1)
 
 - Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
