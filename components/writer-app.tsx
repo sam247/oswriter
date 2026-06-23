@@ -1455,7 +1455,7 @@ function Workbench() {
 
   return (
     <main className="flex h-screen w-screen flex-col overflow-hidden bg-background text-ink">
-      <header className="hairline-b flex h-10 select-none items-center bg-surface-2/85 px-3 backdrop-blur">
+      <header className="hairline-b relative z-30 flex h-10 select-none items-center overflow-visible bg-surface-2/85 px-3 backdrop-blur">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px]">
           <div ref={globalMenuRef} className="relative shrink-0">
             <button
@@ -3361,10 +3361,9 @@ function ProjectMenu({
     <div className="absolute left-0 top-10 z-[70] w-[280px] rounded-md border border-line bg-surface-1 p-2 shadow-2xl">
       <div className="px-2 pb-2 pt-1">
         <div className="text-[13px] font-semibold text-ink">Projects</div>
-        <div className="mono mt-1 text-[10.5px] text-ink-subtle">Switch project context only.</div>
       </div>
       {projects.length > 0 && (
-        <div className="my-1 max-h-56 overflow-auto rounded border border-line bg-background p-1">
+        <div className="my-1 max-h-56 overflow-auto">
           {projects.map((project) => (
             <button
               key={project.id}
@@ -3372,10 +3371,10 @@ function ProjectMenu({
               onClick={() => onSwitch(project.id)}
               disabled={project.id === currentProjectId}
               className={cn(
-                "flex h-9 w-full items-center justify-between gap-3 rounded px-2 text-left text-[12px]",
+                "flex h-9 w-full items-center justify-between gap-3 rounded-md px-2 text-left text-[12px]",
                 project.id === currentProjectId
-                  ? "border border-line bg-surface-2 shadow-sm"
-                  : "border border-transparent hover:bg-surface-3",
+                  ? "bg-surface-2 shadow-sm"
+                  : "hover:bg-surface-3",
                 project.id === currentProjectId && "cursor-default"
               )}
             >
@@ -3390,7 +3389,7 @@ function ProjectMenu({
           ))}
         </div>
       )}
-      <div className="my-1 h-px bg-line" />
+      <div className="my-1 h-px bg-line/80" />
       <ProjectMenuAction label="Create Project" detail="New workspace" onClick={onNew} />
     </div>
   );

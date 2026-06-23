@@ -14,7 +14,6 @@
   - Account Settings
   - Sign Out
 - Kept telemetry, help, and changelog visible in the global menu as disabled `Coming soon` entries so application-level navigation can scale without reloading the project switcher.
-- Moved the primary project switcher into the top-left header beside the QueueWrite logo.
 - Simplified the project dropdown so it now focuses on project switching only:
   - project list
   - current project indicator
@@ -24,6 +23,8 @@
 - Preserved clickable breadcrumbs for fast movement between the project dashboard and the currently selected article.
 - Adjusted the first pass after UI review so the header project name is breadcrumb-only again, while the pure project switcher lives in the left sidebar where users expect it.
 - Raised the sidebar project switcher layering so the menu opens above dashboard content instead of behind center-pane elements.
+- Flattened the sidebar project switcher presentation by removing the nested inner list container around project rows.
+- Raised the header layer so the QueueWrite logo menu can open reliably above the workspace surfaces again.
 - Updated the app metadata title to `QueueWrite` to match the new global navigation label.
 
 ### Harper Grammar And Writing Assistant Integration (Phase 1)
