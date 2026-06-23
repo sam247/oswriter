@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mapPlainSpanToMarkdownRange, normalizeMarkdownForHarper } from "@/lib/editor/harper/normalization";
+import { buildHarperProjectDictionary, isDictionaryTerm } from "@/lib/editor/harper/dictionary";
+import { mapMarkdownRangeToPlainSpan, mapPlainSpanToMarkdownRange, normalizeMarkdownForHarper } from "@/lib/editor/harper/normalization";
 
 describe("Harper markdown normalization", () => {
   it("removes common markdown syntax while preserving readable text", () => {
@@ -20,5 +21,38 @@ describe("Harper markdown normalization", () => {
       start: markdown.indexOf("docs"),
       end: markdown.indexOf("docs") + 4
     });
+  });
+
+  it("round trips markdown ranges to normalized text spans", () => {
+    const markdown = "## Heading\n\nUse **agreements** carefully.";
+    const mapping = normalizeMarkdownForHarper(markdown);
+    const markdownStart = markdown.indexOf("agreements");
+    const span = mapMarkdownRangeToPlainSpan(mapping, markdownStart, markdownStart + "agreements".length);
+
+    assert.deepEqual(span, {
+      start: mapping.text.indexOf("agreements"),
+      end: mapping.text.indexOf("agreements") + "agreements".length
+    });
+  });
+
+  it("builds a project dictionary from brand and knowledge base terms", () => {
+    const dictionary = buildHarperProjectDictionary({
+      name: "QueueWrite",
+      knowledgeBase: {
+        brandName: "OpenRedaction",
+        website: "",
+        aboutBusiness: "",
+        services: "PA23 planning reports\nGSC and GA4 setup",
+        products: "Disclosurely",
+        targetCustomer: "",
+        writingRules: "Use BYOK for customer-owned keys.",
+        preferredCTA: ""
+      }
+    });
+
+    assert.equal(isDictionaryTerm("QueueWrite", dictionary), true);
+    assert.equal(isDictionaryTerm("PA23", dictionary), true);
+    assert.equal(isDictionaryTerm("Next.js", dictionary), true);
+    assert.equal(isDictionaryTerm("agreements", dictionary), false);
   });
 });

@@ -244,6 +244,9 @@ function Workbench() {
   const breadcrumbArticleId = selectedArticle?.id ?? selectedJob?.articleId ?? null;
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
+  const selectedProject = selectedArticle
+    ? projects.find((project) => project.id === selectedArticle.projectId) ?? state?.project ?? null
+    : state?.project ?? null;
   const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? null;
   const handleSelectedMarkdownChange = useCallback((markdown: string) => {
     if (!selectedArticle) return;
@@ -251,7 +254,9 @@ function Workbench() {
   }, [selectedArticle, updateArticleDraft]);
   const harper = useHarperSuggestions({
     articleId: selectedArticle?.id ?? null,
+    contentProfile: selectedArticle?.resolvedContentProfile ?? selectedArticle?.contentProfile ?? selectedProject?.defaultContentProfile ?? null,
     markdown: selectedMarkdown,
+    project: selectedProject,
     viewMode: articleViewMode,
     textareaRef: editorRef,
     richEditorRef,
@@ -1824,7 +1829,7 @@ function Workbench() {
                     viewMode={articleViewMode}
                     editorRef={editorRef}
                     richEditorRef={richEditorRef}
-                    suggestions={harper.suggestions}
+                    suggestions={harper.visibleSuggestions}
                     activeSuggestionId={harper.activeSuggestionId}
                     onChange={handleSelectedMarkdownChange}
                   />
@@ -4283,7 +4288,7 @@ function ArticleWorkspace({
   viewMode: ArticleViewMode;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   richEditorRef: RefObject<HTMLDivElement | null>;
-  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
+  suggestions: ReturnType<typeof useHarperSuggestions>["visibleSuggestions"];
   activeSuggestionId: string | null;
   onChange: (markdown: string) => void;
 }) {
@@ -4337,7 +4342,7 @@ function RichMarkdownEditor({
   markdown: string;
   onChange: (markdown: string) => void;
   editorRef: RefObject<HTMLDivElement | null>;
-  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
+  suggestions: ReturnType<typeof useHarperSuggestions>["visibleSuggestions"];
   activeSuggestionId: string | null;
 }) {
   const lastMarkdownRef = useRef(markdown);
@@ -4385,7 +4390,7 @@ function MarkdownEditor({
   markdown: string;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (markdown: string) => void;
-  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
+  suggestions: ReturnType<typeof useHarperSuggestions>["visibleSuggestions"];
   activeSuggestionId: string | null;
   compact?: boolean;
 }) {
@@ -4475,7 +4480,9 @@ function Inspector({
           status={harper.status}
           suggestions={harper.suggestions}
           onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}
+          onAcceptCategory={(category) => harper.acceptCategory(category)}
           onIgnore={(suggestionId) => void harper.ignoreSuggestion(suggestionId)}
+          onIgnoreCategory={(category) => void harper.ignoreCategory(category)}
           onJump={(suggestionId) => harper.jumpToSuggestion({ suggestionId })}
         />
       ) : <Empty text="Writing suggestions appear while editing an article." />)}

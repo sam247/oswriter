@@ -4,8 +4,10 @@ import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } fro
 import { SuggestionKind, type Lint, type Suggestion } from "harper.js";
 import type { HarperTelemetryAction, HarperTelemetryEventInput } from "@/lib/analytics/harper";
 import { getHarperLinter, warmHarperLinter } from "@/lib/editor/harper/client";
-import { mapPlainSpanToMarkdownRange, normalizeMarkdownForHarper } from "@/lib/editor/harper/normalization";
+import { buildHarperProjectDictionary, isDictionaryTerm } from "@/lib/editor/harper/dictionary";
+import { mapMarkdownRangeToPlainSpan, mapPlainSpanToMarkdownRange, normalizeMarkdownForHarper } from "@/lib/editor/harper/normalization";
 import type { HarperSuggestionCategory, HarperTelemetryCategory, HarperTextMapping } from "@/lib/editor/harper/types";
+import type { ProjectDocument } from "@/lib/types";
 
 export type ArticleViewMode = "rich" | "md" | "split";
 
@@ -24,6 +26,20 @@ export type HarperSuggestionItem = {
   markdownStart: number;
   markdownEnd: number;
   suggestionCount: number;
+  occurrenceCount: number;
+  occurrences: HarperSuggestionOccurrence[];
+  lint: Lint;
+  suggestions: Suggestion[];
+};
+
+export type HarperSuggestionOccurrence = {
+  id: string;
+  hash: bigint;
+  plainStart: number;
+  plainEnd: number;
+  markdownStart: number;
+  markdownEnd: number;
+  problemText: string;
   lint: Lint;
   suggestions: Suggestion[];
 };
@@ -32,6 +48,7 @@ type UseHarperSuggestionsParams = {
   articleId: string | null;
   contentProfile?: string | null;
   markdown: string;
+  project?: Pick<ProjectDocument, "name" | "slug" | "knowledgeBase" | "profile"> | null;
   viewMode: ArticleViewMode;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   richEditorRef: RefObject<HTMLDivElement | null>;
@@ -48,6 +65,7 @@ export function useHarperSuggestions({
   articleId,
   contentProfile,
   markdown,
+  project,
   viewMode,
   textareaRef,
   richEditorRef,
@@ -62,6 +80,7 @@ export function useHarperSuggestions({
   const analysisRevisionRef = useRef(0);
   const mappingRef = useRef<HarperTextMapping | null>(null);
   const visibleSuggestionIdsRef = useRef<Set<string>>(new Set());
+  const dictionary = useMemo(() => buildHarperProjectDictionary(project), [project]);
 
   markdownRef.current = markdown;
   viewModeRef.current = viewMode;
@@ -106,36 +125,56 @@ export function useHarperSuggestions({
       try {
         const linter = await getHarperLinter();
         const lintGroups = await linter.organizedLints(mapping.text, { language: "plaintext", dedup: true });
-        const nextSuggestions: HarperSuggestionItem[] = [];
+        const rawSuggestions: HarperSuggestionItem[] = [];
 
         for (const [ruleId, lints] of Object.entries(lintGroups)) {
           for (const lint of lints) {
             const span = lint.span();
-            const markdownRange = mapPlainSpanToMarkdownRange(mapping, span.start, span.end);
+            const alignedSpan = alignLintSpan(mapping.text, span.start, span.end, lint.get_problem_text());
+            const markdownRange = mapPlainSpanToMarkdownRange(mapping, alignedSpan.start, alignedSpan.end);
             if (!markdownRange) continue;
+            const exactPlainSpan = mapMarkdownRangeToPlainSpan(mapping, markdownRange.start, markdownRange.end) ?? alignedSpan;
             const hash = await linter.contextHash(mapping.text, lint);
             const lintSuggestions = lint.suggestions();
-            nextSuggestions.push({
-              id: `${ruleId}:${hash.toString()}-${span.start}-${span.end}`,
+            const problemText = mapping.text.slice(exactPlainSpan.start, exactPlainSpan.end) || lint.get_problem_text();
+            const category = categorizeLint(lint.lint_kind(), lint.message(), problemText, lintSuggestions);
+            const replacementText = getConfidentReplacement(problemText, lintSuggestions, category);
+            if (isDictionaryTerm(problemText, dictionary) || !shouldSurfaceLint(problemText, replacementText, lint.lint_kind(), lint.message(), category)) continue;
+
+            rawSuggestions.push({
+              id: `${ruleId}:${hash.toString()}-${exactPlainSpan.start}-${exactPlainSpan.end}`,
               hash,
-              category: categorizeLint(lint.lint_kind()),
+              category,
               telemetryCategory: telemetryCategoryForLint(lint.lint_kind()),
               ruleId,
               kind: lint.lint_kind(),
-              message: lint.message(),
-              problemText: lint.get_problem_text(),
-              replacementText: lintSuggestions[0]?.get_replacement_text() ?? null,
-              plainStart: span.start,
-              plainEnd: span.end,
+              message: normalizeIssueTitle(lint.message(), category),
+              problemText,
+              replacementText,
+              plainStart: exactPlainSpan.start,
+              plainEnd: exactPlainSpan.end,
               markdownStart: markdownRange.start,
               markdownEnd: markdownRange.end,
-              suggestionCount: lintSuggestions.length,
+              suggestionCount: replacementText ? lintSuggestions.length : 0,
+              occurrenceCount: 1,
+              occurrences: [{
+                id: `${ruleId}:${hash.toString()}-${exactPlainSpan.start}-${exactPlainSpan.end}`,
+                hash,
+                plainStart: exactPlainSpan.start,
+                plainEnd: exactPlainSpan.end,
+                markdownStart: markdownRange.start,
+                markdownEnd: markdownRange.end,
+                problemText,
+                lint,
+                suggestions: lintSuggestions
+              }],
               lint,
               suggestions: lintSuggestions
             });
           }
         }
 
+        const nextSuggestions = groupDuplicateSuggestions(rawSuggestions);
         nextSuggestions.sort((left, right) => left.plainStart - right.plainStart || left.plainEnd - right.plainEnd);
 
         if (analysisRevisionRef.current !== revision) return;
@@ -158,7 +197,7 @@ export function useHarperSuggestions({
       if (analysisRevisionRef.current !== revision) return;
       void execute();
     }, 900);
-  }, [articleId]);
+  }, [articleId, dictionary]);
 
   useEffect(() => {
     if (!articleId) {
@@ -190,23 +229,17 @@ export function useHarperSuggestions({
 
   const counts = useMemo(() => ({
     grammar: suggestions.filter((item) => item.category === "grammar").length,
+    spelling: suggestions.filter((item) => item.category === "spelling").length,
     style: suggestions.filter((item) => item.category === "style").length,
-    readability: suggestions.filter((item) => item.category === "readability").length
+    readability: suggestions.filter((item) => item.category === "readability").length,
+    terminology: suggestions.filter((item) => item.category === "terminology").length
   }), [suggestions]);
 
   const acceptSuggestion = useCallback(async (suggestionId: string) => {
     const target = suggestions.find((item) => item.id === suggestionId);
     if (!target) return;
-    const choice = target.suggestions[0];
-    if (!choice) return;
-
-    let nextMarkdown = markdownRef.current;
-    const replacement = choice.get_replacement_text();
-    if (choice.kind() === SuggestionKind.InsertAfter) {
-      nextMarkdown = `${nextMarkdown.slice(0, target.markdownEnd)}${replacement}${nextMarkdown.slice(target.markdownEnd)}`;
-    } else {
-      nextMarkdown = `${nextMarkdown.slice(0, target.markdownStart)}${replacement}${nextMarkdown.slice(target.markdownEnd)}`;
-    }
+    const nextMarkdown = applySuggestionOccurrences(markdownRef.current, target.occurrences);
+    if (nextMarkdown === markdownRef.current) return;
 
     recordTelemetry([buildTelemetryEvent(target, articleId, contentProfile, "accepted")]);
     onChange(nextMarkdown);
@@ -220,7 +253,28 @@ export function useHarperSuggestions({
     setSuggestions((current) => current.filter((item) => item.id !== suggestionId));
     if (activeSuggestionId === suggestionId) setActiveSuggestionId(null);
     const linter = await getHarperLinter();
-    await linter.ignoreLintHash(target.hash);
+    await Promise.all(target.occurrences.map((occurrence) => linter.ignoreLintHash(occurrence.hash)));
+    void runAnalysis(markdownRef.current, true);
+  }, [activeSuggestionId, articleId, contentProfile, recordTelemetry, runAnalysis, suggestions]);
+
+  const acceptCategory = useCallback((category: HarperSuggestionCategory) => {
+    const targets = suggestions.filter((item) => item.category === category && item.replacementText);
+    if (!targets.length) return;
+    const nextMarkdown = applySuggestionOccurrences(markdownRef.current, targets.flatMap((item) => item.occurrences));
+    if (nextMarkdown === markdownRef.current) return;
+    recordTelemetry(targets.map((target) => buildTelemetryEvent(target, articleId, contentProfile, "accepted")));
+    onChange(nextMarkdown);
+    setActiveSuggestionId(null);
+  }, [articleId, contentProfile, onChange, recordTelemetry, suggestions]);
+
+  const ignoreCategory = useCallback(async (category: HarperSuggestionCategory) => {
+    const targets = suggestions.filter((item) => item.category === category);
+    if (!targets.length) return;
+    recordTelemetry(targets.map((target) => buildTelemetryEvent(target, articleId, contentProfile, "ignored")));
+    setSuggestions((current) => current.filter((item) => item.category !== category));
+    if (activeSuggestionId && targets.some((item) => item.id === activeSuggestionId)) setActiveSuggestionId(null);
+    const linter = await getHarperLinter();
+    await Promise.all(targets.flatMap((target) => target.occurrences).map((occurrence) => linter.ignoreLintHash(occurrence.hash)));
     void runAnalysis(markdownRef.current, true);
   }, [activeSuggestionId, articleId, contentProfile, recordTelemetry, runAnalysis, suggestions]);
 
@@ -230,7 +284,7 @@ export function useHarperSuggestions({
     setActiveSuggestionId(target.id);
 
     if (viewModeRef.current === "rich" && richEditorRef.current) {
-      const range = createDomRangeFromOffsets(richEditorRef.current, target.plainStart, target.plainEnd);
+      const range = createDomRangeFromNormalizedOffsets(richEditorRef.current, target.plainStart, target.plainEnd);
       if (range) {
         const selection = window.getSelection();
         selection?.removeAllRanges();
@@ -258,25 +312,190 @@ export function useHarperSuggestions({
     hasSuggestions: suggestions.length > 0,
     status,
     suggestions,
+    visibleSuggestions: suggestions.flatMap((suggestion) => suggestion.occurrences.map((occurrence) => ({
+      id: occurrence.id,
+      groupId: suggestion.id,
+      category: suggestion.category,
+      plainStart: occurrence.plainStart,
+      plainEnd: occurrence.plainEnd,
+      markdownStart: occurrence.markdownStart,
+      markdownEnd: occurrence.markdownEnd
+    }))),
     acceptSuggestion,
     ignoreSuggestion,
+    acceptCategory,
+    ignoreCategory,
     jumpToSuggestion,
     selectSuggestion: setActiveSuggestionId
   };
 }
 
-function categorizeLint(kind: string): HarperSuggestionCategory {
+function categorizeLint(kind: string, message = "", problemText = "", suggestions: Suggestion[] = []): HarperSuggestionCategory {
   if (kind === "Readability") return "readability";
+  if (isTerminologyLint(kind, message, problemText, suggestions)) return "terminology";
+  if (kind === "Spelling" || kind === "Typo") return "spelling";
   if ([
     "Agreement",
     "BoundaryError",
     "Capitalization",
     "Grammar",
     "Punctuation",
-    "Spelling",
-    "Typo"
   ].includes(kind)) return "grammar";
   return "style";
+}
+
+function alignLintSpan(text: string, start: number, end: number, problemText: string) {
+  const safeStart = Math.max(0, Math.min(start, text.length));
+  const safeEnd = Math.max(safeStart, Math.min(end, text.length));
+  const normalizedProblem = problemText.trim();
+
+  if (normalizedProblem) {
+    const searchStart = Math.max(0, safeStart - 40);
+    const searchEnd = Math.min(text.length, safeEnd + 40);
+    const nearby = text.slice(searchStart, searchEnd);
+    const exactIndex = nearby.indexOf(normalizedProblem);
+    if (exactIndex >= 0) {
+      return {
+        start: searchStart + exactIndex,
+        end: searchStart + exactIndex + normalizedProblem.length
+      };
+    }
+  }
+
+  return expandToWordBoundary(text, safeStart, safeEnd);
+}
+
+function expandToWordBoundary(text: string, start: number, end: number) {
+  let nextStart = start;
+  let nextEnd = end;
+  while (nextStart > 0 && isWordCharacter(text[nextStart - 1]) && isWordCharacter(text[nextStart])) nextStart -= 1;
+  while (nextEnd < text.length && isWordCharacter(text[nextEnd - 1]) && isWordCharacter(text[nextEnd])) nextEnd += 1;
+  return { start: nextStart, end: nextEnd };
+}
+
+function isWordCharacter(character = "") {
+  return /[\p{L}\p{N}'-]/u.test(character);
+}
+
+function isTerminologyLint(kind: string, message: string, problemText: string, suggestions: Suggestion[]) {
+  if (kind !== "Spelling" && kind !== "Typo") return false;
+  if (/unknown|unrecognized|dictionary|spelling/i.test(message) && !suggestions.length) return true;
+  return /[A-Z]{2,}|\d|[.+#-]/.test(problemText);
+}
+
+function getConfidentReplacement(problemText: string, suggestions: Suggestion[], category: HarperSuggestionCategory) {
+  const replacement = suggestions[0]?.get_replacement_text()?.trim() ?? null;
+  if (!replacement) return null;
+  if (category === "terminology") return null;
+  if (isLowConfidenceReplacement(problemText, replacement)) return null;
+  return replacement;
+}
+
+function shouldSurfaceLint(problemText: string, replacementText: string | null, kind: string, message: string, category: HarperSuggestionCategory) {
+  const trimmed = problemText.trim();
+  if (!trimmed || trimmed.length < 2) return false;
+  if (category === "terminology") return true;
+  if (kind === "Spelling" || kind === "Typo") return Boolean(replacementText) || /unknown|unrecognized/i.test(message);
+  return true;
+}
+
+function isLowConfidenceReplacement(problemText: string, replacement: string) {
+  const source = problemText.trim();
+  if (!source || !replacement) return true;
+  if (source.toLowerCase() === replacement.toLowerCase()) return true;
+  if (/\d/.test(source) && !/\d/.test(replacement)) return true;
+  if (/[A-Z]{2,}/.test(source) && replacement === replacement.toLowerCase()) return true;
+  if (source.length <= 4 && levenshteinDistance(source.toLowerCase(), replacement.toLowerCase()) > 1) return true;
+  return false;
+}
+
+function groupDuplicateSuggestions(items: HarperSuggestionItem[]) {
+  const grouped = new Map<string, HarperSuggestionItem>();
+
+  for (const item of items) {
+    const key = [
+      item.category,
+      item.ruleId,
+      item.message.toLowerCase(),
+      item.problemText.toLowerCase(),
+      item.replacementText?.toLowerCase() ?? ""
+    ].join("\u0000");
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, item);
+      continue;
+    }
+
+    existing.occurrences.push(...item.occurrences);
+    existing.occurrenceCount = existing.occurrences.length;
+    existing.plainStart = Math.min(existing.plainStart, item.plainStart);
+    existing.plainEnd = existing.plainStart === item.plainStart ? item.plainEnd : existing.plainEnd;
+    existing.markdownStart = Math.min(existing.markdownStart, item.markdownStart);
+    existing.markdownEnd = existing.markdownStart === item.markdownStart ? item.markdownEnd : existing.markdownEnd;
+  }
+
+  return [...grouped.values()].map((item) => {
+    const occurrences = item.occurrences.sort((left, right) => left.markdownStart - right.markdownStart || left.markdownEnd - right.markdownEnd);
+    const first = occurrences[0];
+    return {
+      ...item,
+      hash: first.hash,
+      plainStart: first.plainStart,
+      plainEnd: first.plainEnd,
+      markdownStart: first.markdownStart,
+      markdownEnd: first.markdownEnd,
+      occurrences,
+      occurrenceCount: occurrences.length
+    };
+  });
+}
+
+function applySuggestionOccurrences(markdown: string, occurrences: HarperSuggestionOccurrence[]) {
+  let nextMarkdown = markdown;
+  const ordered = [...occurrences]
+    .map((occurrence) => ({ occurrence, choice: occurrence.suggestions[0] }))
+    .filter((item): item is { occurrence: HarperSuggestionOccurrence; choice: Suggestion } => Boolean(item.choice))
+    .sort((left, right) => right.occurrence.markdownStart - left.occurrence.markdownStart);
+
+  for (const { occurrence, choice } of ordered) {
+    const replacement = choice.get_replacement_text();
+    if (choice.kind() === SuggestionKind.InsertAfter) {
+      nextMarkdown = `${nextMarkdown.slice(0, occurrence.markdownEnd)}${replacement}${nextMarkdown.slice(occurrence.markdownEnd)}`;
+    } else {
+      nextMarkdown = `${nextMarkdown.slice(0, occurrence.markdownStart)}${replacement}${nextMarkdown.slice(occurrence.markdownEnd)}`;
+    }
+  }
+
+  return nextMarkdown;
+}
+
+function normalizeIssueTitle(message: string, category: HarperSuggestionCategory) {
+  const cleanMessage = message.replace(/\s+/g, " ").trim();
+  if (category === "terminology") return "Unknown term";
+  if (cleanMessage.length <= 80) return cleanMessage;
+  return `${cleanMessage.slice(0, 77)}...`;
+}
+
+function levenshteinDistance(left: string, right: string) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+    let last = leftIndex;
+    previous[0] = leftIndex + 1;
+
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
+      const old = previous[rightIndex + 1];
+      const cost = left[leftIndex] === right[rightIndex] ? 0 : 1;
+      previous[rightIndex + 1] = Math.min(
+        previous[rightIndex + 1] + 1,
+        previous[rightIndex] + 1,
+        last + cost
+      );
+      last = old;
+    }
+  }
+
+  return previous[right.length];
 }
 
 function telemetryCategoryForLint(kind: string): HarperTelemetryCategory {
@@ -304,24 +523,13 @@ function buildTelemetryEvent(
   };
 }
 
-function createDomRangeFromOffsets(root: HTMLElement, start: number, end: number) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+function createDomRangeFromNormalizedOffsets(root: HTMLElement, start: number, end: number) {
   const nodes: Array<{ node: Text; start: number; end: number }> = [];
   let cursor = 0;
-  let current = walker.nextNode();
 
-  while (current) {
-    if (current.nodeType === Node.TEXT_NODE) {
-      const textNode = current as Text;
-      const text = textNode.textContent ?? "";
-      nodes.push({
-        node: textNode,
-        start: cursor,
-        end: cursor + text.length
-      });
-      cursor += text.length;
-    }
-    current = walker.nextNode();
+  for (const child of Array.from(root.childNodes)) {
+    cursor = collectTextNodes(child, nodes, cursor);
+    if (isBlockNode(child)) cursor += 2;
   }
 
   const startNode = nodes.find((item) => start >= item.start && start <= item.end);
@@ -332,4 +540,23 @@ function createDomRangeFromOffsets(root: HTMLElement, start: number, end: number
   range.setStart(startNode.node, Math.max(start - startNode.start, 0));
   range.setEnd(endNode.node, Math.max(end - endNode.start, 0));
   return range;
+}
+
+function collectTextNodes(node: Node, nodes: Array<{ node: Text; start: number; end: number }>, start: number) {
+  let cursor = start;
+  if (node.nodeType === Node.TEXT_NODE) {
+    const textNode = node as Text;
+    const text = textNode.textContent ?? "";
+    nodes.push({ node: textNode, start: cursor, end: cursor + text.length });
+    return cursor + text.length;
+  }
+
+  for (const child of Array.from(node.childNodes)) {
+    cursor = collectTextNodes(child, nodes, cursor);
+  }
+  return cursor;
+}
+
+function isBlockNode(node: Node) {
+  return node instanceof HTMLElement && /^(p|h[1-6]|ul|ol|li|div)$/i.test(node.tagName);
 }

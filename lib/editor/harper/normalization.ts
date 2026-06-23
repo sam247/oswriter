@@ -2,6 +2,7 @@ import type { HarperMarkdownRange, HarperTextMapping } from "@/lib/editor/harper
 
 export function normalizeMarkdownForHarper(markdown: string): HarperTextMapping {
   const plainToMarkdown: number[] = [];
+  const markdownToPlain: Array<number | null> = Array.from({ length: markdown.length }, () => null);
   let text = "";
   let index = 0;
   let lineStart = true;
@@ -24,6 +25,7 @@ export function normalizeMarkdownForHarper(markdown: string): HarperTextMapping 
 
     if (markdown[index] === "\n") {
       text += "\n";
+      markdownToPlain[index] = plainToMarkdown.length;
       plainToMarkdown.push(index);
       index += 1;
       lineStart = true;
@@ -34,6 +36,7 @@ export function normalizeMarkdownForHarper(markdown: string): HarperTextMapping 
     if (link) {
       for (let offset = 0; offset < link.label.length; offset += 1) {
         text += link.label[offset];
+        markdownToPlain[link.labelStart + offset] = plainToMarkdown.length;
         plainToMarkdown.push(link.labelStart + offset);
       }
       index = link.end;
@@ -54,6 +57,7 @@ export function normalizeMarkdownForHarper(markdown: string): HarperTextMapping 
     }
 
     text += marker;
+    markdownToPlain[index] = plainToMarkdown.length;
     plainToMarkdown.push(index);
     index += 1;
     lineStart = false;
@@ -62,6 +66,7 @@ export function normalizeMarkdownForHarper(markdown: string): HarperTextMapping 
   return {
     text,
     plainToMarkdown,
+    markdownToPlain,
     markdownLength: markdown.length
   };
 }
@@ -76,6 +81,17 @@ export function mapPlainSpanToMarkdownRange(mapping: HarperTextMapping, start: n
   return {
     start: markdownStart,
     end: Math.max(markdownStart, markdownEnd)
+  };
+}
+
+export function mapMarkdownRangeToPlainSpan(mapping: HarperTextMapping, start: number, end: number) {
+  const plainIndexes = mapping.markdownToPlain
+    .slice(Math.max(start, 0), Math.max(end, start))
+    .filter((index): index is number => typeof index === "number");
+  if (!plainIndexes.length) return null;
+  return {
+    start: plainIndexes[0],
+    end: plainIndexes[plainIndexes.length - 1] + 1
   };
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, EyeOff, Loader2 } from "lucide-react";
+import { Check, EyeOff, Loader2, MapPin } from "lucide-react";
 import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import { cn } from "@/lib/utils";
 import type { HarperSuggestionCategory } from "@/lib/editor/harper/types";
@@ -14,15 +14,21 @@ type HarperSuggestionPanelProps = {
   status: "idle" | "loading" | "ready" | "error";
   suggestions: HarperSuggestionItem[];
   onAccept: (suggestionId: string) => void;
+  onAcceptCategory: (category: HarperSuggestionCategory) => void;
   onIgnore: (suggestionId: string) => void;
+  onIgnoreCategory: (category: HarperSuggestionCategory) => void;
   onJump: (suggestionId: string) => void;
 };
 
 const CATEGORY_LABELS: Record<HarperSuggestionCategory, string> = {
   grammar: "Grammar",
+  spelling: "Spelling",
   style: "Style",
-  readability: "Readability"
+  readability: "Readability",
+  terminology: "Terminology"
 };
+
+const CATEGORIES: HarperSuggestionCategory[] = ["grammar", "spelling", "style", "readability", "terminology"];
 
 export function HarperSuggestionPanel({
   activeSuggestionId,
@@ -32,13 +38,15 @@ export function HarperSuggestionPanel({
   status,
   suggestions,
   onAccept,
+  onAcceptCategory,
   onIgnore,
+  onIgnoreCategory,
   onJump
 }: HarperSuggestionPanelProps) {
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-3 gap-2">
-        {(["grammar", "style", "readability"] as const).map((category) => (
+      <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
+        {CATEGORIES.map((category) => (
           <div key={category} className="rounded-md border border-line bg-background p-2.5">
             <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{CATEGORY_LABELS[category]}</div>
             <div className="mt-1 text-lg font-semibold text-ink">{counts[category]}</div>
@@ -66,14 +74,32 @@ export function HarperSuggestionPanel({
         </div>
       )}
 
-      {(["grammar", "style", "readability"] as const).map((category) => {
+      {CATEGORIES.map((category) => {
         const items = suggestions.filter((item) => item.category === category);
         if (!items.length) return null;
+        const hasAcceptableItems = items.some((item) => item.replacementText);
         return (
           <section key={category} className="space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-subtle">{CATEGORY_LABELS[category]}</h3>
-              <span className="mono text-[10.5px] text-ink-subtle">{items.length} shown</span>
+              <div className="flex items-center gap-1.5">
+                <span className="mono text-[10.5px] text-ink-subtle">{items.length} shown</span>
+                <button
+                  type="button"
+                  onClick={() => onAcceptCategory(category)}
+                  disabled={!hasAcceptableItems}
+                  className="h-7 rounded-md border border-line bg-surface-1 px-2 text-[11px] font-medium text-ink hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Accept all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onIgnoreCategory(category)}
+                  className="h-7 rounded-md border border-line bg-background px-2 text-[11px] font-medium text-ink-muted hover:border-line-strong hover:text-ink"
+                >
+                  Ignore all
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               {items.map((item) => (
@@ -87,12 +113,13 @@ export function HarperSuggestionPanel({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-ink">{item.message}</div>
-                      <div className="mt-1 line-clamp-2 text-xs text-ink-muted">
-                        {item.problemText || "Suggested wording improvement"}
+                      <div className="mt-1 text-xs text-ink-muted">
+                        <span className="font-medium text-ink">{item.problemText || "Suggested wording improvement"}</span>
+                        {item.occurrenceCount > 1 && <span className="ml-2">{item.occurrenceCount} occurrences</span>}
                       </div>
                       {item.replacementText && (
                         <div className="mt-2 rounded bg-surface-2 px-2 py-1 text-xs text-ink">
-                          Suggestion: {item.replacementText || "Remove"}
+                          {item.replacementText || "Remove"}
                         </div>
                       )}
                     </div>
@@ -104,8 +131,9 @@ export function HarperSuggestionPanel({
                     <button
                       type="button"
                       onClick={() => onJump(item.id)}
-                      className="text-xs font-medium text-ink-muted hover:text-ink"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted hover:text-ink"
                     >
+                      <MapPin className="size-3.5" />
                       Jump to issue
                     </button>
                     <div className="flex items-center gap-2">

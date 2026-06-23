@@ -11,6 +11,7 @@ type TextareaHighlightOverlayProps = {
   scrollTop: number;
   suggestions: Array<{
     id: string;
+    groupId?: string;
     category: HarperSuggestionCategory;
     markdownStart: number;
     markdownEnd: number;
@@ -50,7 +51,7 @@ export function TextareaHighlightOverlay({
         key: item.id,
         text: markdown.slice(item.markdownStart, item.markdownEnd),
         category: item.category,
-        active: activeSuggestionId === item.id
+        active: activeSuggestionId === item.id || activeSuggestionId === item.groupId
       });
       cursor = item.markdownEnd;
     }
@@ -79,8 +80,10 @@ export function TextareaHighlightOverlay({
             className={cn(
               "text-transparent",
               fragment.category === "grammar" && "harper-overlay-grammar",
+              fragment.category === "spelling" && "harper-overlay-spelling",
               fragment.category === "style" && "harper-overlay-style",
               fragment.category === "readability" && "harper-overlay-readability",
+              fragment.category === "terminology" && "harper-overlay-terminology",
               fragment.active && "harper-overlay-active"
             )}
           >
