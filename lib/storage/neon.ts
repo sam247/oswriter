@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
-import { applyPublishingDefaults } from "@/lib/publishing/workflow";
+import { applyPublishingDefaults } from "@/lib/publishing/status";
 import { normalizeProjectProfile, profileKeyFor } from "@/lib/project/profile";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
@@ -11,7 +11,7 @@ import type { WorkerObservationTimings } from "@/lib/storage/storage";
 import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
-import { emptyHarperTelemetryReport, type HarperContentProfileMetric, type HarperRuleMetric, type HarperTelemetryEventInput, type HarperTelemetryReport, type HarperTelemetrySummary, type HarperTopRuleMetric } from "@/lib/analytics/harper";
+import { emptyHarperTelemetryReport, type HarperContentProfileMetric, type HarperRuleMetric, type HarperTelemetryEventInput, type HarperTelemetryReport, type HarperTopRuleMetric } from "@/lib/analytics/harper";
 
 type NeonSql = ReturnType<typeof neon>;
 
@@ -36,7 +36,6 @@ export class NeonStorageProvider implements StorageProvider {
   private tenantReady = false;
   private generationTelemetrySchemaReady = false;
   private harperTelemetrySchemaReady = false;
-  private articlePublishingSchemaReady = false;
   private wordPressConnectionSchemaReady = false;
   private siteKnowledgeSchemaReady = false;
   private readonly ensuredProjects = new Set<string>();
@@ -324,14 +323,13 @@ export class NeonStorageProvider implements StorageProvider {
   async getArticleById(articleId: string): Promise<ArticleDocument | null> {
     return this.withFailureLogging("getArticleById", articleId, async () => {
       const found = rows(await this.sql`select document from articles where id = ${articleId}`);
-      const article = found[0]?.document as ArticleDocument | null ?? null;
-      return article ? applyPublishingDefaults(article) : null;
+      if (!found[0]?.document) return null;
+      return applyPublishingDefaults(found[0].document as ArticleDocument);
     });
   }
 
   async updateArticle(article: ArticleDocument): Promise<void> {
     return this.withFailureLogging("updateArticle", article.id, async () => {
-      await this.ensureArticlePublishingSchema();
       const summary = toArticleSummary(article);
       const persistedDocument = {
         ...article,
@@ -342,11 +340,6 @@ export class NeonStorageProvider implements StorageProvider {
           title = ${article.title},
           markdown = ${article.markdown},
           word_count = ${article.wordCount},
-          publishing_status = ${summary.publishingStatus},
-          published_at = ${summary.publishedAt ?? null}::timestamptz,
-          wordpress_post_id = ${summary.wordpressPostId ?? null},
-          wordpress_url = ${summary.wordpressUrl ?? null},
-          scheduled_publish_at = ${summary.scheduledPublishAt ?? null}::timestamptz,
           document = ${JSON.stringify(persistedDocument)}::jsonb,
           updated_at = ${article.updatedAt}::timestamptz
         where id = ${article.id}
@@ -503,44 +496,13 @@ export class NeonStorageProvider implements StorageProvider {
 
   async listArticleSummaries(projectId: string): Promise<ArticleSummary[]> {
     return this.withFailureLogging("listArticleSummaries", projectId, async () => {
-      await this.ensureArticlePublishingSchema();
       const found = rows(await this.sql`
-        select id, title, quality_score, word_count, status, updated_at,
-          case
-            when coalesce(publishing_status, '') = 'published' then 'published'
-            when coalesce(publishing_status, '') = 'scheduled' then 'scheduled'
-            when coalesce(publishing_status, '') = 'draft'
-              and (wordpress_post_id is not null or nullif(document #>> '{publishing,wordpress,status}', '') = 'draft')
-              then 'draft'
-            when document #>> '{publishing,wordpress,status}' = 'publish' then 'published'
-            when document #>> '{publishing,wordpress,status}' = 'draft' then 'draft'
-            else 'not_published'
-          end as publishing_status,
-          coalesce(published_at, nullif(document #>> '{publishing,wordpress,publishedAt}', '')::timestamptz) as published_at,
-          coalesce(wordpress_post_id, nullif(document #>> '{publishing,wordpress,postId}', '')::int) as wordpress_post_id,
-          coalesce(wordpress_url, nullif(document #>> '{publishing,wordpress,url}', '')) as wordpress_url,
-          scheduled_publish_at,
-          coalesce((document #>> '{summaryScores,research}')::numeric, quality_score, 0) as research_score,
-          coalesce((document #>> '{summaryScores,evidence}')::numeric, quality_score, 0) as evidence_score
+        select document
         from articles
         where project_id = ${projectId}
         order by updated_at desc
       `);
-      return found.map((row) => ({
-        id: String(row.id),
-        title: String(row.title),
-        qualityScore: Number(row.quality_score ?? 0),
-        researchScore: Number(row.research_score ?? 0),
-        evidenceScore: Number(row.evidence_score ?? 0),
-        wordCount: Number(row.word_count ?? 0),
-        status: String(row.status) as ArticleSummary["status"],
-        publishingStatus: String(row.publishing_status ?? "not_published") as ArticleSummary["publishingStatus"],
-        publishedAt: row.published_at ? new Date(row.published_at as string | number | Date).toISOString() : null,
-        wordpressPostId: row.wordpress_post_id === null || row.wordpress_post_id === undefined ? null : Number(row.wordpress_post_id),
-        wordpressUrl: row.wordpress_url ? String(row.wordpress_url) : null,
-        scheduledPublishAt: row.scheduled_publish_at ? new Date(row.scheduled_publish_at as string | number | Date).toISOString() : null,
-        updatedAt: new Date(row.updated_at as string | number | Date).toISOString()
-      }));
+      return found.map((row) => toArticleSummary(applyPublishingDefaults(row.document as ArticleDocument)));
     });
   }
 
@@ -1435,7 +1397,11 @@ export class NeonStorageProvider implements StorageProvider {
       : table === "articles"
         ? await this.sql`select document from articles where id = ${id}`
         : await this.sql`select document from research_packs where id = ${id}`);
-    return found[0]?.document as T | null ?? null;
+    if (!found[0]?.document) return null;
+    if (table === "articles") {
+      return applyPublishingDefaults(found[0].document as ArticleDocument) as T;
+    }
+    return found[0].document as T;
   }
 
   private async getSingleQueueJob(projectId: string, status: "queued" | "processing") {
@@ -1457,7 +1423,11 @@ export class NeonStorageProvider implements StorageProvider {
     const found = rows(table === "jobs"
       ? await this.sql`select document from jobs where project_id = ${projectId} order by created_at asc`
       : await this.sql`select document from articles where project_id = ${projectId} order by updated_at desc`);
-    return found.map((row) => row.document as T);
+    return found.map((row) => (
+      table === "articles"
+        ? applyPublishingDefaults(row.document as ArticleDocument) as T
+        : row.document as T
+    ));
   }
 
   private async saveProject(project: ProjectDocument) {
@@ -1543,7 +1513,6 @@ export class NeonStorageProvider implements StorageProvider {
   }
 
   private async saveArticleRow(article: ArticleDocument) {
-    await this.ensureArticlePublishingSchema();
     const tenant = await this.ensureTenant();
     await this.ensureProjectRows(article.projectId);
     const next = withArticleDefaults(article, tenant);
@@ -1555,16 +1524,13 @@ export class NeonStorageProvider implements StorageProvider {
     await this.sql`
       insert into articles (
         id, organisation_id, project_id, job_id, title, status, status_reason, markdown, markdown_blob_path,
-        current_version_number, versioned_at, word_count, quality_score, research_summary, publishing_status,
-        published_at, wordpress_post_id, wordpress_url, scheduled_publish_at, validation, pipeline,
+        current_version_number, versioned_at, word_count, quality_score, research_summary, validation, pipeline,
         sources, needs_review_reasons, timings, created_by_user_id, document, created_at, updated_at
       )
       values (
         ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.jobId}, ${next.title}, ${next.status},
         ${next.statusReason ?? null}, ${next.markdown}, ${next.markdownBlobPath ?? null}, ${next.currentVersionNumber},
         ${next.versionedAt ?? null}::timestamptz, ${next.wordCount}, ${next.qualityScore}, ${next.researchSummary},
-        ${summary.publishingStatus}, ${summary.publishedAt ?? null}::timestamptz, ${summary.wordpressPostId ?? null},
-        ${summary.wordpressUrl ?? null}, ${summary.scheduledPublishAt ?? null}::timestamptz,
         ${JSON.stringify(next.validation)}::jsonb, ${JSON.stringify(next.pipeline)}::jsonb, ${JSON.stringify(next.sources)}::jsonb,
         ${JSON.stringify(next.needsReviewReasons)}::jsonb, ${JSON.stringify(next.timings ?? {})}::jsonb,
         ${next.createdByUserId}, ${JSON.stringify(persistedDocument)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
@@ -1579,11 +1545,6 @@ export class NeonStorageProvider implements StorageProvider {
         word_count = excluded.word_count,
         quality_score = excluded.quality_score,
         research_summary = excluded.research_summary,
-        publishing_status = excluded.publishing_status,
-        published_at = excluded.published_at,
-        wordpress_post_id = excluded.wordpress_post_id,
-        wordpress_url = excluded.wordpress_url,
-        scheduled_publish_at = excluded.scheduled_publish_at,
         validation = excluded.validation,
         pipeline = excluded.pipeline,
         sources = excluded.sources,
@@ -1980,19 +1941,6 @@ export class NeonStorageProvider implements StorageProvider {
         on harper_telemetry (organisation_id, project_id, content_profile)
     `;
     this.harperTelemetrySchemaReady = true;
-  }
-
-  private async ensureArticlePublishingSchema() {
-    if (this.articlePublishingSchemaReady) return;
-    await this.sql`
-      alter table articles
-        add column if not exists publishing_status text,
-        add column if not exists published_at timestamptz,
-        add column if not exists wordpress_post_id integer,
-        add column if not exists wordpress_url text,
-        add column if not exists scheduled_publish_at timestamptz
-    `;
-    this.articlePublishingSchemaReady = true;
   }
 
   private async ensureWordPressConnectionSchema() {
@@ -2632,6 +2580,41 @@ function organisationFromRow(row: Record<string, unknown>): OrganisationDocument
   };
 }
 
+function versionFromRow(row: Record<string, unknown>): DocumentVersion {
+  return {
+    id: String(row.id),
+    organisationId: String(row.organisation_id),
+    projectId: String(row.project_id),
+    documentId: String(row.document_id),
+    documentType: String(row.document_type),
+    versionNumber: Number(row.version_number),
+    content: String(row.content),
+    metadata: isRecord(row.metadata) ? row.metadata : {},
+    createdByUserId: String(row.created_by_user_id),
+    createdAt: new Date(row.created_at as string | number | Date).toISOString()
+  };
+}
+
+function siteKnowledgeFromRow(row: Record<string, unknown>): ProjectSiteKnowledgeDocument {
+  return {
+    projectId: String(row.project_id),
+    organisationId: String(row.organisation_id),
+    sitemapUrl: String(row.sitemap_url ?? ""),
+    status: String(row.status ?? "not_configured") as ProjectSiteKnowledgeDocument["status"],
+    pagesIndexed: Number(row.pages_indexed ?? 0),
+    processedPages: Number(row.processed_pages ?? 0),
+    totalDiscoveredUrls: Number(row.total_discovered_urls ?? 0),
+    startedAt: nullableDate(row.started_at),
+    completedAt: nullableDate(row.completed_at),
+    lastImportedAt: nullableDate(row.last_imported_at),
+    currentUrl: nullableString(row.current_url),
+    lastError: nullableString(row.last_error),
+    metadata: isRecord(row.metadata) ? row.metadata : {},
+    createdAt: dateIso(row.created_at),
+    updatedAt: dateIso(row.updated_at)
+  };
+}
+
 function harperRuleMetricFromRow(row: Record<string, unknown>): HarperRuleMetric {
   return {
     rule_id: String(row.rule_id ?? ""),
@@ -2675,41 +2658,6 @@ function chooseTopIgnoredRule(ruleMetrics: HarperRuleMetric[]): HarperTopRuleMet
       right.total_occurrences - left.total_occurrences ||
       left.rule_id.localeCompare(right.rule_id)
     )[0] ?? null;
-}
-
-function versionFromRow(row: Record<string, unknown>): DocumentVersion {
-  return {
-    id: String(row.id),
-    organisationId: String(row.organisation_id),
-    projectId: String(row.project_id),
-    documentId: String(row.document_id),
-    documentType: String(row.document_type),
-    versionNumber: Number(row.version_number),
-    content: String(row.content),
-    metadata: isRecord(row.metadata) ? row.metadata : {},
-    createdByUserId: String(row.created_by_user_id),
-    createdAt: new Date(row.created_at as string | number | Date).toISOString()
-  };
-}
-
-function siteKnowledgeFromRow(row: Record<string, unknown>): ProjectSiteKnowledgeDocument {
-  return {
-    projectId: String(row.project_id),
-    organisationId: String(row.organisation_id),
-    sitemapUrl: String(row.sitemap_url ?? ""),
-    status: String(row.status ?? "not_configured") as ProjectSiteKnowledgeDocument["status"],
-    pagesIndexed: Number(row.pages_indexed ?? 0),
-    processedPages: Number(row.processed_pages ?? 0),
-    totalDiscoveredUrls: Number(row.total_discovered_urls ?? 0),
-    startedAt: nullableDate(row.started_at),
-    completedAt: nullableDate(row.completed_at),
-    lastImportedAt: nullableDate(row.last_imported_at),
-    currentUrl: nullableString(row.current_url),
-    lastError: nullableString(row.last_error),
-    metadata: isRecord(row.metadata) ? row.metadata : {},
-    createdAt: dateIso(row.created_at),
-    updatedAt: dateIso(row.updated_at)
-  };
 }
 
 function siteKnowledgePageFromRow(row: Record<string, unknown>): SiteKnowledgePageDocument {

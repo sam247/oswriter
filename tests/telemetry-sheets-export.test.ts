@@ -96,8 +96,9 @@ describe("telemetry Google Sheets export", () => {
     assert.equal(providerRow?.[21], "");
     assert.equal(providerRow?.[22], "");
     assert.equal(client.rows.filter((row) => row.sheetName === TELEMETRY_SHEETS.anomalies).length, 4);
-    assert.equal(client.replacements.at(-1)?.sheetName, TELEMETRY_SHEETS.dailySummary);
-    assert.deepEqual(client.replacements.at(-1)?.rows[0], Array.from(DAILY_SUMMARY_HEADERS));
+    const dailySummarySheet = client.replacements.find((sheet) => sheet.sheetName === TELEMETRY_SHEETS.dailySummary);
+    assert.ok(dailySummarySheet);
+    assert.deepEqual(dailySummarySheet.rows[0], Array.from(DAILY_SUMMARY_HEADERS));
     assert.equal(client.replacements.some((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperSummary), true);
     assert.equal(client.replacements.some((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperRuleMetrics), true);
     assert.equal(client.replacements.some((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperNoisyRules), true);

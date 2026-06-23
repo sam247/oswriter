@@ -6,19 +6,8 @@
 
 - Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
 - Added a resilient Harper linter bootstrap path that falls back to `LocalLinter` if the worker setup fails or hangs in the browser.
-- Added Harper telemetry and rule-effectiveness tracking for suggestion shown, accepted, and ignored events.
-- Added compact Writing Intelligence reporting with:
-  - total suggestions
-  - acceptance rate
-  - ignore rate
-  - top helpful rule
-  - top ignored rule
-- Added rule-level and content-profile Harper reporting plus noisy-rule detection for future suppression decisions.
-- Added Harper workbook exports for the telemetry spreadsheet:
-  - Harper Summary
-  - Harper Rule Metrics
-  - Harper Noisy Rules
-  - Harper Content Profiles
+- Restored the Harper telemetry storage contract after an incomplete rollback removed the workspace store and Neon reporting methods.
+- Restored the Writing inspector wiring so the Harper sidebar receives telemetry reports and category-level accept/ignore actions again.
 - Added a new Writing inspector tab with grouped Grammar, Style, and Readability suggestion counts.
 - Added Accept and Ignore actions for Harper suggestions:
   - Accept updates the current article draft immediately
@@ -31,12 +20,14 @@
   - no provider logic changes
   - no telemetry, publishing, billing, auth, or generation workflow changes
 - Added markdown normalization coverage for Harper span mapping.
+- Restored Neon article summary normalization so publishing metadata stays present on compact article lists as well as full article reads.
 
 ### WordPress Publishing Integration (Phase 1)
 
 - Added project-level WordPress connections with a dedicated Publishing section in Project Settings.
 - Added connection testing against `/wp-json/wp/v2/users/me`.
 - Added encrypted storage for WordPress application passwords.
+- Restored publishing type contracts and article read normalization so legacy publishing state still resolves correctly across queue, summary, and publishing helpers.
 - Added Neon schema self-bootstrap for WordPress connection storage so deployed environments can create the connector table on first use.
 - Moved WordPress connector setup reads inside route error handling so failed setup returns a surfaced error instead of a generic connector failure.
 - Added article-level publishing actions for `Publish Draft` and `Publish Now`.
@@ -78,56 +69,11 @@
   - page listing
 - Added Neon schema support and tests for the Site Knowledge foundation without introducing embeddings, clustering, internal linking, or recommendation logic.
 
-### WordPress Publishing Workflow (Phase 2)
-
-- Added first-class publishing workflow fields on articles for:
-  - `publishing_status`
-  - `published_at`
-  - `wordpress_post_id`
-  - `wordpress_url`
-  - `scheduled_publish_at`
-- Added relational Neon schema support plus migration coverage while preserving legacy `article.publishing.wordpress` metadata for existing articles.
-- Added a shared publishing workflow layer so single-article publish actions, queue automation, and bulk actions reuse the existing WordPress publishing service instead of duplicating publish logic.
-- Added queue payload support for post-generation actions:
-  - Generate Only
-  - Generate + Mark Ready
-  - Generate + Publish Draft
-  - Generate + Publish Live
-- Added post-generation workflow handling in the queue runner so completed articles can stay Draft, become Ready, or publish through the existing WordPress integration automatically.
-- Added Content Inventory bulk publishing controls in the existing dashboard:
-  - checkbox selection
-  - select all
-  - bulk action picker
-  - selected count
-  - progress feedback
-  - publishing status badges
-- Removed the queue-side article type selector so new titles always inherit the project-level content profile from Project Settings.
-- Refined the Content Inventory bulk action bar with cleaner spacing, clearer hierarchy, and lighter row treatment to reduce dashboard form clutter.
-- Tightened the bulk publishing header spacing again so the title, selection state, controls, and helper text sit as a compact tool row instead of a tall stacked panel.
-- Fixed the Content Inventory table grid sizing so the header and article rows render directly under the bulk publishing controls without a false empty gap in the centre panel.
-- Aligned the project inventory header with the selectable article row columns by matching the header structure to the checkbox-plus-content table layout.
-- Rebuilt the centre-panel inventory list as a fixed-column table so headers and row values align tightly with a more clinical spreadsheet-style presentation.
-- Removed sort arrows from the centre-panel inventory headers and switched the active sort column to a bold label so sorting does not disturb column alignment.
-- Rebalanced the lower inventory fixed column widths so the `Updated` header fits cleanly alongside the selectable and publish columns.
-- Removed the `Words` column from `Needs Attention` and made `Content Inventory` use the same reduced column layout, with the bottom table differing only by its selection checkbox for bulk actions.
-- Simplified publishing workflow states by removing `Ready` and normalizing article publishing to `Not Published`, `Draft`, `Scheduled`, or `Published`.
-- Simplified bulk publishing actions to `Publish Draft`, `Publish Now`, and `Schedule`, with scheduling handled in a dedicated modal instead of inline table controls.
-- Added reusable scheduling helpers and a schedule bulk endpoint so future queue automation can share the same scheduling architecture without redesigning the table.
-- Moved single-article publish controls into the editor toolbar beside `Rich`, `MD`, and `Split` as a compact `Publish` dropdown, and greyed it out after live publish to prevent repeat publishing.
-- Repositioned the single-article `Publish` dropdown into the export cluster so it sits beside `Export` as part of the publishing/export area.
-- Made the Project Settings page sections collapsible with the requested defaults:
-  - Project Settings expanded
-  - Knowledge Base collapsed
-  - Publishing collapsed
-- Added a client-safe publishing status helper module so dashboard and summary UI can consume publishing workflow metadata without importing server-only WordPress publishing code into the browser bundle.
-- Updated article summary expectations to cover the new publishing workflow fields without exposing full article content in project state.
-
 ## Deferred
 
-### WordPress Publishing (Next)
+### WordPress Publishing (Phase 2)
 
-- Execute scheduled publishing automatically when scheduled articles become due
-- Reintroduce a tighter publishing-status column in `Content Inventory` on top of the simplified shared table layout
+- Schedule post
 - Categories
 - Tags
 - Featured image

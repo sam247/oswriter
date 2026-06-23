@@ -1,12 +1,12 @@
 import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, SiteKnowledgePageDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
-import { applyPublishingDefaults } from "@/lib/publishing/workflow";
+import { applyPublishingDefaults } from "@/lib/publishing/status";
 import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
-import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { emptyHarperTelemetryReport, type HarperTelemetryEventInput, type HarperTelemetryReport } from "@/lib/analytics/harper";
+import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
@@ -405,8 +405,8 @@ export class WorkspaceStore {
   async listArticles(projectId?: string) {
     const all = await this.storage.listJson<ArticleDocument>(articlesPrefix(projectId ?? await this.getActiveProjectId()));
     return all
+      .map(applyPublishingDefaults)
       .filter((article) => typeof article.markdown === "string")
-      .map((article) => applyPublishingDefaults(article))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 

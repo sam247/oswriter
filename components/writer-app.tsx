@@ -13,12 +13,11 @@ import { useHarperSuggestions } from "@/components/editor/useHarperSuggestions";
 import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
-import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -30,7 +29,7 @@ type InspectorTab = "project" | "pipeline" | "research" | "validation" | "writin
 type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
-type InventorySortKey = "quality" | "research" | "evidence" | "updated";
+type InventorySortKey = "quality" | "research" | "evidence" | "words" | "updated";
 type SortDirection = "asc" | "desc";
 type WorkspacePreferencePatch = {
   account?: Partial<WorkspacePreferencesDocument["account"]>;
@@ -46,56 +45,6 @@ type WordPressConnectionDraft = {
   defaultPostStatus: WordPressPostStatus;
   defaultCategory: string;
 };
-type BulkPublishingAction = "publish_draft" | "publish_now" | "schedule";
-type BulkPublishingProgress = {
-  action: BulkPublishingAction;
-  completed: number;
-  total: number;
-  failed: number;
-};
-type ScheduleFormState = {
-  date: string;
-  time: string;
-  pattern: PublishingSchedulePattern;
-  customIntervalValue: number;
-  customIntervalUnit: PublishingScheduleIntervalUnit;
-};
-const POST_GENERATION_ACTION_OPTIONS: Array<{
-  value: PostGenerationPublishingAction;
-  label: string;
-  description: string;
-}> = [
-  { value: "generate_only", label: "Generate Only", description: "Keep new articles as Not Published after generation." },
-  { value: "publish_draft", label: "Generate + Publish Draft", description: "Send completed articles to WordPress as drafts." },
-  { value: "publish_live", label: "Generate + Publish Now", description: "Publish completed articles to WordPress immediately." }
-];
-const BULK_PUBLISHING_ACTION_OPTIONS: Array<{ value: BulkPublishingAction; label: string }> = [
-  { value: "publish_draft", label: "Publish Draft" },
-  { value: "publish_now", label: "Publish Now" },
-  { value: "schedule", label: "Schedule" }
-];
-const SCHEDULE_PATTERN_OPTIONS: Array<{ value: PublishingSchedulePattern; label: string }> = [
-  { value: "all_at_once", label: "Publish all at once" },
-  { value: "one_per_day", label: "One article per day" },
-  { value: "two_per_week", label: "Two articles per week" },
-  { value: "custom_interval", label: "Custom interval" }
-];
-const SCHEDULE_INTERVAL_UNIT_OPTIONS: Array<{ value: PublishingScheduleIntervalUnit; label: string }> = [
-  { value: "hours", label: "Hours" },
-  { value: "days", label: "Days" },
-  { value: "weeks", label: "Weeks" }
-];
-
-function createDefaultScheduleForm(): ScheduleFormState {
-  const start = new Date(Date.now() + 60 * 60 * 1000);
-  return {
-    date: start.toISOString().slice(0, 10),
-    time: start.toTimeString().slice(0, 5),
-    pattern: "all_at_once",
-    customIntervalValue: 1,
-    customIntervalUnit: "days"
-  };
-}
 type TransitionTraceEntry = {
   at: string;
   event: string;
@@ -169,24 +118,18 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
 function Workbench() {
   const [state, setState] = useState<AppState | null>(null);
   const [titles, setTitles] = useState("");
-  const [postGenerationAction, setPostGenerationAction] = useState<PostGenerationPublishingAction>("generate_only");
-  const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
-  const [selectedInventoryArticleIds, setSelectedInventoryArticleIds] = useState<Set<string>>(new Set());
-  const [bulkAction, setBulkAction] = useState<BulkPublishingAction>("publish_draft");
-  const [bulkProgress, setBulkProgress] = useState<BulkPublishingProgress | null>(null);
-  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
-  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() => createDefaultScheduleForm());
+  const [newTitlesContentProfile, setNewTitlesContentProfile] = useState<ContentProfile | "">("");
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("queue");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("Idle");
+  const [message, setMessage] = useState("Ready");
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
-  const [harperTelemetry, setHarperTelemetry] = useState<HarperTelemetryReport | null>(null);
+  const [harperReport, setHarperReport] = useState<HarperTelemetryReport | null>(null);
   const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [pinnedArticleIds, setPinnedArticleIds] = useState<Set<string>>(new Set());
@@ -219,7 +162,6 @@ function Workbench() {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const richEditorRef = useRef<HTMLDivElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
-  const generateMenuRef = useRef<HTMLDivElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const saveRevisionRef = useRef(0);
   const warningsRef = useRef<HTMLDivElement | null>(null);
@@ -249,8 +191,9 @@ function Workbench() {
   }, [selectedArticle, updateArticleDraft]);
   const harper = useHarperSuggestions({
     articleId: selectedArticle?.id ?? null,
-    contentProfile: selectedArticle?.resolvedContentProfile ?? selectedArticle?.contentProfile ?? null,
+    contentProfile: resolveContentProfile(selectedArticle?.contentProfile, state?.project.defaultContentProfile) ?? null,
     markdown: selectedMarkdown,
+    project: state?.project ?? null,
     viewMode: articleViewMode,
     textareaRef: editorRef,
     richEditorRef,
@@ -392,15 +335,6 @@ function Workbench() {
   }, [selectedArticleId, tab]);
 
   useEffect(() => {
-    setSelectedInventoryArticleIds((current) => {
-      if (!current.size) return current;
-      const allowed = new Set(inventoryArticles.map((article) => article.id));
-      const next = new Set([...current].filter((id) => allowed.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [inventoryArticles]);
-
-  useEffect(() => {
     if (selectedArticleId && settingsOpen) setSettingsOpen(false);
     if (selectedArticleId && projectSettingsProjectId) setProjectSettingsProjectId(null);
   }, [selectedArticleId, settingsOpen, projectSettingsProjectId]);
@@ -410,14 +344,24 @@ function Workbench() {
     if (!projectId || analyticsProjectIdRef.current === projectId) return;
     analyticsProjectIdRef.current = projectId;
     setProjectAnalytics(null);
-    setHarperTelemetry(null);
     void fetch("/api/analytics/project", { cache: "no-store" })
       .then((res) => res.ok ? res.json() : null)
       .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
-    void fetch("/api/analytics/harper", { cache: "no-store" })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data: HarperTelemetryReport | null) => setHarperTelemetry(data));
   }, [state?.project.id]);
+
+  useEffect(() => {
+    const projectId = state?.project.id;
+    if (!projectId || tab !== "writing" || !selectedArticle) {
+      if (!projectId) setHarperReport(null);
+      return;
+    }
+    const controller = new AbortController();
+    void fetch("/api/analytics/harper", { cache: "no-store", signal: controller.signal })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: HarperTelemetryReport | null) => setHarperReport(data))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [harper.suggestions.length, selectedArticle, state?.project.id, tab]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -441,7 +385,6 @@ function Workbench() {
       if (event.key === "Escape") {
         setGlobalSearchOpen(false);
         setProjectMenuOpen(false);
-        setGenerateMenuOpen(false);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -458,17 +401,6 @@ function Workbench() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [projectMenuOpen]);
-
-  useEffect(() => {
-    if (!generateMenuOpen) return;
-    function onPointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (target instanceof Node && generateMenuRef.current?.contains(target)) return;
-      setGenerateMenuOpen(false);
-    }
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [generateMenuOpen]);
 
   useEffect(() => {
     if (!globalSearchOpen) return;
@@ -517,39 +449,12 @@ function Workbench() {
     return () => controller.abort();
   }, [selectedArticleId, articles.some((article) => article.id === selectedArticleId)]);
 
-  function applyUpdatedArticle(updated: ArticleDocument) {
-    setSelectedArticle((current) => current?.id === updated.id ? updated : current);
-    setState((current) => current ? {
-      ...current,
-      articles: current.articles.map((article) => article.id === updated.id ? toArticleSummary(updated) : article)
-    } : current);
-  }
-
-  function toggleInventoryArticleSelection(articleId: string) {
-    setSelectedInventoryArticleIds((current) => {
-      const next = new Set(current);
-      if (next.has(articleId)) next.delete(articleId);
-      else next.add(articleId);
-      return next;
-    });
-  }
-
-  function toggleAllInventoryArticleSelections(articleIds: string[]) {
-    setSelectedInventoryArticleIds((current) => {
-      const allSelected = articleIds.length > 0 && articleIds.every((articleId) => current.has(articleId));
-      return allSelected ? new Set() : new Set(articleIds);
-    });
-  }
-
   async function addTitles() {
     setBusy(true);
     const res = await fetch("/api/jobs/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        titles: titles.split("\n"),
-        postGenerationAction
-      })
+      body: JSON.stringify({ titles: titles.split("\n"), contentProfile: newTitlesContentProfile || undefined })
     });
     const data = await res.json().catch(() => ({})) as { state?: AppState; jobs?: QueueJob[]; error?: string };
     setBusy(false);
@@ -861,106 +766,12 @@ function Workbench() {
       setMessage(data.error ?? "WordPress publish failed.");
       return false;
     }
-    applyUpdatedArticle(data.article);
+    setSelectedArticle(data.article);
+    setState((current) => current ? {
+      ...current,
+      articles: current.articles.map((article) => article.id === data.article?.id ? toArticleSummary(data.article) : article)
+    } : current);
     setMessage(data.message ?? (status === "draft" ? "Draft published successfully" : "Article published successfully"));
-    return true;
-  }
-
-  async function runBulkPublishingAction() {
-    const articleIds = [...selectedInventoryArticleIds];
-    if (!articleIds.length) {
-      setMessage("Select at least one article.");
-      return false;
-    }
-    if (bulkAction === "schedule") {
-      setScheduleForm(createDefaultScheduleForm());
-      setScheduleModalOpen(true);
-      return true;
-    }
-    setBusy(true);
-    setBulkProgress({ action: bulkAction, completed: 0, total: articleIds.length, failed: 0 });
-    const status: WordPressPostStatus = bulkAction === "publish_now" ? "publish" : "draft";
-    let completed = 0;
-    let failed = 0;
-    for (const articleId of articleIds) {
-      const res = await fetch(`/api/articles/${articleId}/publish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status })
-      });
-      const data = await res.json().catch(() => ({})) as { article?: ArticleDocument };
-      if (res.ok && data.article) {
-        applyUpdatedArticle(data.article);
-      } else {
-        failed += 1;
-      }
-      completed += 1;
-      setBulkProgress({ action: bulkAction, completed, total: articleIds.length, failed });
-    }
-    setBusy(false);
-    setSelectedInventoryArticleIds(new Set());
-    setMessage(failed
-      ? `${completed - failed} article${completed - failed === 1 ? "" : "s"} completed, ${failed} failed.`
-      : `${completed} article${completed === 1 ? "" : "s"} ${bulkAction === "publish_now" ? "published now" : "published as drafts"}.`);
-    if (failed) await refresh();
-    return failed === 0;
-  }
-
-  async function confirmBulkSchedule() {
-    const articleIds = [...selectedInventoryArticleIds];
-    if (!articleIds.length) {
-      setScheduleModalOpen(false);
-      setMessage("Select at least one article.");
-      return false;
-    }
-    if (!scheduleForm.date || !scheduleForm.time) {
-      setMessage("Choose a schedule date and time.");
-      return false;
-    }
-    const startAt = new Date(`${scheduleForm.date}T${scheduleForm.time}`);
-    if (Number.isNaN(startAt.getTime())) {
-      setMessage("Enter a valid schedule date and time.");
-      return false;
-    }
-
-    setBusy(true);
-    setBulkProgress({ action: "schedule", completed: 0, total: articleIds.length, failed: 0 });
-    const res = await fetch("/api/articles/bulk", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        articleIds,
-        action: "schedule",
-        schedule: {
-          startAt: startAt.toISOString(),
-          pattern: scheduleForm.pattern,
-          customIntervalValue: scheduleForm.pattern === "custom_interval" ? scheduleForm.customIntervalValue : undefined,
-          customIntervalUnit: scheduleForm.pattern === "custom_interval" ? scheduleForm.customIntervalUnit : undefined
-        }
-      })
-    });
-    const data = await res.json().catch(() => ({})) as {
-      updatedArticles?: ArticleDocument[];
-      failed?: Array<{ articleId: string; error: string }>;
-      message?: string;
-      error?: string;
-    };
-    setBusy(false);
-    if (!res.ok) {
-      setMessage(data.error ?? "Bulk scheduling failed.");
-      await refresh();
-      return false;
-    }
-    (data.updatedArticles ?? []).forEach((article) => applyUpdatedArticle(article));
-    setSelectedInventoryArticleIds(new Set());
-    setBulkProgress({
-      action: "schedule",
-      completed: articleIds.length,
-      total: articleIds.length,
-      failed: data.failed?.length ?? 0
-    });
-    setScheduleModalOpen(false);
-    setMessage(data.message ?? `Scheduled ${articleIds.length} article${articleIds.length === 1 ? "" : "s"}.`);
     return true;
   }
 
@@ -1417,62 +1228,17 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <div ref={generateMenuRef} className="relative">
-            <div className="flex items-center">
-              <button
-                onClick={() => void processNext()}
-                disabled={generateButton.disabled}
-                title={generateButton.title}
-                className={cn(
-                  "flex h-7 items-center gap-1.5 rounded-l-md px-2.5 text-[12px] font-medium transition-colors",
-                  generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
-                )}
-              >
-                <Play className="size-3 fill-current" /> {generateButton.label}
-              </button>
-              <button
-                onClick={() => setGenerateMenuOpen((open) => !open)}
-                className={cn(
-                  "grid h-7 w-7 place-items-center rounded-r-md border-l text-[12px] transition-colors",
-                  generateButton.disabled
-                    ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
-                    : "border-white/15 bg-ink text-white hover:bg-ink/90"
-                )}
-                title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
-              >
-                <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
-              </button>
-            </div>
-            {generateMenuOpen && (
-              <div className="absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
-                <div className="hairline-b px-3 py-2">
-                  <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
-                  <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
-                </div>
-                <div className="p-1.5">
-                  {POST_GENERATION_ACTION_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => {
-                        setPostGenerationAction(option.value);
-                        setGenerateMenuOpen(false);
-                      }}
-                      className={cn(
-                        "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
-                        postGenerationAction === option.value && "bg-surface-2"
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[12px] font-medium text-ink">{option.label}</span>
-                        {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
-                      </div>
-                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
+          <button
+            onClick={processNext}
+            disabled={generateButton.disabled}
+            title={generateButton.title}
+            className={cn(
+              "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+              generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
             )}
-          </div>
+          >
+            <Play className="size-3 fill-current" /> {generateButton.label}
+          </button>
           {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
             <button
               onClick={stopRun}
@@ -1663,20 +1429,10 @@ function Workbench() {
               rows={3}
               className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
             />
-            <label className="mt-1.5 block text-[11px] text-ink-muted">
-              <span>After generation</span>
-              <select
-                value={postGenerationAction}
-                onChange={(event) => setPostGenerationAction(event.target.value as PostGenerationPublishingAction)}
-                className="mt-1 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none"
-                aria-label="Post-generation publishing action"
-              >
-                {POST_GENERATION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <div className="mt-1 text-[10.5px] leading-snug text-ink-subtle">
-              {describePostGenerationAction(postGenerationAction)}: {POST_GENERATION_ACTION_OPTIONS.find((option) => option.value === postGenerationAction)?.description}
-            </div>
+            <select value={newTitlesContentProfile} onChange={(event) => setNewTitlesContentProfile(event.target.value as ContentProfile | "")} className="mt-1.5 h-8 w-full rounded-md border border-line bg-surface-1 px-2 text-[11.5px] text-ink outline-none" aria-label="Content profile for new titles">
+              <option value="">Inherit project profile ({CONTENT_PROFILES[resolveContentProfile(undefined, state?.project.defaultContentProfile)].label})</option>
+              {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
             <div className="mt-1.5 flex gap-1">
               <button onClick={addTitles} disabled={busy || !titles.trim()} className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 text-[11.5px] font-medium text-white disabled:opacity-50">
                 <Upload className="size-3.5" /> Add
@@ -1723,12 +1479,15 @@ function Workbench() {
               />
               <ArticleToolbar
                 article={selectedArticle}
-                connection={state?.project.publishing?.wordpress}
-                busy={busy}
                 viewMode={articleViewMode}
                 onViewModeChange={setArticleViewMode}
                 onFormat={applyFormat}
                 onCopyAll={copySelectedArticle}
+              />
+              <ArticlePublishingBar
+                article={selectedArticle}
+                connection={state?.project.publishing?.wordpress}
+                busy={busy}
                 onConnectWordPress={() => setProjectSettingsProjectId(state?.project.id ?? null)}
                 onPublishDraft={() => void publishSelectedArticle("draft")}
                 onPublishNow={() => void publishSelectedArticle("publish")}
@@ -1755,15 +1514,7 @@ function Workbench() {
               jobs={displayJobs}
               summary={projectSummary}
               sourceCounts={articleSourceCounts}
-              selectedArticleIds={selectedInventoryArticleIds}
-              bulkAction={bulkAction}
-              bulkProgress={bulkProgress}
-              bulkBusy={busy}
               onSelectArticle={setSelectedArticleId}
-              onToggleArticleSelection={toggleInventoryArticleSelection}
-              onToggleSelectAll={toggleAllInventoryArticleSelections}
-              onBulkActionChange={setBulkAction}
-              onRunBulkAction={() => void runBulkPublishingAction()}
             />
           )}
         </section>
@@ -1784,7 +1535,6 @@ function Workbench() {
             history={runHistory}
             summary={projectSummary}
             analytics={projectAnalytics}
-            harperTelemetry={harperTelemetry}
             article={selectedArticle}
             job={selectedJob}
             markdown={selectedMarkdown}
@@ -1794,6 +1544,7 @@ function Workbench() {
             setSelectedStage={setSelectedStage}
             warningsRef={warningsRef}
             highlightWarnings={highlightWarnings}
+            harperReport={harperReport}
             harper={harper}
           />
         </aside>}
@@ -1843,16 +1594,6 @@ function Workbench() {
           })}
           onSelectAll={() => setSelectedSimilarTitles((current) => current.size === similarTitles.length ? new Set() : new Set(similarTitles))}
           onSubmit={() => void addSimilarTitlesToQueue()}
-        />
-      )}
-      {scheduleModalOpen && (
-        <ScheduleArticlesModal
-          selectedCount={selectedInventoryArticleIds.size}
-          value={scheduleForm}
-          submitting={busy}
-          onClose={() => setScheduleModalOpen(false)}
-          onChange={(patch) => setScheduleForm((current) => ({ ...current, ...patch }))}
-          onSubmit={() => void confirmBulkSchedule()}
         />
       )}
     </main>
@@ -1976,101 +1717,6 @@ function SimilarTitlesModal({ article, titles, selected, loading, submitting, er
   );
 }
 
-function ScheduleArticlesModal({
-  selectedCount,
-  value,
-  submitting,
-  onClose,
-  onChange,
-  onSubmit
-}: {
-  selectedCount: number;
-  value: ScheduleFormState;
-  submitting: boolean;
-  onClose: () => void;
-  onChange: (patch: Partial<ScheduleFormState>) => void;
-  onSubmit: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 bg-black/20 px-4 pt-[10vh] backdrop-blur-sm" onMouseDown={onClose}>
-      <div className="mx-auto w-full max-w-xl overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="hairline-b px-4 py-3">
-          <div className="text-[15px] font-semibold text-ink">Schedule Articles</div>
-          <div className="mono mt-1 text-[10.5px] text-ink-subtle">Selected Articles: {selectedCount}</div>
-        </div>
-        <div className="space-y-4 p-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-medium text-ink-muted">Date</span>
-              <input
-                type="date"
-                value={value.date}
-                onChange={(event) => onChange({ date: event.currentTarget.value })}
-                className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-medium text-ink-muted">Time</span>
-              <input
-                type="time"
-                value={value.time}
-                onChange={(event) => onChange({ time: event.currentTarget.value })}
-                className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
-              />
-            </label>
-          </div>
-          <div>
-            <div className="mb-2 text-[11px] font-medium text-ink-muted">Publishing Pattern</div>
-            <div className="space-y-2 rounded-md border border-line bg-surface-2 p-3">
-              {SCHEDULE_PATTERN_OPTIONS.map((option) => (
-                <label key={option.value} className="flex cursor-pointer items-center gap-2 text-[12px] text-ink">
-                  <input
-                    type="radio"
-                    name="schedule-pattern"
-                    checked={value.pattern === option.value}
-                    onChange={() => onChange({ pattern: option.value })}
-                  />
-                  <span>{option.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          {value.pattern === "custom_interval" && (
-            <div className="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)]">
-              <label className="block">
-                <span className="mb-1 block text-[11px] font-medium text-ink-muted">Every</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={value.customIntervalValue}
-                  onChange={(event) => onChange({ customIntervalValue: Number(event.currentTarget.value) || 1 })}
-                  className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[11px] font-medium text-ink-muted">Interval Unit</span>
-                <select
-                  value={value.customIntervalUnit}
-                  onChange={(event) => onChange({ customIntervalUnit: event.currentTarget.value as PublishingScheduleIntervalUnit })}
-                  className="h-9 w-full rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
-                >
-                  {SCHEDULE_INTERVAL_UNIT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-            </div>
-          )}
-        </div>
-        <div className="hairline-t flex items-center justify-between gap-3 px-4 py-3">
-          <button onClick={onClose} disabled={submitting} className="h-8 rounded px-3 text-[12px] text-ink-muted hover:bg-surface-3 disabled:opacity-50">Cancel</button>
-          <button onClick={onSubmit} disabled={submitting || selectedCount === 0} className="flex h-8 items-center gap-1.5 rounded bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
-            {submitting && <Loader2 className="size-3.5 animate-spin" />} Schedule Articles
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function GlobalSearchModal({
   query,
   onQueryChange,
@@ -2144,30 +1790,14 @@ function ProjectDashboard({
   jobs,
   summary,
   sourceCounts,
-  selectedArticleIds,
-  bulkAction,
-  bulkProgress,
-  bulkBusy,
-  onSelectArticle,
-  onToggleArticleSelection,
-  onToggleSelectAll,
-  onBulkActionChange,
-  onRunBulkAction
+  onSelectArticle
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
   jobs: QueueJob[];
   summary: ProjectSummary | null;
   sourceCounts: Record<string, number>;
-  selectedArticleIds: Set<string>;
-  bulkAction: BulkPublishingAction;
-  bulkProgress: BulkPublishingProgress | null;
-  bulkBusy: boolean;
   onSelectArticle: (id: string) => void;
-  onToggleArticleSelection: (id: string) => void;
-  onToggleSelectAll: (articleIds: string[]) => void;
-  onBulkActionChange: (action: BulkPublishingAction) => void;
-  onRunBulkAction: () => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2177,9 +1807,6 @@ function ProjectDashboard({
     sortDirection
   );
   const contentInventory = inventoryRows;
-  const contentInventoryIds = contentInventory.map(({ article }) => article.id);
-  const allInventorySelected = contentInventoryIds.length > 0 && contentInventoryIds.every((articleId) => selectedArticleIds.has(articleId));
-  const selectedInventoryCount = selectedArticleIds.size;
   const attentionRows = inventoryRows
     .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "processing")
     .slice(0, 8);
@@ -2222,61 +1849,7 @@ function ProjectDashboard({
 
           <ProjectSection title="Content inventory">
             {contentInventory.length ? (
-              <>
-                <div className="mb-3 rounded-lg border border-line bg-surface-1 px-4 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <div className="text-[12px] font-medium text-ink">Bulk publishing</div>
-                      <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
-                      {bulkProgress && (
-                        <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
-                          {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-                          {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
-                      <input
-                        type="checkbox"
-                        checked={allInventorySelected}
-                        onChange={() => onToggleSelectAll(contentInventoryIds)}
-                      />
-                      <span>Select all</span>
-                      </label>
-                      <select
-                        value={bulkAction}
-                        onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
-                        className="h-8 min-w-36 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
-                        aria-label="Bulk publishing action"
-                      >
-                        {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                      <button
-                        onClick={onRunBulkAction}
-                        disabled={!selectedInventoryCount || bulkBusy}
-                        className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-                      >
-                        {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="mt-2 text-[10.5px] text-ink-subtle">
-                    {selectedInventoryCount ? "Publish actions reuse the existing WordPress publish path. Scheduling opens a modal." : "Select one or more articles to publish or schedule."}
-                  </div>
-                </div>
-                <InventoryTable
-                  rows={contentInventory}
-                  sourceCounts={sourceCounts}
-                  selectedArticleIds={selectedArticleIds}
-                  onToggleArticleSelection={onToggleArticleSelection}
-                  onSelectArticle={onSelectArticle}
-                  sortKey={sortKey}
-                  sortDirection={sortDirection}
-                  onSort={changeSort}
-                  selectable
-                />
-              </>
+              <InventoryTable rows={contentInventory} sourceCounts={sourceCounts} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} />
             ) : (
               <Empty text="Saved articles will appear here." />
             )}
@@ -2500,7 +2073,7 @@ function ProjectSettingsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl">
-          <CollapsibleSettingsSection title="Project Settings" defaultOpen>
+          <SettingsSection title="Project Settings">
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
               <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
@@ -2533,14 +2106,14 @@ function ProjectSettingsPanel({
               <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
               <button onClick={save} disabled={!dirty || Boolean(settingsBlockedReason)} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save project settings</button>
             </div>
-          </CollapsibleSettingsSection>
+          </SettingsSection>
           <KnowledgeBaseSettings
             projectId={project.id}
             knowledgeBase={project.knowledgeBase}
             disabledReason={settingsBlockedReason}
             onSave={onUpdateKnowledgeBase}
           />
-          <CollapsibleSettingsSection title="Publishing">
+          <SettingsSection title="Publishing">
             <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
               <div>
                 <div className="text-[13px] font-medium text-ink">WordPress Connection</div>
@@ -2621,32 +2194,10 @@ function ProjectSettingsPanel({
                 {wordpressBusy === "saving" ? "Saving..." : "Save Connection"}
               </button>
             </div>
-          </CollapsibleSettingsSection>
+          </SettingsSection>
         </div>
       </div>
     </div>
-  );
-}
-
-function CollapsibleSettingsSection({
-  title,
-  children,
-  defaultOpen = false
-}: {
-  title: string;
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  return (
-    <details className="group rounded-md border border-line bg-surface-1" open={defaultOpen}>
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
-        <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
-        <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
-      </summary>
-      <div className="border-t border-line px-4 pb-4 pt-3">
-        <div className="space-y-2">{children}</div>
-      </div>
-    </details>
   );
 }
 
@@ -2976,102 +2527,55 @@ function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | nu
 function InventoryTable({
   rows,
   sourceCounts,
-  selectedArticleIds,
-  onToggleArticleSelection,
   onSelectArticle,
   sortKey,
   sortDirection,
   onSort,
-  compact = false,
-  selectable = false
+  compact = false
 }: {
   rows: Array<{ article: ArticleSummary; job: QueueJob | null }>;
   sourceCounts: Record<string, number>;
-  selectedArticleIds?: Set<string>;
-  onToggleArticleSelection?: (id: string) => void;
   onSelectArticle: (id: string) => void;
   sortKey: InventorySortKey;
   sortDirection: SortDirection;
   onSort: (key: InventorySortKey) => void;
   compact?: boolean;
-  selectable?: boolean;
 }) {
-  const updatedColClass = selectable ? "w-[104px]" : "w-[88px]";
-
   return (
     <div className="overflow-hidden">
-      <table className="w-full table-fixed border-collapse">
-        <colgroup>
-          {selectable && <col className="w-[32px]" />}
-          <col />
-          <col className="w-[132px]" />
-          <col className="w-[56px]" />
-          <col className="w-[56px]" />
-          <col className="w-[56px]" />
-          <col className="w-[56px]" />
-          <col className={updatedColClass} />
-        </colgroup>
-        <thead>
-          <tr className="border-b border-line/70 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
-            {selectable && <th className="px-3 py-2 text-left"><span className="sr-only">Select</span></th>}
-            <th className="px-3 py-2 text-left">Title</th>
-            <th className="px-3 py-2 text-left">Status</th>
-            <th className="px-3 py-2 text-right">Src</th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ article, job }) => {
-            const selected = selectedArticleIds?.has(article.id) ?? false;
-            return (
-              <tr
-                key={article.id}
-                onClick={() => onSelectArticle(article.id)}
-                className={cn(
-                  "cursor-pointer border-b border-line/70 text-[12px] transition-colors hover:bg-surface-2",
-                  selected && "bg-surface-2/70"
-                )}
-              >
-                {selectable && onToggleArticleSelection && selectedArticleIds && (
-                  <td className="px-3 py-2.5" onClick={(event) => event.stopPropagation()}>
-                    <label className="flex items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => onToggleArticleSelection(article.id)}
-                        aria-label={`Select ${article.title}`}
-                      />
-                    </label>
-                  </td>
-                )}
-                <td className="px-3 py-2.5 align-middle">
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-ink">{article.title}</div>
-                    {!compact && (
-                      <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">
-                        {job
-                          ? attentionSummary(article, job) ?? `Attempt ${job.attempts}`
-                          : `Updated ${relativeDate(article.updatedAt)}`}
-                      </div>
-                    )}
-                  </div>
-                </td>
-                <td className="px-3 py-2.5 align-middle">
-                  <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
-                </td>
-                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</td>
-                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</td>
-                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.researchScore}</td>
-                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</td>
-                <td className="mono px-3 py-2.5 text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="grid grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 border-b border-line/70 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+        <span>Title</span>
+        <span>Status</span>
+        <InventorySortHeader label="Words" metric="words" active={sortKey} direction={sortDirection} onSort={onSort} />
+        <span className="text-right">Src</span>
+        <InventorySortHeader label="Q" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} />
+        <InventorySortHeader label="R" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} />
+        <InventorySortHeader label="E" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} />
+        <InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} />
+      </div>
+      <div className="divide-y divide-line/70">
+        {rows.map(({ article, job }) => {
+          return (
+            <button
+              key={article.id}
+              onClick={() => onSelectArticle(article.id)}
+              className="grid w-full grid-cols-[minmax(0,1fr)_86px_64px_42px_38px_38px_38px_64px] gap-2 px-1 py-2 text-left text-[12px] hover:bg-surface-2"
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-medium text-ink">{article.title}</span>
+                {!compact && <span className="mono mt-0.5 block truncate text-[10.5px] text-ink-subtle">{job ? attentionSummary(article, job) ?? `Attempt ${job.attempts}` : `Updated ${relativeDate(article.updatedAt)}`}</span>}
+              </span>
+              <span className={cn("mono text-[10.5px]", statusTextTone(article.status))}>{statusLabel(article.status)}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{sourceCounts[article.id] ?? 0}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.qualityScore}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.researchScore}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{article.evidenceScore}</span>
+              <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -3083,21 +2587,7 @@ function InventorySortHeader({ label, metric, active, direction, onSort }: {
   direction: SortDirection;
   onSort: (metric: InventorySortKey) => void;
 }) {
-  const isActive = active === metric;
-  const directionLabel = direction === "desc" ? "descending" : "ascending";
-  return (
-    <button
-      onClick={() => onSort(metric)}
-      className={cn(
-        "w-full text-right hover:text-ink",
-        isActive ? "font-bold text-ink" : "font-semibold text-ink-subtle"
-      )}
-      title={isActive ? `Sorted by ${label} (${directionLabel})` : `Sort by ${label}`}
-      aria-label={isActive ? `${label}, sorted ${directionLabel}` : `Sort by ${label}`}
-    >
-      {label}
-    </button>
-  );
+  return <button onClick={() => onSort(metric)} className={cn("text-right hover:text-ink", active === metric && "text-ink")} title={`Sort by ${label}`}>{label}{active === metric ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
 }
 
 function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob | null }>, key: InventorySortKey, direction: SortDirection) {
@@ -3113,6 +2603,7 @@ function sortInventoryRows(rows: Array<{ article: ArticleSummary; job: QueueJob 
 }
 
 function inventorySortValue(article: ArticleSummary, key: InventorySortKey) {
+  if (key === "words") return article.wordCount;
   if (key === "updated") return article.updatedAt;
   return key === "quality" ? article.qualityScore : key === "research" ? article.researchScore : article.evidenceScore;
 }
@@ -3624,28 +3115,17 @@ function ArticleLibraryItem({
 
 function ArticleToolbar({
   article,
-  connection,
-  busy,
   viewMode,
   onViewModeChange,
   onFormat,
-  onCopyAll,
-  onConnectWordPress,
-  onPublishDraft,
-  onPublishNow
+  onCopyAll
 }: {
   article: ArticleDocument | null;
-  connection?: ProjectWordPressConnection;
-  busy: boolean;
   viewMode: ArticleViewMode;
   onViewModeChange: (mode: ArticleViewMode) => void;
   onFormat: (command: FormatCommand) => void;
   onCopyAll: () => void;
-  onConnectWordPress: () => void;
-  onPublishDraft: () => void;
-  onPublishNow: () => void;
 }) {
-  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const formatting = [
     { command: "bold" as const, icon: Bold, title: "Bold" },
     { command: "italic" as const, icon: Italic, title: "Italic" },
@@ -3656,63 +3136,9 @@ function ArticleToolbar({
     { command: "bullet" as const, icon: List, title: "Bullet list" },
     { command: "numbered" as const, icon: ListOrdered, title: "Numbered list" }
   ];
-  const connected = connection?.applicationPasswordConfigured && connection.connectionStatus === "connected";
-  const publishStatus = article ? getArticlePublishingStatus(article) : null;
-  const publishDisabled = !article || !connected || busy || publishStatus === "published";
-  const publishTitle = !article
-    ? "Select an article to publish."
-    : !connected
-      ? "Connect WordPress in Project Settings before publishing."
-      : publishStatus === "published"
-        ? "This article is already published."
-        : "Publish to WordPress";
   return (
     <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
-      <div className="relative">
-        <button
-          onClick={() => {
-            if (publishDisabled) {
-              if (!connected && article && !busy) onConnectWordPress();
-              return;
-            }
-            setPublishMenuOpen((open) => !open);
-          }}
-          disabled={!article || busy || publishStatus === "published"}
-          title={publishTitle}
-          className={cn(
-            "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-medium transition-colors",
-            publishDisabled
-              ? "cursor-not-allowed border-line bg-surface-3 text-ink-subtle"
-              : "border-line bg-surface-1 text-ink hover:bg-surface-3"
-          )}
-        >
-          Publish
-          <ChevronDown className={cn("size-3 transition-transform", publishMenuOpen && "rotate-180")} />
-        </button>
-        {publishMenuOpen && !publishDisabled && (
-          <div className="absolute left-0 top-8 z-30 w-40 overflow-hidden rounded-md border border-line bg-surface-1 p-1 shadow-lg">
-            <button
-              onClick={() => {
-                setPublishMenuOpen(false);
-                onPublishDraft();
-              }}
-              className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
-            >
-              Publish Draft
-            </button>
-            <button
-              onClick={() => {
-                setPublishMenuOpen(false);
-                onPublishNow();
-              }}
-              className="block w-full rounded px-2.5 py-2 text-left text-[12px] text-ink hover:bg-surface-2"
-            >
-              Publish Live
-            </button>
-          </div>
-        )}
-      </div>
       <button
         onClick={onCopyAll}
         disabled={!article}
@@ -3741,6 +3167,68 @@ function ArticleToolbar({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ArticlePublishingBar({
+  article,
+  connection,
+  busy,
+  onConnectWordPress,
+  onPublishDraft,
+  onPublishNow
+}: {
+  article: ArticleDocument | null;
+  connection?: ProjectWordPressConnection;
+  busy: boolean;
+  onConnectWordPress: () => void;
+  onPublishDraft: () => void;
+  onPublishNow: () => void;
+}) {
+  if (!article) return null;
+  const publishable = article.status === "generated" || article.status === "needs_review" || Boolean(article.publishing?.wordpress);
+  if (!publishable) return null;
+  const published = article.publishing?.wordpress;
+  const connected = connection?.applicationPasswordConfigured && connection.connectionStatus === "connected";
+  return (
+    <div className="hairline-b bg-surface-2/35 px-5 py-3 lg:px-7">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[13px] font-medium text-ink">Publishing Actions</div>
+          <div className="mt-0.5 text-[11px] text-ink-muted">
+            {connected ? "Publish directly to this project's WordPress site." : "Connect WordPress in Project Settings to publish without leaving QueueWrite."}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {connected ? (
+            <>
+              <button onClick={onPublishDraft} disabled={busy} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40">
+                Publish Draft
+              </button>
+              <button onClick={onPublishNow} disabled={busy} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">
+                Publish Now
+              </button>
+            </>
+          ) : (
+            <button onClick={onConnectWordPress} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white">
+              Connect WordPress
+            </button>
+          )}
+        </div>
+      </div>
+      {published && (
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <MetricLine label="Published Status" value={published.status === "draft" ? "Draft" : "Published"} />
+          <MetricLine label="WordPress Post ID" value={published.postId} />
+          <MetricLine label="Published Date" value={formatDate(published.publishedAt)} />
+          <span className="text-ink-subtle">WordPress URL</span>
+          <a href={published.url} target="_blank" rel="noreferrer" className="flex items-center justify-end gap-1 text-right text-ink hover:underline">
+            <span className="truncate">{published.url}</span>
+            <ExternalLink className="size-3 shrink-0" />
+          </a>
+        </div>
+      )}
     </div>
   );
 }
@@ -4313,7 +3801,6 @@ function Inspector({
   history,
   summary,
   analytics,
-  harperTelemetry,
   article,
   job,
   markdown,
@@ -4323,6 +3810,7 @@ function Inspector({
   setSelectedStage,
   warningsRef,
   highlightWarnings,
+  harperReport,
   harper
 }: {
   tab: InspectorTab;
@@ -4334,7 +3822,6 @@ function Inspector({
   history: RunSummary[];
   summary: ProjectSummary | null;
   analytics: ProjectAnalyticsSummary | null;
-  harperTelemetry: HarperTelemetryReport | null;
   article: ArticleDocument | null;
   job: QueueJob | null;
   markdown: string;
@@ -4344,11 +3831,12 @@ function Inspector({
   setSelectedStage: (stage: string) => void;
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
+  harperReport: HarperTelemetryReport | null;
   harper: ReturnType<typeof useHarperSuggestions>;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
-      {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} harperTelemetry={harperTelemetry} />}
+      {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} />}
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
@@ -4357,11 +3845,13 @@ function Inspector({
           activeSuggestionId={harper.activeSuggestionId}
           counts={harper.counts}
           error={harper.error}
-          report={harperTelemetry}
+          report={harperReport}
           status={harper.status}
           suggestions={harper.suggestions}
           onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}
+          onAcceptCategory={(category) => void harper.acceptCategory(category)}
           onIgnore={(suggestionId) => void harper.ignoreSuggestion(suggestionId)}
+          onIgnoreCategory={(category) => void harper.ignoreCategory(category)}
           onJump={(suggestionId) => harper.jumpToSuggestion({ suggestionId })}
         />
       ) : <Empty text="Writing suggestions appear while editing an article." />)}
@@ -4387,8 +3877,7 @@ function ProjectContextPanel({
   metrics,
   history,
   summary,
-  analytics,
-  harperTelemetry
+  analytics
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -4397,7 +3886,6 @@ function ProjectContextPanel({
   history: RunSummary[];
   summary: ProjectSummary | null;
   analytics: ProjectAnalyticsSummary | null;
-  harperTelemetry: HarperTelemetryReport | null;
 }) {
   const latestRun = history[0] ?? null;
   const averageLength = articles.length && summary ? Math.round(summary.totalWords / articles.length) : null;
@@ -4450,20 +3938,6 @@ function ProjectContextPanel({
             <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
             {averageLength !== null && <MetricLine label="Avg length" value={formatNumber(averageLength)} />}
             <MetricLine label="Sources" value={formatNumber(summary.totalSources)} />
-          </div>
-        </ProjectSection>
-      ) : null}
-
-      {harperTelemetry ? (
-        <ProjectSection title="Writing intelligence">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-            <MetricLine label="Suggestions" value={formatNumber(harperTelemetry.summary.total_suggestions)} />
-            <MetricLine label="Acceptance Rate" value={`${harperTelemetry.summary.acceptance_rate}%`} />
-            <MetricLine label="Ignore Rate" value={`${harperTelemetry.summary.ignore_rate}%`} />
-            <MetricLine label="Accepted" value={formatNumber(harperTelemetry.summary.accepted_suggestions)} />
-            <MetricLine label="Ignored" value={formatNumber(harperTelemetry.summary.ignored_suggestions)} />
-            <MetricLine label="Top Helpful Rule" value={harperTelemetry.summary.top_helpful_rule?.rule_id ?? "-"} />
-            <MetricLine label="Top Ignored Rule" value={harperTelemetry.summary.top_ignored_rule?.rule_id ?? "-"} />
           </div>
         </ProjectSection>
       ) : null}
@@ -5187,24 +4661,6 @@ function statusLabel(status: JobStatus) {
     failed: "Failed",
     skipped: "Skipped"
   }[status];
-}
-
-function publishingStatusTone(status: PublishingWorkflowStatus) {
-  if (status === "published") return "bg-success/10 text-success";
-  if (status === "scheduled") return "bg-[#f0e4ff] text-[#6d3bb8]";
-  if (status === "draft") return "bg-[#eef2ff] text-[#4256b8]";
-  return "bg-surface-3 text-ink-subtle";
-}
-
-function publishingStatusLabel(status: PublishingWorkflowStatus) {
-  if (status === "published") return "Published";
-  if (status === "scheduled") return "Scheduled";
-  if (status === "draft") return "Draft";
-  return "Not Published";
-}
-
-function bulkActionLabel(action: BulkPublishingAction) {
-  return BULK_PUBLISHING_ACTION_OPTIONS.find((option) => option.value === action)?.label ?? action;
 }
 
 function formatMarkdown(markdown: string, start: number, end: number, command: FormatCommand) {
