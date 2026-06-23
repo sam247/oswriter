@@ -1,5 +1,4 @@
 import { createSign } from "node:crypto";
-import { emptyHarperTelemetryReport, type HarperContentProfileMetric, type HarperRuleMetric, type HarperTelemetryReport, type HarperTopRuleMetric } from "@/lib/analytics/harper";
 import { calculateArticleScores } from "@/lib/scoring/article-scores";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import { buildDailySummaryRows, DAILY_SUMMARY_HEADERS, type DailySummaryContext } from "@/lib/telemetry/daily-summary";
@@ -12,44 +11,8 @@ export const TELEMETRY_SHEETS = {
   dailySummary: "Daily Summary",
   articleTelemetry: "Article Telemetry",
   providerTelemetry: "Provider Telemetry",
-  anomalies: "Anomalies",
-  harperSummary: "Harper Summary",
-  harperRuleMetrics: "Harper Rule Metrics",
-  harperNoisyRules: "Harper Noisy Rules",
-  harperContentProfiles: "Harper Content Profiles"
+  anomalies: "Anomalies"
 } as const;
-
-export const HARPER_SUMMARY_HEADERS = [
-  "Project",
-  "Total Suggestions",
-  "Accepted Suggestions",
-  "Ignored Suggestions",
-  "Acceptance Rate %",
-  "Ignore Rate %",
-  "Top Helpful Rule",
-  "Top Ignored Rule"
-] as const;
-
-export const HARPER_RULE_HEADERS = [
-  "Project",
-  "Rule ID",
-  "Category",
-  "Total Occurrences",
-  "Accepted Count",
-  "Ignored Count",
-  "Acceptance Rate %",
-  "Ignore Rate %"
-] as const;
-
-export const HARPER_CONTENT_PROFILE_HEADERS = [
-  "Project",
-  "Content Profile",
-  "Total Suggestions",
-  "Accepted Count",
-  "Ignored Count",
-  "Acceptance Rate %",
-  "Ignore Rate %"
-] as const;
 
 export const PROVIDER_TELEMETRY_HEADERS = [
   "Benchmark Run",
@@ -159,7 +122,6 @@ export async function exportDailyTelemetrySummaries(store: WorkspaceStore, clien
 
   if (client.replaceRows) {
     await client.replaceRows(TELEMETRY_SHEETS.dailySummary, [Array.from(DAILY_SUMMARY_HEADERS), ...rows]);
-    await exportHarperTelemetrySheets(store, client);
   } else {
     const row = rows.find((item) => item[0] === (requiredDate ?? previousUtcDate()));
     if (row) await client.appendRow(TELEMETRY_SHEETS.dailySummary, row);
@@ -186,39 +148,6 @@ export async function exportDailyTelemetrySummaries(store: WorkspaceStore, clien
     });
   }
   return rows;
-}
-
-export async function exportHarperTelemetrySheets(store: WorkspaceStore, client = createGoogleSheetsAppendClient()) {
-  if (!client.replaceRows) return;
-  const projects = await store.listProjects();
-  const projectReports = await Promise.all(projects.map(async (project) => ({
-    project,
-    report: await store.getHarperTelemetryReport(project.id)
-  })));
-
-  const overall = combineHarperReports(projectReports.map((item) => item.report));
-  const summaryRows: TelemetryCell[][] = [
-    Array.from(HARPER_SUMMARY_HEADERS),
-    buildHarperSummaryRow("All Projects", overall),
-    ...projectReports.map(({ project, report }) => buildHarperSummaryRow(project.name, report))
-  ];
-  const ruleRows: TelemetryCell[][] = [
-    Array.from(HARPER_RULE_HEADERS),
-    ...buildHarperRuleRows(projectReports)
-  ];
-  const noisyRows: TelemetryCell[][] = [
-    Array.from(HARPER_RULE_HEADERS),
-    ...projectReports.flatMap(({ project, report }) => report.noisy_rules.map((metric) => harperRuleRow(project.name, metric)))
-  ];
-  const contentProfileRows: TelemetryCell[][] = [
-    Array.from(HARPER_CONTENT_PROFILE_HEADERS),
-    ...projectReports.flatMap(({ project, report }) => report.content_profile_metrics.map((metric) => harperContentProfileRow(project.name, metric)))
-  ];
-
-  await client.replaceRows(TELEMETRY_SHEETS.harperSummary, summaryRows);
-  await client.replaceRows(TELEMETRY_SHEETS.harperRuleMetrics, ruleRows);
-  await client.replaceRows(TELEMETRY_SHEETS.harperNoisyRules, noisyRows);
-  await client.replaceRows(TELEMETRY_SHEETS.harperContentProfiles, contentProfileRows);
 }
 
 export async function retryFailedTelemetryExports(store: WorkspaceStore, client = createGoogleSheetsAppendClient()) {
@@ -667,144 +596,6 @@ function researchScore(article: ArticleDocument | null) {
 
 function evidenceScore(article: ArticleDocument | null) {
   return article ? calculateArticleScores(article).evidence.score : "";
-}
-
-function buildHarperSummaryRow(projectName: string, report: HarperTelemetryReport): TelemetryCell[] {
-  return [
-    projectName,
-    report.summary.total_suggestions,
-    report.summary.accepted_suggestions,
-    report.summary.ignored_suggestions,
-    report.summary.acceptance_rate,
-    report.summary.ignore_rate,
-    report.summary.top_helpful_rule?.rule_id ?? "",
-    report.summary.top_ignored_rule?.rule_id ?? ""
-  ];
-}
-
-function buildHarperRuleRows(projectReports: Array<{ project: ProjectDocument; report: HarperTelemetryReport }>) {
-  return projectReports.flatMap(({ project, report }) => report.rule_metrics.map((metric) => harperRuleRow(project.name, metric)));
-}
-
-function harperRuleRow(projectName: string, metric: HarperRuleMetric): TelemetryCell[] {
-  return [
-    projectName,
-    metric.rule_id,
-    metric.category,
-    metric.total_occurrences,
-    metric.accepted_count,
-    metric.ignored_count,
-    metric.acceptance_rate,
-    metric.ignore_rate
-  ];
-}
-
-function harperContentProfileRow(projectName: string, metric: HarperContentProfileMetric): TelemetryCell[] {
-  return [
-    projectName,
-    metric.content_profile,
-    metric.total_suggestions,
-    metric.accepted_count,
-    metric.ignored_count,
-    metric.acceptance_rate,
-    metric.ignore_rate
-  ];
-}
-
-function combineHarperReports(reports: HarperTelemetryReport[]): HarperTelemetryReport {
-  if (!reports.length) return emptyHarperTelemetryReport();
-  const ruleMap = new Map<string, HarperRuleMetric>();
-  const profileMap = new Map<string, HarperContentProfileMetric>();
-  let totalSuggestions = 0;
-  let acceptedSuggestions = 0;
-  let ignoredSuggestions = 0;
-
-  for (const report of reports) {
-    totalSuggestions += report.summary.total_suggestions;
-    acceptedSuggestions += report.summary.accepted_suggestions;
-    ignoredSuggestions += report.summary.ignored_suggestions;
-
-    for (const metric of report.rule_metrics) {
-      const key = `${metric.category}:${metric.rule_id}`;
-      const current = ruleMap.get(key);
-      if (current) {
-        current.total_occurrences += metric.total_occurrences;
-        current.accepted_count += metric.accepted_count;
-        current.ignored_count += metric.ignored_count;
-      } else {
-        ruleMap.set(key, { ...metric });
-      }
-    }
-
-    for (const metric of report.content_profile_metrics) {
-      const key = metric.content_profile;
-      const current = profileMap.get(key);
-      if (current) {
-        current.total_suggestions += metric.total_suggestions;
-        current.accepted_count += metric.accepted_count;
-        current.ignored_count += metric.ignored_count;
-      } else {
-        profileMap.set(key, { ...metric });
-      }
-    }
-  }
-
-  const ruleMetrics = Array.from(ruleMap.values()).map(recalculateRuleMetric).sort((left, right) =>
-    right.total_occurrences - left.total_occurrences || left.rule_id.localeCompare(right.rule_id)
-  );
-  const contentProfileMetrics = Array.from(profileMap.values()).map(recalculateContentProfileMetric).sort((left, right) =>
-    right.total_suggestions - left.total_suggestions || left.content_profile.localeCompare(right.content_profile)
-  );
-  const summary = {
-    total_suggestions: totalSuggestions,
-    accepted_suggestions: acceptedSuggestions,
-    ignored_suggestions: ignoredSuggestions,
-    acceptance_rate: rate(acceptedSuggestions, totalSuggestions),
-    ignore_rate: rate(ignoredSuggestions, totalSuggestions),
-    top_helpful_rule: selectTopHelpfulRule(ruleMetrics),
-    top_ignored_rule: selectTopIgnoredRule(ruleMetrics)
-  };
-
-  return {
-    summary,
-    rule_metrics: ruleMetrics,
-    noisy_rules: ruleMetrics.filter((metric) => metric.total_occurrences >= 25 && metric.ignore_rate > 75),
-    content_profile_metrics: contentProfileMetrics
-  };
-}
-
-function recalculateRuleMetric(metric: HarperRuleMetric): HarperRuleMetric {
-  return {
-    ...metric,
-    acceptance_rate: rate(metric.accepted_count, metric.total_occurrences),
-    ignore_rate: rate(metric.ignored_count, metric.total_occurrences)
-  };
-}
-
-function recalculateContentProfileMetric(metric: HarperContentProfileMetric): HarperContentProfileMetric {
-  return {
-    ...metric,
-    acceptance_rate: rate(metric.accepted_count, metric.total_suggestions),
-    ignore_rate: rate(metric.ignored_count, metric.total_suggestions)
-  };
-}
-
-function selectTopHelpfulRule(metrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
-  return [...metrics].sort((left, right) =>
-    right.accepted_count - left.accepted_count ||
-    right.acceptance_rate - left.acceptance_rate ||
-    right.total_occurrences - left.total_occurrences ||
-    left.rule_id.localeCompare(right.rule_id)
-  )[0] ?? null;
-}
-
-function selectTopIgnoredRule(metrics: HarperRuleMetric[]): HarperTopRuleMetric | null {
-  return [...metrics].sort((left, right) =>
-    right.ignored_count - left.ignored_count ||
-    right.ignore_rate - left.ignore_rate ||
-    right.total_occurrences - left.total_occurrences ||
-    left.rule_id.localeCompare(right.rule_id)
-  )[0] ?? null;
 }
 
 function rate(numerator: number, denominator: number) {

@@ -7,37 +7,8 @@
 - Restored the `52cbe6d` menu/header UI state in `writer-app.tsx` after later changes replaced the approved design.
 - Reintroduced `Sign Out` in the global menu as a separate danger action below a muted divider.
 - Restored the project dropdown refinement that removes the `Current` row label and keeps divider contrast quieter for better hierarchy.
-- Safely reconnected the restored `writer-app.tsx` to the existing Harper trust-pass code by passing project/content-profile context back into `useHarperSuggestions` and restoring the writing-panel telemetry report fetch without changing the recovered navigation layout.
-
-### Harper Grammar And Writing Assistant Integration (Phase 1)
-
-- Added a client-side Harper integration using `harper.js` with a worker-backed linter to keep editor analysis off the main thread.
-- Added a resilient Harper linter bootstrap path that falls back to `LocalLinter` if the worker setup fails or hangs in the browser.
-- Restored the Harper telemetry storage contract after an incomplete rollback removed the workspace store and Neon reporting methods.
-- Restored the Writing inspector wiring so the Harper sidebar receives telemetry reports and category-level accept/ignore actions again.
-- Added a new Writing inspector tab with grouped Grammar, Punctuation, Spelling, Style, and Readability counts plus a total-issues summary.
-- Added Accept and Ignore actions for Harper suggestions:
-  - Accept updates the current article draft immediately
-  - Ignore hides the suggestion for the current session
-- Added a Harper trust pass focused on signal over volume:
-  - confidence-based spelling and style suppression
-  - smart suppression for brands, codes, URLs, domains, emails, versions, and technical tokens
-  - occurrence grouping for repeated issues so one card can represent many matches
-  - usefulness-based ordering that prioritizes Grammar, Punctuation, Spelling, Style, then Readability
-  - quieter empty states when no high-confidence issues remain
-- Expanded the built-in Harper dictionary with QueueWrite, OpenAI, Anthropic, Claude, Gemini, DeepL, Ahrefs, Semrush, SerpAPI, Cloudflare, Supabase, Vercel, Shopify, WordPress, Next.js, GPT, GPT-4, GPT-5, API, APIs, and s278.
-- Added project-level `projectDictionaryTerms` support in the project document contract so future settings can feed custom terms without a separate migration.
-- Added non-user-facing Harper suppression metrics logging for total found, suppressed, and displayed issue counts per analysis pass.
-- Added inline writing highlights:
-  - custom highlight styling in the rich editor
-  - mirrored overlay highlighting for markdown and split editor modes
-- Kept Harper scoped to the existing editor workflow only:
-  - no research pipeline changes
-  - no provider logic changes
-  - no telemetry, publishing, billing, auth, or generation workflow changes
-- Added markdown normalization coverage for Harper span mapping.
-- Added regression coverage for false-positive suppression, including `DeepL -> Deep`, `Waze -> Wade`, `QueueWrite -> Queue Write`, and `s278 -> sac`.
-- Restored Neon article summary normalization so publishing metadata stays present on compact article lists as well as full article reads.
+- Removed the grammar and spelling integration after real-content evaluation showed it added more complexity than product value.
+- Restored the editor to a clean content-focused layout while keeping the right-hand inspector available for future content, SEO, and publishing validation work.
 
 ### WordPress Publishing Integration (Phase 1)
 

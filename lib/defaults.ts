@@ -25,7 +25,6 @@ export function createDefaultProject(): ProjectDocument {
     defaultContentProfile: "industry_explainer",
     profile: createDefaultProjectProfile(DEFAULT_CONTROLS.lengthTargetWords),
     knowledgeBase: EMPTY_PROJECT_KNOWLEDGE_BASE,
-    projectDictionaryTerms: [],
     createdAt: now,
     updatedAt: now
   };

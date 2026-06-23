@@ -6,11 +6,6 @@ import { UsageIndicator } from "@/components/usage/UsageIndicator";
 import { SeoDecisionPanel } from "@/components/seo/SeoDecisionPanel";
 import { KnowledgeBaseSettings } from "@/components/project/KnowledgeBaseSettings";
 import { SourceFavicon } from "@/components/research/SourceFavicon";
-import { HarperSuggestionPanel } from "@/components/editor/HarperSuggestionPanel";
-import { RichTextHighlights } from "@/components/editor/RichTextHighlights";
-import { TextareaHighlightOverlay } from "@/components/editor/TextareaHighlightOverlay";
-import { useHarperSuggestions } from "@/components/editor/useHarperSuggestions";
-import type { HarperTelemetryReport } from "@/lib/analytics/harper";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
@@ -22,11 +17,11 @@ import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSe
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
-import { CONTENT_PROFILES, PROJECT_CONTENT_PROFILE_OPTIONS, normalizeContentProfile, resolveContentProfile, type ContentProfile } from "@/lib/content-profiles";
+import { CONTENT_PROFILES, PROJECT_CONTENT_PROFILE_OPTIONS, normalizeContentProfile, type ContentProfile } from "@/lib/content-profiles";
 
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
-type InspectorTab = "project" | "pipeline" | "research" | "validation" | "writing" | "seo" | "debug";
+type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" | "debug";
 type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
@@ -186,7 +181,6 @@ function Workbench() {
   const [details, setDetails] = useState<Details>({ research: null, debug: null });
   const [tab, setTab] = useState<InspectorTab>("project");
   const [projectAnalytics, setProjectAnalytics] = useState<ProjectAnalyticsSummary | null>(null);
-  const [harperReport, setHarperReport] = useState<HarperTelemetryReport | null>(null);
   const [queueProjection, setQueueProjection] = useState<QueueCostProjection | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [pinnedArticleIds, setPinnedArticleIds] = useState<Set<string>>(new Set());
@@ -251,16 +245,6 @@ function Workbench() {
     if (!selectedArticle) return;
     updateArticleDraft(selectedArticle.id, { markdown });
   }, [selectedArticle, updateArticleDraft]);
-  const harper = useHarperSuggestions({
-    articleId: selectedArticle?.id ?? null,
-    contentProfile: resolveContentProfile(selectedArticle?.contentProfile, state?.project.defaultContentProfile) ?? null,
-    markdown: selectedMarkdown,
-    project: state?.project ?? null,
-    viewMode: articleViewMode,
-    textareaRef: editorRef,
-    richEditorRef,
-    onChange: handleSelectedMarkdownChange
-  });
   const displayJobs = useMemo(() => jobs.map((job) => {
     const article = articles.find((item) => item.id === job.articleId);
     return article ? { ...job, status: article.status } : job;
@@ -419,20 +403,6 @@ function Workbench() {
       .then((res) => res.ok ? res.json() : null)
       .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
   }, [state?.project.id]);
-
-  useEffect(() => {
-    const projectId = state?.project.id;
-    if (!projectId || tab !== "writing" || !selectedArticle) {
-      if (!projectId) setHarperReport(null);
-      return;
-    }
-    const controller = new AbortController();
-    void fetch("/api/analytics/harper", { cache: "no-store", signal: controller.signal })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data: HarperTelemetryReport | null) => setHarperReport(data))
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [harper.suggestions.length, selectedArticle, state?.project.id, tab]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -1842,8 +1812,6 @@ function Workbench() {
                     viewMode={articleViewMode}
                     editorRef={editorRef}
                     richEditorRef={richEditorRef}
-                    suggestions={harper.suggestions}
-                    activeSuggestionId={harper.activeSuggestionId}
                     onChange={handleSelectedMarkdownChange}
                   />
                 ) : selectedJob ? <JobPlaceholder job={selectedJob} onRetry={() => retryOne(selectedJob.id)} /> : null}
@@ -1873,7 +1841,7 @@ function Workbench() {
 
         {showRightPane && <aside className="flex min-h-0 flex-col bg-surface-2">
           <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
-            {(["project", "pipeline", "research", "validation", "writing", "seo", "debug"] as const).map((item) => (
+            {(["project", "pipeline", "research", "validation", "seo", "debug"] as const).map((item) => (
               <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
             ))}
           </div>
@@ -1896,8 +1864,6 @@ function Workbench() {
             setSelectedStage={setSelectedStage}
             warningsRef={warningsRef}
             highlightWarnings={highlightWarnings}
-            harperReport={harperReport}
-            harper={harper}
           />
         </aside>}
       </div>
@@ -3952,9 +3918,10 @@ function ArticleHeader({
 }
 
 function ContentProfileSelect({ value, projectDefault, onChange, disabled = false }: { value: ContentProfile | ""; projectDefault?: ContentProfile; onChange: (value: string) => void; disabled?: boolean }) {
+  const inheritedProfile = projectDefault ?? "industry_explainer";
   return (
     <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="h-7 rounded border border-line bg-surface-1 px-2 text-[11px] text-ink outline-none disabled:opacity-60" aria-label="Article content profile">
-      <option value="">Inherit: {CONTENT_PROFILES[resolveContentProfile(undefined, projectDefault)].label}</option>
+      <option value="">Inherit: {CONTENT_PROFILES[inheritedProfile].label}</option>
       {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
   );
@@ -4294,23 +4261,19 @@ function ArticleWorkspace({
   viewMode,
   editorRef,
   richEditorRef,
-  suggestions,
-  activeSuggestionId,
   onChange
 }: {
   markdown: string;
   viewMode: ArticleViewMode;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   richEditorRef: RefObject<HTMLDivElement | null>;
-  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
-  activeSuggestionId: string | null;
   onChange: (markdown: string) => void;
 }) {
   if (viewMode === "split") {
     return (
       <div className="grid h-full min-h-0 grid-cols-2">
         <div className="hairline-r min-h-0 overflow-hidden">
-          <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} suggestions={suggestions} activeSuggestionId={activeSuggestionId} compact />
+          <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} compact />
         </div>
         <div className="min-h-0 overflow-auto">
           <MarkdownPreview markdown={markdown} compact />
@@ -4320,7 +4283,7 @@ function ArticleWorkspace({
   }
 
   if (viewMode === "md") {
-    return <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} suggestions={suggestions} activeSuggestionId={activeSuggestionId} />;
+    return <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />;
   }
 
   return (
@@ -4329,8 +4292,6 @@ function ArticleWorkspace({
         markdown={markdown}
         onChange={onChange}
         editorRef={richEditorRef}
-        suggestions={suggestions}
-        activeSuggestionId={activeSuggestionId}
       />
     </div>
   );
@@ -4349,15 +4310,11 @@ function MarkdownPreview({ markdown, compact = false }: { markdown: string; comp
 function RichMarkdownEditor({
   markdown,
   onChange,
-  editorRef,
-  suggestions,
-  activeSuggestionId
+  editorRef
 }: {
   markdown: string;
   onChange: (markdown: string) => void;
   editorRef: RefObject<HTMLDivElement | null>;
-  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
-  activeSuggestionId: string | null;
 }) {
   const lastMarkdownRef = useRef(markdown);
 
@@ -4378,7 +4335,6 @@ function RichMarkdownEditor({
 
   return (
     <div className="mx-auto max-w-[820px] px-8 pb-16 pt-10">
-      <RichTextHighlights editor={editorRef.current} suggestions={suggestions} activeSuggestionId={activeSuggestionId} />
       <div
         ref={editorRef}
         contentEditable
@@ -4397,40 +4353,22 @@ function MarkdownEditor({
   markdown,
   editorRef,
   onChange,
-  suggestions,
-  activeSuggestionId,
   compact = false
 }: {
   markdown: string;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (markdown: string) => void;
-  suggestions: ReturnType<typeof useHarperSuggestions>["suggestions"];
-  activeSuggestionId: string | null;
   compact?: boolean;
 }) {
-  const [scrollTop, setScrollTop] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-
   return (
     <div className={cn("h-full min-h-0 overflow-hidden px-6 pb-8 pt-6 lg:px-8", compact && "px-5 pt-5 lg:px-5")}>
       <div className="relative h-full overflow-hidden rounded-md">
-        <TextareaHighlightOverlay
-          markdown={markdown}
-          suggestions={suggestions}
-          activeSuggestionId={activeSuggestionId}
-          scrollTop={scrollTop}
-          scrollLeft={scrollLeft}
-        />
         <textarea
           ref={editorRef}
           value={markdown}
           onChange={(event) => onChange(event.target.value)}
-          onScroll={(event) => {
-            setScrollTop(event.currentTarget.scrollTop);
-            setScrollLeft(event.currentTarget.scrollLeft);
-          }}
           spellCheck
-          className="relative h-full w-full resize-none border-0 bg-transparent px-2 py-2 text-[17px] leading-8 text-ink outline-none placeholder:text-ink-subtle"
+          className="h-full w-full resize-none border-0 bg-transparent px-2 py-2 text-[17px] leading-8 text-ink outline-none placeholder:text-ink-subtle"
           placeholder="Start writing..."
         />
       </div>
@@ -4456,9 +4394,7 @@ function Inspector({
   selectedStage,
   setSelectedStage,
   warningsRef,
-  highlightWarnings,
-  harperReport,
-  harper
+  highlightWarnings
 }: {
   tab: InspectorTab;
   setTab: (tab: InspectorTab) => void;
@@ -4478,8 +4414,6 @@ function Inspector({
   setSelectedStage: (stage: string) => void;
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
-  harperReport: HarperTelemetryReport | null;
-  harper: ReturnType<typeof useHarperSuggestions>;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
@@ -4487,21 +4421,6 @@ function Inspector({
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
-      {tab === "writing" && (article ? (
-        <HarperSuggestionPanel
-          activeSuggestionId={harper.activeSuggestionId}
-          counts={harper.counts}
-          error={harper.error}
-          report={harperReport}
-          status={harper.status}
-          suggestions={harper.suggestions}
-          onAccept={(suggestionId) => void harper.acceptSuggestion(suggestionId)}
-          onAcceptCategory={(category) => void harper.acceptCategory(category)}
-          onIgnore={(suggestionId) => void harper.ignoreSuggestion(suggestionId)}
-          onIgnoreCategory={(category) => void harper.ignoreCategory(category)}
-          onJump={(suggestionId) => harper.jumpToSuggestion({ suggestionId })}
-        />
-      ) : <Empty text="Writing suggestions appear while editing an article." />)}
       {tab === "seo" && (article ? (
         <SeoDecisionPanel
           key={article.id}

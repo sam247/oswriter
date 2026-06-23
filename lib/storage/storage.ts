@@ -5,7 +5,6 @@ import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
-import { emptyHarperTelemetryReport, type HarperTelemetryEventInput, type HarperTelemetryReport } from "@/lib/analytics/harper";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
@@ -22,8 +21,6 @@ export interface StorageProvider {
   listArticleSummaries?(projectId: string): Promise<ArticleSummary[]>;
   getArticleListMetadata?(projectId: string): Promise<{ pinnedIds: string[]; sourceCounts: Record<string, number> }>;
   getProjectAnalytics?(projectId: string): Promise<ProjectAnalyticsSummary>;
-  getHarperTelemetryReport?(projectId: string): Promise<HarperTelemetryReport>;
-  recordHarperTelemetry?(projectId: string, events: HarperTelemetryEventInput[]): Promise<void>;
   getArticleById?(articleId: string): Promise<ArticleDocument | null>;
   updateArticle?(article: ArticleDocument): Promise<void>;
   getProjectWordPressConnection?(projectId: string): Promise<ProjectWordPressConnectionSecret | null>;
@@ -184,19 +181,6 @@ export class WorkspaceStore {
       total_words: completed.reduce((sum, article) => sum + article.wordCount, 0),
       source_count: completed.reduce((sum, article) => sum + (metadata.sourceCounts[article.id] ?? 0), 0)
     };
-  }
-
-  async getHarperTelemetryReport(projectId?: string): Promise<HarperTelemetryReport> {
-    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
-    if (this.storage.getHarperTelemetryReport) return this.storage.getHarperTelemetryReport(resolvedProjectId);
-    return emptyHarperTelemetryReport();
-  }
-
-  async recordHarperTelemetry(events: HarperTelemetryEventInput[], projectId?: string) {
-    if (!events.length) return;
-    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
-    if (!this.storage.recordHarperTelemetry) return;
-    await this.storage.recordHarperTelemetry(resolvedProjectId, events);
   }
 
   async saveProject(project: ProjectDocument) {

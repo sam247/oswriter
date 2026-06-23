@@ -124,7 +124,6 @@ export interface ProjectDocument {
   slug?: string;
   profile?: ProjectProfile;
   knowledgeBase?: ProjectKnowledgeBase;
-  projectDictionaryTerms?: string[];
   publishing?: ProjectPublishing;
   defaultContentProfile?: ContentProfile;
   createdByUserId?: string;

@@ -99,13 +99,6 @@ describe("telemetry Google Sheets export", () => {
     const dailySummarySheet = client.replacements.find((sheet) => sheet.sheetName === TELEMETRY_SHEETS.dailySummary);
     assert.ok(dailySummarySheet);
     assert.deepEqual(dailySummarySheet.rows[0], Array.from(DAILY_SUMMARY_HEADERS));
-    assert.equal(client.replacements.some((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperSummary), true);
-    assert.equal(client.replacements.some((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperRuleMetrics), true);
-    assert.equal(client.replacements.some((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperNoisyRules), true);
-    assert.equal(client.replacements.some((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperContentProfiles), true);
-    const harperSummary = client.replacements.find((sheet) => sheet.sheetName === TELEMETRY_SHEETS.harperSummary)?.rows;
-    assert.deepEqual(harperSummary?.[0], ["Project", "Total Suggestions", "Accepted Suggestions", "Ignored Suggestions", "Acceptance Rate %", "Ignore Rate %", "Top Helpful Rule", "Top Ignored Rule"]);
-    assert.equal(harperSummary?.[1]?.[0], "All Projects");
     assert.equal((await store.getTelemetryExportStatus("article:default-project:article-telemetry"))?.status, "exported");
     assert.equal((await store.getTelemetryExportStatus("anomaly:default-project:article-telemetry:under-target-output"))?.status, "exported");
   });
