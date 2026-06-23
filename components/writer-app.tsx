@@ -1481,6 +1481,7 @@ function Workbench() {
                   window.location.href = "/settings/billing";
                 }}
                 onOpenAccountSettings={openWorkspaceSettings}
+                onSignOut={() => void signOut()}
               />
             )}
           </div>
@@ -3385,7 +3386,6 @@ function ProjectMenu({
               >
                 <span className="truncate">{project.name}</span>
               </button>
-              {project.id === currentProjectId ? <span className="mono shrink-0 text-[10.5px] text-ink">Current</span> : null}
               <button
                 type="button"
                 onClick={(event) => {
@@ -3416,7 +3416,7 @@ function ProjectMenu({
           ))}
         </div>
       )}
-      <div className="my-1 h-px bg-line/80" />
+      <div className="my-1 h-px bg-line/70" />
       <ProjectMenuAction label="Create Project" detail="New workspace" onClick={onNew} />
     </div>
   );
@@ -3424,10 +3424,12 @@ function ProjectMenu({
 
 function GlobalMenu({
   onOpenBilling,
-  onOpenAccountSettings
+  onOpenAccountSettings,
+  onSignOut
 }: {
   onOpenBilling: () => void;
   onOpenAccountSettings: () => void;
+  onSignOut: () => void;
 }) {
   return (
     <div className="absolute left-0 top-10 z-[70] w-[220px] rounded-md border border-line bg-surface-1 p-1.5 shadow-2xl">
@@ -3435,6 +3437,8 @@ function GlobalMenu({
       <GlobalMenuAction label="Billing" onClick={onOpenBilling} />
       <GlobalMenuAction label="Help" disabled />
       <GlobalMenuAction label="Changelog" disabled />
+      <div className="my-1 h-px bg-line/70" />
+      <GlobalMenuAction label="Sign Out" onClick={onSignOut} danger />
     </div>
   );
 }
@@ -3448,7 +3452,7 @@ function ProjectMenuAction({ label, detail, onClick, danger = false, disabled = 
   );
 }
 
-function GlobalMenuAction({ label, onClick, disabled = false }: { label: string; onClick?: () => void; disabled?: boolean }) {
+function GlobalMenuAction({ label, onClick, disabled = false, danger = false }: { label: string; onClick?: () => void; disabled?: boolean; danger?: boolean }) {
   return (
     <button
       type="button"
@@ -3456,7 +3460,7 @@ function GlobalMenuAction({ label, onClick, disabled = false }: { label: string;
       disabled={disabled}
       className={cn(
         "flex h-9 w-full items-center rounded-md px-2 text-left text-[13px] hover:bg-surface-3 disabled:cursor-not-allowed",
-        disabled ? "text-ink-subtle" : "text-ink"
+        disabled ? "text-ink-subtle" : danger ? "text-danger" : "text-ink"
       )}
     >
       <span>{label}</span>
