@@ -26,6 +26,7 @@ export interface StorageProvider {
   getProjectWordPressConnection?(projectId: string): Promise<ProjectWordPressConnectionSecret | null>;
   saveProjectWordPressConnection?(connection: ProjectWordPressConnectionSecret): Promise<void>;
   deleteProjectWordPressConnection?(projectId: string): Promise<void>;
+  deleteProjectSiteKnowledge?(projectId: string): Promise<void>;
   getProjectQueueScan?(): Promise<{ projectsChecked: number; projectIds: string[] }>;
   getCompactJobCounts?(projectId: string): Promise<CompactJobCounts>;
   getQueueCandidate?(projectId: string): Promise<QueueJob | null>;
@@ -571,6 +572,18 @@ export class WorkspaceStore {
 
   async saveProjectSiteKnowledge(siteKnowledge: ProjectSiteKnowledgeDocument) {
     await this.storage.putJson(siteKnowledgePath(siteKnowledge.projectId), siteKnowledge);
+  }
+
+  async deleteProjectSiteKnowledge(projectId?: string) {
+    const resolvedProjectId = projectId ?? await this.getActiveProjectId();
+    if (this.storage.deleteProjectSiteKnowledge) {
+      await this.storage.deleteProjectSiteKnowledge(resolvedProjectId);
+      return;
+    }
+    const paths = new Set(await this.storage.listPaths(`${rootForClear(resolvedProjectId)}/knowledge/site/`));
+    paths.add(siteKnowledgePath(resolvedProjectId));
+    paths.add(siteProfilePath(resolvedProjectId));
+    await Promise.all([...paths].map((path) => this.storage.deletePath(path)));
   }
 
   async getProjectSiteProfile(projectId?: string) {

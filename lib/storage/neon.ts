@@ -627,6 +627,14 @@ export class NeonStorageProvider implements StorageProvider {
           where organisation_id = ${tenant.organisationId}
             and project_id = ${pathProjectId(path)}
         `;
+      } else if (isSiteProfilePath(path)) {
+        await this.ensureSiteKnowledgeSchema();
+        const tenant = await this.ensureTenant();
+        await this.sql`
+          delete from project_site_profile
+          where organisation_id = ${tenant.organisationId}
+            and project_id = ${pathProjectId(path)}
+        `;
       } else if (isSiteKnowledgePagePath(path)) {
         await this.ensureSiteKnowledgeSchema();
         const tenant = await this.ensureTenant();
@@ -664,6 +672,28 @@ export class NeonStorageProvider implements StorageProvider {
         const tenant = await this.ensureTenant();
         await this.sql`delete from queue_controls where organisation_id = ${tenant.organisationId} and project_id = ${pathProjectId(path)} and queue_name = 'default'`;
       }
+    });
+  }
+
+  async deleteProjectSiteKnowledge(projectId: string): Promise<void> {
+    return this.withFailureLogging("deleteProjectSiteKnowledge", projectId, async () => {
+      await this.ensureSiteKnowledgeSchema();
+      const tenant = await this.ensureTenant();
+      await this.sql`
+        delete from project_site_profile
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+      `;
+      await this.sql`
+        delete from project_site_pages
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+      `;
+      await this.sql`
+        delete from project_site_knowledge
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+      `;
     });
   }
 

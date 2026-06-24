@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getSettingsMutationBlocker } from "@/lib/queue/safety";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import { extractProjectSiteProfile } from "@/lib/site-profile";
 import { getAccessibleProject } from "@/lib/server/project-access";
@@ -31,5 +32,26 @@ export async function GET(req: Request) {
     siteKnowledge: siteKnowledge ?? createEmptyProjectSiteKnowledge(projectId),
     siteProfile,
     projectId
+  });
+}
+
+export async function DELETE(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
+  const { store } = createRuntime();
+  const url = new URL(req.url);
+  const projectId = url.searchParams.get("projectId")?.trim() || await store.getActiveProjectId();
+  const project = await getAccessibleProject(store, projectId);
+  if (!project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
+
+  const blocker = await getSettingsMutationBlocker(store, projectId);
+  if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
+
+  await store.deleteProjectSiteKnowledge(projectId);
+  return NextResponse.json({
+    projectId,
+    siteKnowledge: createEmptyProjectSiteKnowledge(projectId),
+    siteProfile: null
   });
 }

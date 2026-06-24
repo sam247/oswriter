@@ -16,6 +16,8 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
   const [sitemapUrl, setSitemapUrl] = useState("");
   const [siteLoading, setSiteLoading] = useState(true);
   const [siteBusy, setSiteBusy] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
+  const [forgetOpen, setForgetOpen] = useState(false);
   const [siteError, setSiteError] = useState<string | null>(null);
   const [pagesOpen, setPagesOpen] = useState(false);
   const [pages, setPages] = useState<SiteKnowledgePageDocument[]>([]);
@@ -28,6 +30,7 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
   }, [projectId]);
 
   const siteSummary = siteKnowledge ?? createEmptyProjectSiteKnowledge(projectId);
+  const hasSiteKnowledge = Boolean(siteProfile || siteSummary.pagesIndexed > 0 || siteSummary.lastImportedAt);
   const filteredPages = useMemo(() => {
     const needle = pageQuery.trim().toLowerCase();
     if (!needle) return pages;
@@ -138,6 +141,31 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
     }
   }
 
+  async function forgetSite() {
+    setForgetting(true);
+    setSiteError(null);
+    try {
+      const res = await fetch(`/api/project/site-knowledge?projectId=${encodeURIComponent(projectId)}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({})) as { siteKnowledge?: ProjectSiteKnowledgeDocument; error?: string };
+      if (!res.ok) {
+        setSiteError(data.error ?? "Could not forget website intelligence.");
+        return;
+      }
+      setSiteKnowledge(data.siteKnowledge ?? createEmptyProjectSiteKnowledge(projectId));
+      setSiteProfile(null);
+      setSitemapUrl("");
+      setPages([]);
+      setPagesLoaded(false);
+      setPageQuery("");
+      setPagesOpen(false);
+      setForgetOpen(false);
+    } catch (error) {
+      setSiteError(error instanceof Error ? error.message : "Could not forget website intelligence.");
+    } finally {
+      setForgetting(false);
+    }
+  }
+
   return (
     <>
       <details className="group w-full rounded-md border border-line bg-surface-1">
@@ -170,22 +198,34 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                disabled={siteBusy || siteLoading || Boolean(disabledReason)}
-                title={disabledReason ?? "Import site pages from this sitemap"}
+                disabled={siteBusy || siteLoading || forgetting || Boolean(disabledReason)}
+                title={disabledReason ?? (hasSiteKnowledge ? "Reanalyse priority pages from this sitemap" : "Import site pages from this sitemap")}
                 onClick={() => void importSite()}
                 className="inline-flex h-8 items-center gap-1 rounded-md bg-ink px-3 text-[11.5px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {siteBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                {siteBusy ? "Importing..." : "Import Site"}
+                {siteBusy ? "Importing..." : hasSiteKnowledge ? "Reanalyse Site" : "Import Site"}
               </button>
               <button
                 type="button"
-                disabled={siteBusy || (siteSummary.pagesIndexed === 0 && pages.length === 0)}
+                disabled={siteBusy || forgetting || (siteSummary.pagesIndexed === 0 && pages.length === 0)}
                 onClick={() => void openPages()}
                 className="h-8 rounded-md border border-line bg-background px-3 text-[11.5px] font-medium text-ink disabled:cursor-not-allowed disabled:opacity-40"
               >
                 View Pages
               </button>
+              {hasSiteKnowledge && (
+                <button
+                  type="button"
+                  disabled={siteBusy || forgetting || Boolean(disabledReason)}
+                  title={disabledReason ?? "Forget imported website intelligence"}
+                  onClick={() => setForgetOpen(true)}
+                  className="inline-flex h-8 items-center gap-1 rounded-md border border-danger/40 bg-danger/10 px-3 text-[11.5px] font-medium text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {forgetting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                  Forget Site
+                </button>
+              )}
             </div>
 
             <div className="mt-3 rounded-md border border-line bg-background px-3 py-2.5">
@@ -231,7 +271,55 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
           onQueryChange={setPageQuery}
         />
       )}
+      {forgetOpen && (
+        <ForgetSiteDialog
+          busy={forgetting}
+          onCancel={() => setForgetOpen(false)}
+          onConfirm={() => void forgetSite()}
+        />
+      )}
     </>
+  );
+}
+
+function ForgetSiteDialog({ busy, onCancel, onConfirm }: { busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/20 px-4 pt-[20vh] backdrop-blur-sm" onMouseDown={busy ? undefined : onCancel}>
+      <div className="mx-auto w-full max-w-md rounded-lg border border-line bg-surface-1 p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="text-[15px] font-semibold text-ink">Forget Website Intelligence?</div>
+        <div className="mt-3 text-[12px] leading-relaxed text-ink-muted">
+          <p>This will remove:</p>
+          <ul className="mt-2 space-y-1">
+            <li>- Imported pages</li>
+            <li>- Learned services</li>
+            <li>- Learned audiences</li>
+            <li>- Learned locations</li>
+            <li>- Learned categories</li>
+            <li>- Generated profile data</li>
+          </ul>
+          <p className="mt-3 font-medium text-ink">This action cannot be undone.</p>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onCancel}
+            className="h-8 rounded-md border border-line bg-background px-3 text-[12px] font-medium text-ink disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onConfirm}
+            className="inline-flex h-8 items-center gap-1 rounded-md bg-danger px-3 text-[12px] font-medium text-white disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            Forget Site
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

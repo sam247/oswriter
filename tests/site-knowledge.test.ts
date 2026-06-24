@@ -192,6 +192,35 @@ describe("site knowledge", () => {
     assert.ok(saved?.writingSignals.includes("Industry terminology detected"));
   });
 
+  it("forgets imported site knowledge, pages, and generated profile data", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const responses = new Map<string, string>([
+      ["https://example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://example.com/services/groundworks</loc></url>
+        </urlset>`],
+      ["https://example.com", `<html><body><nav><a href="/services/groundworks">Groundworks</a></nav></body></html>`],
+      ["https://example.com/services/groundworks", `<html><head><title>Groundworks Services</title></head><body><h1>Groundworks</h1><p>Groundworks for property developers.</p></body></html>`]
+    ]);
+
+    await importSiteKnowledge({
+      projectId: "default",
+      sitemapUrl: "https://example.com/sitemap.xml",
+      store,
+      fetcher: createFetchStub(responses)
+    });
+
+    assert.equal((await store.listProjectSiteKnowledgePages("default")).length, 1);
+    assert.ok(await store.getProjectSiteKnowledge("default"));
+    assert.ok(await store.getProjectSiteProfile("default"));
+
+    await store.deleteProjectSiteKnowledge("default");
+
+    assert.equal((await store.listProjectSiteKnowledgePages("default")).length, 0);
+    assert.equal(await store.getProjectSiteKnowledge("default"), null);
+    assert.equal(await store.getProjectSiteProfile("default"), null);
+  });
+
   it("cleans noisy profile entities, CTA fragments, and duplicate service variants", () => {
     const pages: SiteKnowledgePageDocument[] = [
       sitePage("https://mainlinegroundworks.co.uk/groundworks", "Groundworks...", "Groundworks <!"),
