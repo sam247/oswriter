@@ -70,9 +70,12 @@ describe("site knowledge", () => {
 
     let pages = await store.listProjectSiteKnowledgePages("default");
     let status = await store.getProjectSiteKnowledge("default");
+    let profile = await store.getProjectSiteProfile("default");
     assert.equal(status?.status, "ready");
     assert.equal(status?.pagesIndexed, 2);
     assert.equal(pages.length, 2);
+    assert.equal(profile?.domain, "example.com");
+    assert.equal(profile?.pageCount, 2);
     assert.equal(pages.find((page) => page.url === "https://example.com/about")?.title, "About QueueWrite");
 
     responses.set("https://example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
@@ -92,11 +95,48 @@ describe("site knowledge", () => {
 
     pages = await store.listProjectSiteKnowledgePages("default");
     status = await store.getProjectSiteKnowledge("default");
+    profile = await store.getProjectSiteProfile("default");
     assert.equal(status?.pagesIndexed, 2);
     assert.equal(pages.length, 2);
+    assert.equal(profile?.pageCount, 2);
     assert.equal(pages.find((page) => page.url === "https://example.com/about")?.title, "About QueueWrite Updated");
     assert.equal(pages.some((page) => page.url === "https://example.com/services"), false);
     assert.equal(pages.some((page) => page.url === "https://example.com/contact"), true);
+  });
+
+  it("derives a learned profile from imported page titles, paths, and summaries", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const responses = new Map<string, string>([
+      ["https://mainlinegroundworks.co.uk/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://mainlinegroundworks.co.uk/services/earthworks</loc></url>
+          <url><loc>https://mainlinegroundworks.co.uk/piling-contractors/putney</loc></url>
+          <url><loc>https://mainlinegroundworks.co.uk/foundation-repair/wimbledon</loc></url>
+        </urlset>`],
+      ["https://mainlinegroundworks.co.uk/services/earthworks", `<html><head><title>Earthworks Contractors | Mainline</title><meta name="description" content="Groundworks and excavation services for property developers and main contractors. Get a quote today." /></head><body><h1>Earthworks Services</h1><p>Use UK English and construction terminology.</p></body></html>`],
+      ["https://mainlinegroundworks.co.uk/piling-contractors/putney", `<html><head><title>Piling Contractors in Putney | Local Groundworks Company</title><meta name="description" content="Mini piling and CFA piling for house builders in Putney." /></head><body><h1>Piling Contractors in Putney</h1></body></html>`],
+      ["https://mainlinegroundworks.co.uk/foundation-repair/wimbledon", `<html><head><title>Foundation Repair in Wimbledon | Trusted Local Groundworks Company</title></head><body><h1>Foundation Repair in Wimbledon</h1><p>Specialist foundation repair for commercial clients.</p></body></html>`]
+    ]);
+
+    const result = await importSiteKnowledge({
+      projectId: "mainline",
+      sitemapUrl: "https://mainlinegroundworks.co.uk/sitemap.xml",
+      store,
+      fetcher: createFetchStub(responses)
+    });
+    const saved = await store.getProjectSiteProfile("mainline");
+
+    assert.equal(result.siteProfile.domain, "mainlinegroundworks.co.uk");
+    assert.equal(saved?.pageCount, 3);
+    assert.ok(saved?.services.includes("Earthworks"));
+    assert.ok(saved?.services.some((service) => service.includes("Piling")));
+    assert.ok(saved?.audiences.includes("Property Developers"));
+    assert.ok(saved?.audiences.includes("Main Contractors"));
+    assert.ok(saved?.locations.includes("Putney"));
+    assert.ok(saved?.locations.includes("Wimbledon"));
+    assert.equal(saved?.ctas[0], "Get A Quote");
+    assert.ok(saved?.writingSignals.includes("UK English"));
+    assert.ok(saved?.writingSignals.includes("Industry terminology detected"));
   });
 });
 

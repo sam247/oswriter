@@ -13,7 +13,7 @@ import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTION
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectKnowledgeBase, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -767,40 +767,6 @@ function Workbench() {
       const data = await res.json().catch(() => ({})) as { error?: string };
       if (res.ok) await refresh();
       setMessage(res.ok ? "Queued article content profile updated." : data.error ?? "Content profile update failed.");
-    }
-  }
-
-  async function updateProjectKnowledgeBase(knowledgeBase: ProjectKnowledgeBase, projectId = state?.project.id) {
-    if (!state) return;
-    const targetProjectId = projectId ?? state.project.id;
-    const targetProject = projects.find((project) => project.id === targetProjectId) ?? state.project;
-    const isActiveProject = targetProjectId === state.project.id;
-    if (isActiveProject && settingsBlockedReason) {
-      setMessage(settingsBlockedReason);
-      return;
-    }
-    const updatedAt = new Date().toISOString();
-    setState((current) => current ? {
-      ...current,
-      project: current.project.id === targetProjectId ? { ...current.project, knowledgeBase, updatedAt } : current.project,
-      projects: (current.projects ?? []).map((project) => project.id === targetProjectId ? { ...project, knowledgeBase, updatedAt } : project)
-    } : current);
-    const res = await fetch("/api/project", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: targetProjectId, knowledgeBase })
-    });
-    const data = await res.json().catch(() => ({})) as { state?: AppState; project?: ProjectDocument; error?: string };
-    if (res.ok && data.state) {
-      setMessage("Knowledge base saved.");
-      applyServerState({
-        ...data.state,
-        projects: (data.state.projects ?? []).map((project) => data.project && project.id === data.project.id ? data.project : project),
-        project: data.project && data.state.project.id === data.project.id ? data.project : data.state.project
-      }, "project-knowledge-base");
-    } else {
-      setMessage(data.error ?? "Knowledge base save failed.");
-      await refresh();
     }
   }
 
@@ -1766,7 +1732,6 @@ function Workbench() {
               settingsBlockedReason={projectSettingsProject.id === state.project.id ? settingsBlockedReason : null}
               onClose={() => setProjectSettingsProjectId(null)}
               onSaveProjectSettings={(patch, contentProfile) => updateProjectProfile(patch, projectSettingsProject.id, contentProfile)}
-              onUpdateKnowledgeBase={(knowledgeBase) => updateProjectKnowledgeBase(knowledgeBase, projectSettingsProject.id)}
               onTestWordPressConnection={(connection) => testProjectWordPressConnection(connection, projectSettingsProject.id)}
               onSaveWordPressConnection={(connection) => saveProjectWordPressConnection(connection, projectSettingsProject.id)}
             />
@@ -2501,7 +2466,6 @@ function ProjectSettingsPanel({
   settingsBlockedReason,
   onClose,
   onSaveProjectSettings,
-  onUpdateKnowledgeBase,
   onTestWordPressConnection,
   onSaveWordPressConnection
 }: {
@@ -2510,7 +2474,6 @@ function ProjectSettingsPanel({
   settingsBlockedReason: string | null;
   onClose: () => void;
   onSaveProjectSettings: (patch: ProjectProfilePatch, contentProfile: ContentProfile) => Promise<boolean>;
-  onUpdateKnowledgeBase: (knowledgeBase: ProjectKnowledgeBase) => void;
   onTestWordPressConnection: (connection: WordPressConnectionDraft) => Promise<boolean>;
   onSaveWordPressConnection: (connection: WordPressConnectionDraft) => Promise<boolean>;
 }) {
@@ -2618,9 +2581,7 @@ function ProjectSettingsPanel({
           </CollapsibleSettingsSection>
           <KnowledgeBaseSettings
             projectId={project.id}
-            knowledgeBase={project.knowledgeBase}
             disabledReason={settingsBlockedReason}
-            onSave={onUpdateKnowledgeBase}
           />
           <CollapsibleSettingsSection title="Publishing">
             <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">

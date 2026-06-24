@@ -5,10 +5,10 @@ import { applyPublishingDefaults } from "@/lib/publishing/status";
 import { normalizeProjectProfile, profileKeyFor } from "@/lib/project/profile";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
 import type { WorkerObservationTimings } from "@/lib/storage/storage";
-import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 
@@ -50,6 +50,7 @@ export class NeonStorageProvider implements StorageProvider {
       if (isWorkspacePath(path)) return this.getProject(pathProjectId(path)) as Promise<T | null>;
       if (isSettingsPath(path)) return this.getSettings(pathProjectId(path)) as Promise<T | null>;
       if (isSiteKnowledgePath(path)) return this.getProjectSiteKnowledge(pathProjectId(path)) as Promise<T | null>;
+      if (isSiteProfilePath(path)) return this.getProjectSiteProfile(pathProjectId(path)) as Promise<T | null>;
       if (isSiteKnowledgePagePath(path)) return this.getSiteKnowledgePage(pathProjectId(path), pathId(path)) as Promise<T | null>;
       if (isQueueControlPath(path)) return this.getQueueControl(pathProjectId(path)) as Promise<T | null>;
       if (isJobPath(path)) return this.getDocument<T>("jobs", pathId(path));
@@ -70,6 +71,7 @@ export class NeonStorageProvider implements StorageProvider {
       if (isWorkspacePath(path)) return this.saveProject(value as ProjectDocument);
       if (isSettingsPath(path)) return this.saveSettings(value as SettingsDocument);
       if (isSiteKnowledgePath(path)) return this.saveProjectSiteKnowledge(value as ProjectSiteKnowledgeDocument);
+      if (isSiteProfilePath(path)) return this.saveProjectSiteProfile(value as ProjectSiteProfileDocument);
       if (isSiteKnowledgePagePath(path)) return this.saveSiteKnowledgePage(value as SiteKnowledgePageDocument, pathProjectId(path));
       if (isQueueControlPath(path)) return this.saveQueueControl(value as QueueControlDocument);
       if (isJobPath(path)) return this.saveJob(value as QueueJob);
@@ -458,6 +460,58 @@ export class NeonStorageProvider implements StorageProvider {
           last_error = excluded.last_error,
           metadata = excluded.metadata,
           document = excluded.document,
+          updated_at = excluded.updated_at
+      `;
+    });
+  }
+
+  async getProjectSiteProfile(projectId: string): Promise<ProjectSiteProfileDocument | null> {
+    return this.withFailureLogging("getProjectSiteProfile", projectId, async () => {
+      await this.ensureSiteKnowledgeSchema();
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select *
+        from project_site_profile
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+        limit 1
+      `);
+      return found[0] ? siteProfileFromRow(found[0]) : null;
+    });
+  }
+
+  async saveProjectSiteProfile(profile: ProjectSiteProfileDocument): Promise<void> {
+    return this.withFailureLogging("saveProjectSiteProfile", profile.projectId, async () => {
+      await this.ensureSiteKnowledgeSchema();
+      const tenant = await this.ensureTenant();
+      await this.ensureProjectRows(profile.projectId);
+      const next = withProjectSiteProfileDefaults(profile, tenant);
+      await this.sql`
+        insert into project_site_profile (
+          project_id, organisation_id, domain, page_count, services, products, audiences, locations,
+          ctas, writing_signals, metadata, document, generated_at, updated_at
+        )
+        values (
+          ${next.projectId}, ${next.organisationId}, ${next.domain}, ${next.pageCount},
+          ${JSON.stringify(next.services)}::jsonb, ${JSON.stringify(next.products)}::jsonb,
+          ${JSON.stringify(next.audiences)}::jsonb, ${JSON.stringify(next.locations)}::jsonb,
+          ${JSON.stringify(next.ctas)}::jsonb, ${JSON.stringify(next.writingSignals)}::jsonb,
+          ${JSON.stringify(next.metadata)}::jsonb, ${JSON.stringify(next)}::jsonb,
+          ${next.generatedAt}::timestamptz, ${next.updatedAt}::timestamptz
+        )
+        on conflict (project_id) do update set
+          organisation_id = excluded.organisation_id,
+          domain = excluded.domain,
+          page_count = excluded.page_count,
+          services = excluded.services,
+          products = excluded.products,
+          audiences = excluded.audiences,
+          locations = excluded.locations,
+          ctas = excluded.ctas,
+          writing_signals = excluded.writing_signals,
+          metadata = excluded.metadata,
+          document = excluded.document,
+          generated_at = excluded.generated_at,
           updated_at = excluded.updated_at
       `;
     });
@@ -1811,6 +1865,28 @@ export class NeonStorageProvider implements StorageProvider {
       create index if not exists idx_project_site_pages_project_title
         on project_site_pages (organisation_id, project_id, title)
     `;
+    await this.sql`
+      create table if not exists project_site_profile (
+        project_id text primary key references projects(id) on delete cascade,
+        organisation_id text not null references organisations(id) on delete cascade,
+        domain text not null default '',
+        page_count integer not null default 0,
+        services jsonb not null default '[]'::jsonb,
+        products jsonb not null default '[]'::jsonb,
+        audiences jsonb not null default '[]'::jsonb,
+        locations jsonb not null default '[]'::jsonb,
+        ctas jsonb not null default '[]'::jsonb,
+        writing_signals jsonb not null default '[]'::jsonb,
+        metadata jsonb not null default '{}'::jsonb,
+        document jsonb not null,
+        generated_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+    await this.sql`
+      create index if not exists idx_project_site_profile_org
+        on project_site_profile (organisation_id, updated_at desc)
+    `;
     this.siteKnowledgeSchemaReady = true;
   }
 
@@ -2029,6 +2105,25 @@ function withSiteKnowledgePageDefaults(page: SiteKnowledgePageDocument, tenant: 
     metadata: isRecord(page.metadata) ? page.metadata : {},
     importedAt: page.importedAt ?? now,
     updatedAt: page.updatedAt ?? now
+  };
+}
+
+function withProjectSiteProfileDefaults(profile: ProjectSiteProfileDocument, tenant: TenantSeed): ProjectSiteProfileDocument {
+  const now = new Date().toISOString();
+  return {
+    ...profile,
+    organisationId: profile.organisationId ?? tenant.organisationId,
+    domain: profile.domain ?? "",
+    pageCount: profile.pageCount ?? 0,
+    services: stringArray(profile.services),
+    products: stringArray(profile.products),
+    audiences: stringArray(profile.audiences),
+    locations: stringArray(profile.locations),
+    ctas: stringArray(profile.ctas),
+    writingSignals: stringArray(profile.writingSignals),
+    metadata: isRecord(profile.metadata) ? profile.metadata : {},
+    generatedAt: profile.generatedAt ?? now,
+    updatedAt: profile.updatedAt ?? now
   };
 }
 
@@ -2307,6 +2402,10 @@ function isSiteKnowledgePath(path: string) {
   return path.endsWith("/knowledge/site/config.json");
 }
 
+function isSiteProfilePath(path: string) {
+  return path.endsWith("/knowledge/site/profile.json");
+}
+
 function isSiteKnowledgePagePath(path: string) {
   return /\/knowledge\/site\/pages\/[^/]+\.json$/.test(path);
 }
@@ -2415,6 +2514,24 @@ function siteKnowledgePageFromRow(row: Record<string, unknown>): SiteKnowledgePa
     metaDescription: nullableString(row.meta_description) ?? "",
     shortSummary: nullableString(row.short_summary) ?? "",
     importedAt: dateIso(row.imported_at),
+    updatedAt: dateIso(row.updated_at),
+    metadata: isRecord(row.metadata) ? row.metadata : {}
+  };
+}
+
+function siteProfileFromRow(row: Record<string, unknown>): ProjectSiteProfileDocument {
+  return {
+    projectId: String(row.project_id),
+    organisationId: String(row.organisation_id),
+    domain: String(row.domain ?? ""),
+    pageCount: Number(row.page_count ?? 0),
+    services: stringArray(row.services),
+    products: stringArray(row.products),
+    audiences: stringArray(row.audiences),
+    locations: stringArray(row.locations),
+    ctas: stringArray(row.ctas),
+    writingSignals: stringArray(row.writing_signals),
+    generatedAt: dateIso(row.generated_at),
     updatedAt: dateIso(row.updated_at),
     metadata: isRecord(row.metadata) ? row.metadata : {}
   };

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { nowIso } from "@/lib/defaults";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
+import { extractProjectSiteProfile } from "@/lib/site-profile";
 import type { WorkspaceStore } from "@/lib/storage/storage";
-import type { ProjectSiteKnowledgeDocument, SiteKnowledgePageDocument } from "@/lib/types";
+import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
 export const SITE_KNOWLEDGE_MAX_URLS = 500;
 
@@ -16,6 +17,7 @@ interface ImportSiteKnowledgeOptions {
 
 interface ImportSiteKnowledgeResult {
   siteKnowledge: ProjectSiteKnowledgeDocument;
+  siteProfile: ProjectSiteProfileDocument;
   pages: SiteKnowledgePageDocument[];
 }
 
@@ -131,8 +133,15 @@ export async function importSiteKnowledge({
       },
       updatedAt: completedAt
     };
+    const siteProfile = extractProjectSiteProfile({
+      projectId,
+      organisationId: siteKnowledge.organisationId,
+      sitemapUrl: normalizedSitemapUrl,
+      pages
+    });
+    await store.saveProjectSiteProfile(siteProfile);
     await persistSiteKnowledgeStatus(store, siteKnowledge, onProgress);
-    return { siteKnowledge, pages };
+    return { siteKnowledge, siteProfile, pages };
   } catch (error) {
     const failedAt = nowIso();
     const failedStatus: ProjectSiteKnowledgeDocument = {

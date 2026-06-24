@@ -7,6 +7,7 @@ export const workspacePath = (projectId = DEFAULT_PROJECT_ID) => `${root(project
 export const settingsPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/settings.json`;
 export const wordpressConnectionPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/publishing/wordpress.json`;
 export const siteKnowledgePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/knowledge/site/config.json`;
+export const siteProfilePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/knowledge/site/profile.json`;
 export const siteKnowledgePagesPrefix = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/knowledge/site/pages/`;
 export const siteKnowledgePagePath = (pageId: string, projectId = DEFAULT_PROJECT_ID) => `${siteKnowledgePagesPrefix(projectId)}${pageId}.json`;
 export const queueControlPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/queue/control.json`;

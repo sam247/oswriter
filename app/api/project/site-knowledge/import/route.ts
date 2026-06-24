@@ -53,6 +53,7 @@ export async function POST(req: Request) {
           emit({
             type: "complete",
             siteKnowledge: result.siteKnowledge,
+            siteProfile: result.siteProfile,
             pagesIndexed: result.pages.length
           });
         } catch (error) {

@@ -2,30 +2,17 @@
 
 import { ChevronDown, ExternalLink, Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
-import type { ProjectKnowledgeBase, ProjectSiteKnowledgeDocument, SiteKnowledgePageDocument } from "@/lib/types";
+import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
 interface KnowledgeBaseSettingsProps {
   projectId: string;
-  knowledgeBase?: ProjectKnowledgeBase;
   disabledReason?: string | null;
-  onSave: (knowledgeBase: ProjectKnowledgeBase) => void;
 }
 
-const TEXT_AREAS: Array<{ key: keyof ProjectKnowledgeBase; label: string; placeholder: string }> = [
-  { key: "aboutBusiness", label: "About The Business", placeholder: "What the business does, how it operates, and what makes it distinct." },
-  { key: "services", label: "Services", placeholder: "One service per line or a short service summary." },
-  { key: "products", label: "Products", placeholder: "Products or product categories relevant to future articles." },
-  { key: "targetCustomer", label: "Target Customer", placeholder: "Who the business serves and what matters to them." },
-  { key: "writingRules", label: "Writing Rules", placeholder: "For example: Use UK English. Avoid medical claims." },
-  { key: "preferredCTA", label: "Preferred CTA", placeholder: "For example: Book a screening appointment." }
-];
-
-export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason, onSave }: KnowledgeBaseSettingsProps) {
-  const normalized = useMemo(() => normalizeProjectKnowledgeBase(knowledgeBase), [knowledgeBase]);
-  const [draft, setDraft] = useState(normalized);
+export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBaseSettingsProps) {
   const [siteKnowledge, setSiteKnowledge] = useState<ProjectSiteKnowledgeDocument | null>(null);
+  const [siteProfile, setSiteProfile] = useState<ProjectSiteProfileDocument | null>(null);
   const [sitemapUrl, setSitemapUrl] = useState("");
   const [siteLoading, setSiteLoading] = useState(true);
   const [siteBusy, setSiteBusy] = useState(false);
@@ -36,23 +23,16 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
   const [pagesLoaded, setPagesLoaded] = useState(false);
   const [pageQuery, setPageQuery] = useState("");
 
-  useEffect(() => setDraft(normalized), [normalized]);
   useEffect(() => {
-    void refreshSiteKnowledge(projectId, setSiteKnowledge, setSitemapUrl, setSiteLoading, setSiteError);
+    void refreshSiteKnowledge(projectId, setSiteKnowledge, setSiteProfile, setSitemapUrl, setSiteLoading, setSiteError);
   }, [projectId]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(normalized);
-  const configured = Object.values(normalized).some(Boolean);
   const siteSummary = siteKnowledge ?? createEmptyProjectSiteKnowledge(projectId);
   const filteredPages = useMemo(() => {
     const needle = pageQuery.trim().toLowerCase();
     if (!needle) return pages;
     return pages.filter((page) => page.url.toLowerCase().includes(needle) || page.title.toLowerCase().includes(needle));
   }, [pageQuery, pages]);
-
-  function update(key: keyof ProjectKnowledgeBase, value: string) {
-    setDraft((current) => ({ ...current, [key]: value }));
-  }
 
   async function openPages() {
     setPagesOpen(true);
@@ -89,7 +69,7 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
         const data = await res.json().catch(() => ({})) as { error?: string };
         setSiteError(data.error ?? "Site import failed.");
         setSiteBusy(false);
-        await refreshSiteKnowledge(projectId, setSiteKnowledge, setSitemapUrl, setSiteLoading, setSiteError);
+        await refreshSiteKnowledge(projectId, setSiteKnowledge, setSiteProfile, setSitemapUrl, setSiteLoading, setSiteError);
         return;
       }
       if (!res.body) throw new Error("Import stream unavailable.");
@@ -109,6 +89,7 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
               setSiteKnowledge(next.siteKnowledge);
               if (typeof next.siteKnowledge.sitemapUrl === "string") setSitemapUrl(next.siteKnowledge.sitemapUrl);
             }
+            if (next.siteProfile) setSiteProfile(next.siteProfile);
           },
           onError(message) {
             setSiteError(message);
@@ -119,6 +100,7 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
               setSiteKnowledge(next.siteKnowledge);
               setSitemapUrl(next.siteKnowledge.sitemapUrl);
             }
+            if (next.siteProfile) setSiteProfile(next.siteProfile);
           }
         }));
       }
@@ -130,6 +112,7 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
             setSiteKnowledge(next.siteKnowledge);
             if (typeof next.siteKnowledge.sitemapUrl === "string") setSitemapUrl(next.siteKnowledge.sitemapUrl);
           }
+          if (next.siteProfile) setSiteProfile(next.siteProfile);
         },
         onError(message) {
           setSiteError(message);
@@ -140,15 +123,16 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
             setSiteKnowledge(next.siteKnowledge);
             setSitemapUrl(next.siteKnowledge.sitemapUrl);
           }
+          if (next.siteProfile) setSiteProfile(next.siteProfile);
         }
       }));
 
-      await refreshSiteKnowledge(projectId, setSiteKnowledge, setSitemapUrl, setSiteLoading, setSiteError);
+      await refreshSiteKnowledge(projectId, setSiteKnowledge, setSiteProfile, setSitemapUrl, setSiteLoading, setSiteError);
       setPagesLoaded(false);
       if (pagesOpen || completed) await loadPages(projectId, setPages, setPagesLoading, setSiteError, setPagesLoaded);
     } catch (error) {
       setSiteError(error instanceof Error ? error.message : "Site import failed.");
-      await refreshSiteKnowledge(projectId, setSiteKnowledge, setSitemapUrl, setSiteLoading, setSiteError);
+      await refreshSiteKnowledge(projectId, setSiteKnowledge, setSiteProfile, setSitemapUrl, setSiteLoading, setSiteError);
     } finally {
       setSiteBusy(false);
     }
@@ -159,38 +143,18 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
       <details className="group w-full rounded-md border border-line bg-surface-1">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-ink">Knowledge Base <span className="font-normal text-ink-subtle">(Optional)</span></div>
-            <div className="mono mt-0.5 text-[10px] text-ink-subtle">{configured ? "Configured" : "Not configured"}</div>
+            <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
+            <div className="mono mt-0.5 text-[10px] text-ink-subtle">{siteProfile ? `${siteProfile.pageCount} pages learned` : "Import a sitemap to learn this business"}</div>
           </div>
           <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
 
         <div className="border-t border-line px-4 pb-4 pt-3">
-          <p className="text-[11.5px] leading-relaxed text-ink-muted">Provide additional information about your business, services and audience to improve article planning and generation.</p>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <KnowledgeInput label="Brand Name" value={draft.brandName} placeholder="Business or brand name" onChange={(value) => update("brandName", value)} />
-            <KnowledgeInput label="Website" value={draft.website} placeholder="https://example.com" onChange={(value) => update("website", value)} />
-          </div>
-
-          <div className="mt-3 space-y-3">
-            {TEXT_AREAS.map((field) => (
-              <label key={field.key} className="block text-[12px] text-ink-muted">
-                <span>{field.label}</span>
-                <textarea
-                  value={draft[field.key]}
-                  onChange={(event) => update(field.key, event.currentTarget.value)}
-                  placeholder={field.placeholder}
-                  rows={field.key === "aboutBusiness" || field.key === "writingRules" ? 4 : 3}
-                  className="mt-1 w-full resize-y rounded border border-line bg-background px-2.5 py-2 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-subtle focus:border-ink"
-                />
-              </label>
-            ))}
-          </div>
+          <p className="text-[11.5px] leading-relaxed text-ink-muted">Import a sitemap so QueueWrite can learn services, categories, audiences, locations, CTAs, and writing signals directly from the website.</p>
 
           <div className="mt-4 rounded-md border border-line bg-surface-2 p-3">
-            <div className="text-[13px] font-semibold text-ink">Site Knowledge</div>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">Import pages from your website to improve future SEO and internal linking recommendations.</p>
+            <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">This profile becomes the foundation for generation, SEO suggestions, internal links, entity detection, topical authority, and CTA recommendations.</p>
 
             <label className="mt-3 block text-[12px] text-ink-muted">
               <span>Sitemap URL</span>
@@ -248,20 +212,12 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
             </div>
 
             {siteError && <div className="mt-3 text-[11px] text-warn">{siteError}</div>}
+            {siteProfile && siteSummary.status === "ready" && (
+              <WebsiteIntelligenceCard profile={siteProfile} importedAt={siteSummary.lastImportedAt} />
+            )}
           </div>
 
           {disabledReason && <div className="mt-3 text-[11px] text-warn">{disabledReason}</div>}
-          <div className="mt-4 flex justify-end">
-            <button
-              type="button"
-              disabled={!dirty || Boolean(disabledReason)}
-              title={disabledReason ?? "Save project knowledge base"}
-              onClick={() => onSave(normalizeProjectKnowledgeBase(draft))}
-              className="h-8 rounded-md bg-ink px-3 text-[11.5px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Save Knowledge Base
-            </button>
-          </div>
         </div>
       </details>
 
@@ -276,20 +232,6 @@ export function KnowledgeBaseSettings({ projectId, knowledgeBase, disabledReason
         />
       )}
     </>
-  );
-}
-
-function KnowledgeInput({ label, value, placeholder, onChange }: { label: string; value: string; placeholder: string; onChange: (value: string) => void }) {
-  return (
-    <label className="block text-[12px] text-ink-muted">
-      <span>{label}</span>
-      <input
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        placeholder={placeholder}
-        className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-subtle focus:border-ink"
-      />
-    </label>
   );
 }
 
@@ -370,9 +312,56 @@ function SiteKnowledgePagesModal({
   );
 }
 
+function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSiteProfileDocument; importedAt?: string | null }) {
+  return (
+    <div className="mt-3 rounded-md border border-line bg-background px-3 py-3">
+      <div className="text-[12.5px] font-semibold text-ink">QueueWrite analysed {profile.pageCount} pages and learned the following about your business.</div>
+      <div className="mt-3 grid gap-3 text-[11.5px] sm:grid-cols-2">
+        <ProfileLine label="Website" value={profile.domain || "-"} />
+        <ProfileLine label="Pages Indexed" value={profile.pageCount || "-"} />
+        <ProfileLine label="Last Synced" value={formatDate(importedAt ?? profile.generatedAt)} />
+        <ProfileLine label="Suggested CTA" value={profile.ctas[0] ?? "-"} />
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <ProfileList title="Learned Services" values={profile.services} />
+        <ProfileList title="Learned Products / Categories" values={profile.products} />
+        <ProfileList title="Learned Audiences" values={profile.audiences} />
+        <ProfileList title="Learned Locations" values={profile.locations} />
+        <ProfileList title="Writing Preferences" values={profile.writingSignals} />
+      </div>
+    </div>
+  );
+}
+
+function ProfileLine({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-line/60 pb-1">
+      <span className="text-ink-subtle">{label}</span>
+      <span className="text-right font-medium text-ink">{value}</span>
+    </div>
+  );
+}
+
+function ProfileList({ title, values }: { title: string; values: string[] }) {
+  const visible = values.slice(0, 8);
+  return (
+    <div>
+      <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
+      {visible.length ? (
+        <ul className="mt-1 space-y-0.5 text-[11.5px] text-ink-muted">
+          {visible.map((value) => <li key={value}>- {value}</li>)}
+        </ul>
+      ) : (
+        <div className="mt-1 text-[11.5px] text-ink-subtle">Not enough signal yet.</div>
+      )}
+    </div>
+  );
+}
+
 async function refreshSiteKnowledge(
   projectId: string,
   setSiteKnowledge: (value: ProjectSiteKnowledgeDocument | null) => void,
+  setSiteProfile: (value: ProjectSiteProfileDocument | null) => void,
   setSitemapUrl: (value: string) => void,
   setSiteLoading: (value: boolean) => void,
   setSiteError: (value: string | null) => void
@@ -380,7 +369,7 @@ async function refreshSiteKnowledge(
   setSiteLoading(true);
   try {
     const res = await fetch(`/api/project/site-knowledge?projectId=${encodeURIComponent(projectId)}`, { cache: "no-store" });
-    const data = await res.json().catch(() => ({})) as { siteKnowledge?: ProjectSiteKnowledgeDocument; error?: string };
+    const data = await res.json().catch(() => ({})) as { siteKnowledge?: ProjectSiteKnowledgeDocument; siteProfile?: ProjectSiteProfileDocument | null; error?: string };
     if (!res.ok) {
       setSiteError(data.error ?? "Could not load site knowledge.");
       setSiteKnowledge(createEmptyProjectSiteKnowledge(projectId));
@@ -388,6 +377,7 @@ async function refreshSiteKnowledge(
     }
     const next = data.siteKnowledge ?? createEmptyProjectSiteKnowledge(projectId);
     setSiteKnowledge(next);
+    setSiteProfile(data.siteProfile ?? null);
     setSitemapUrl(next.sitemapUrl ?? "");
     setSiteError(null);
   } finally {
@@ -420,9 +410,9 @@ async function loadPages(
 function consumeImportBuffer(
   input: string,
   handlers: {
-    onProgress: (event: { siteKnowledge?: ProjectSiteKnowledgeDocument }) => void;
+    onProgress: (event: { siteKnowledge?: ProjectSiteKnowledgeDocument; siteProfile?: ProjectSiteProfileDocument }) => void;
     onError: (message: string) => void;
-    onComplete: (event: { siteKnowledge?: ProjectSiteKnowledgeDocument }) => void;
+    onComplete: (event: { siteKnowledge?: ProjectSiteKnowledgeDocument; siteProfile?: ProjectSiteProfileDocument }) => void;
   }
 ) {
   let buffer = input;
@@ -449,7 +439,7 @@ function consumeImportBuffer(
 
 function parseImportEvent(line: string) {
   try {
-    return JSON.parse(line) as { type?: string; error?: string; siteKnowledge?: ProjectSiteKnowledgeDocument };
+    return JSON.parse(line) as { type?: string; error?: string; siteKnowledge?: ProjectSiteKnowledgeDocument; siteProfile?: ProjectSiteProfileDocument };
   } catch {
     return null;
   }
@@ -460,4 +450,11 @@ function formatDateTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Not Configured";
   return date.toLocaleString();
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "Not Configured";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not Configured";
+  return date.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }

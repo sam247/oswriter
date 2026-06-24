@@ -381,8 +381,10 @@ export class QueueRunner {
       const projectProfile = projectProfileFromControls(project.profile, settings.controls);
       const profileSnapshot = snapshotProjectProfile(projectProfile);
       const contentProfile = resolveContentProfile(job.contentProfile, project.defaultContentProfile);
+      const siteProfile = await this.store.getProjectSiteProfile(job.projectId);
       const knowledgeBase = normalizeProjectKnowledgeBase(project.knowledgeBase);
-      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, knowledgeBase, contentProfile);
+      const projectIntelligence = siteProfile ?? knowledgeBase;
+      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile);
 
       if (!stageDone(job, "research")) {
         await this.throwIfEmergencyStopped(job.projectId);
@@ -452,7 +454,7 @@ export class QueueRunner {
       await this.throwIfEmergencyStopped(job.projectId);
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot, knowledgeBase, contentProfile }));
+      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot, knowledgeBase: siteProfile ? null : knowledgeBase, siteProfile, contentProfile }));
       await this.throwIfEmergencyStopped(job.projectId);
       const markdown = generation.markdown;
       job = {

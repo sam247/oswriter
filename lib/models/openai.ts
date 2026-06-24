@@ -3,6 +3,7 @@ import type { ArticleGenerationInput, EditorInput, ModelAdapter, ModelGeneration
 import { buildArticleGenerationPlan } from "@/lib/generation/plan";
 import { profileContextLines } from "@/lib/project/profile";
 import { projectKnowledgeContextLines } from "@/lib/project/knowledge-base";
+import { siteProfileContextLines } from "@/lib/site-profile";
 import { cleanJsonText } from "@/lib/text";
 import { estimateGenerationCost } from "@/lib/telemetry/costs";
 import { pricingForModel } from "@/lib/telemetry/pricing";
@@ -20,7 +21,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
     const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
-    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.knowledgeBase, input.contentProfile);
+    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.siteProfile ?? input.knowledgeBase, input.contentProfile);
     const response = await this.client.chat.completions.create({
       model,
       messages: promptToMessages(
@@ -137,12 +138,15 @@ function normaliseBaseUrl(value: string | undefined) {
     .replace(/\/v1$/i, "");
 }
 
-export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, contentProfile = "industry_explainer", plan = buildArticleGenerationPlan(controls, profileSnapshot, knowledgeBase, contentProfile) }: ArticleGenerationInput) {
+export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, siteProfile, contentProfile = "industry_explainer", plan = buildArticleGenerationPlan(controls, profileSnapshot, siteProfile ?? knowledgeBase, contentProfile) }: ArticleGenerationInput) {
   const contentDefinition = CONTENT_PROFILES[contentProfile];
   const projectContext = profileContextLines(profileSnapshot);
-  const knowledgeContext = projectKnowledgeContextLines(knowledgeBase);
+  const knowledgeContext = siteProfile ? siteProfileContextLines(siteProfile) : projectKnowledgeContextLines(knowledgeBase);
   const projectContextBlock = projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : "";
-  const knowledgeContextBlock = knowledgeContext.length ? `\nKnowledge Base (use during planning, outline construction, and writing; do not force irrelevant mentions):\n${knowledgeContext.map((line) => `- ${line}`).join("\n")}` : "";
+  const knowledgeContextLabel = siteProfile
+    ? "Website intelligence (learned from the imported sitemap; use during planning, outline construction, and writing; do not force irrelevant mentions)"
+    : "Knowledge Base (use during planning, outline construction, and writing; do not force irrelevant mentions)";
+  const knowledgeContextBlock = knowledgeContext.length ? `\n${knowledgeContextLabel}:\n${knowledgeContext.map((line) => `- ${line}`).join("\n")}` : "";
   return `Write a practical Markdown article.
 
 Non-negotiable:

@@ -87,6 +87,22 @@ export interface SiteKnowledgePageDocument {
   metadata: Record<string, unknown>;
 }
 
+export interface ProjectSiteProfileDocument {
+  projectId: string;
+  organisationId?: string;
+  domain: string;
+  pageCount: number;
+  services: string[];
+  products: string[];
+  audiences: string[];
+  locations: string[];
+  ctas: string[];
+  writingSignals: string[];
+  generatedAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+}
+
 export type WordPressConnectionStatus = "not_connected" | "connected" | "failed";
 export type WordPressPostStatus = "draft" | "publish";
 export type PublishingWorkflowStatus = "not_published" | "draft" | "scheduled" | "published";
@@ -771,6 +787,7 @@ export interface ArticleGenerationInput {
   plan?: import("@/lib/generation/plan").ArticleGenerationPlan;
   profileSnapshot?: ProjectProfileSnapshot | null;
   knowledgeBase?: ProjectKnowledgeBase | null;
+  siteProfile?: ProjectSiteProfileDocument | null;
   contentProfile?: ContentProfile;
 }
 
