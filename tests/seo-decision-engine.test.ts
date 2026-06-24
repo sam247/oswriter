@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { applySeoRecommendations, buildSeoDecisionEngine } from "@/lib/seo/decision-engine";
 import { createDefaultProjectProfile } from "@/lib/project/profile";
-import type { ArticleDocument, ResearchPack } from "@/lib/types";
+import type { ArticleDocument, ResearchPack, SiteKnowledgePageDocument, ProjectSiteProfileDocument } from "@/lib/types";
 
 describe("SEO decision engine", () => {
   it("prioritises objective fixes and removes them after application", () => {
@@ -204,6 +204,86 @@ describe("SEO decision engine", () => {
     assert.doesNotMatch(updated, /Duplicate Government Source/);
     assert.ok(!buildSeoDecisionEngine({ article, markdown: updated }).recommendations.some((item) => item.id === "insert-citation-list"));
   });
+
+  it("suggests internal links from imported Website Intelligence pages", () => {
+    const article = {
+      ...articleFixture(),
+      sources: [],
+      markdown: "# Groundworks Planning\n\nGroundworks shape the programme before excavation and piling begin.\n\n## Delivery Notes\n\nThe team should compare excavation access, piling constraints, and drainage requirements before pricing."
+    };
+    const result = buildSeoDecisionEngine({
+      article,
+      markdown: article.markdown,
+      sitePages: [
+        sitePage("https://mainlinegroundworks.co.uk/services/groundworks", "Groundworks"),
+        sitePage("https://mainlinegroundworks.co.uk/services/excavation", "Excavation"),
+        sitePage("https://mainlinegroundworks.co.uk/services/piling", "Piling")
+      ],
+      siteProfile: siteProfile({ services: ["Groundworks", "Excavation", "Piling"] })
+    });
+    const recommendation = result.recommendations.find((item) => item.id === "suggest-internal-links");
+
+    assert.ok(recommendation);
+    assert.equal(recommendation.title, "3 internal linking opportunities detected");
+    assert.match(recommendation.proposedText, /Groundworks -> \/services\/groundworks/);
+    assert.match(recommendation.proposedText, /excavation -> \/services\/excavation/i);
+
+    const updated = recommendation.apply(article.markdown);
+    assert.match(updated, /\[Groundworks\]\(\/services\/groundworks\) shape/);
+    assert.match(updated, /\[excavation\]\(\/services\/excavation\) and \[piling\]\(\/services\/piling\)/i);
+  });
+
+  it("inserts internal links only into suitable unlinked paragraph occurrences", () => {
+    const article = {
+      ...articleFixture(),
+      sources: [],
+      markdown: "# Groundworks\n\n[Groundworks](/existing) are already linked here.\n\n## Excavation\n\nExcavation affects access. Piling affects nearby structures. Drainage affects sequencing.\n\nContact pages and privacy pages should not be suggested."
+    };
+    const result = buildSeoDecisionEngine({
+      article,
+      markdown: article.markdown,
+      sitePages: [
+        sitePage("https://example.com/services/groundworks", "Groundworks"),
+        sitePage("https://example.com/services/excavation", "Excavation"),
+        sitePage("https://example.com/services/piling", "Piling"),
+        sitePage("https://example.com/services/drainage", "Drainage"),
+        sitePage("https://example.com/contact", "Contact"),
+        sitePage("https://example.com/privacy-policy", "Privacy Policy")
+      ],
+      siteProfile: siteProfile({ services: ["Groundworks", "Excavation", "Piling", "Drainage"] })
+    });
+    const recommendation = result.recommendations.find((item) => item.id === "suggest-internal-links");
+
+    assert.ok(recommendation);
+    assert.doesNotMatch(recommendation.proposedText, /contact|privacy/i);
+
+    const updated = recommendation.apply(article.markdown);
+    assert.match(updated, /^# Groundworks$/m);
+    assert.match(updated, /\[Groundworks\]\(\/existing\) are already linked here\./);
+    assert.match(updated, /\[Excavation\]\(\/services\/excavation\) affects access/);
+    assert.match(updated, /\[Piling\]\(\/services\/piling\) affects nearby structures/);
+    assert.match(updated, /\[Drainage\]\(\/services\/drainage\) affects sequencing/);
+    assert.doesNotMatch(updated, /\]\(\/contact\)|\]\(\/privacy-policy\)/);
+  });
+
+  it("caps internal link insertion at five destinations", () => {
+    const article = {
+      ...articleFixture(),
+      sources: [],
+      markdown: "# Services\n\nGroundworks, excavation, piling, drainage, foundations, concrete, remediation, and utilities all need sequencing."
+    };
+    const services = ["Groundworks", "Excavation", "Piling", "Drainage", "Foundations", "Concrete", "Remediation", "Utilities"];
+    const recommendation = buildSeoDecisionEngine({
+      article,
+      markdown: article.markdown,
+      sitePages: services.map((service) => sitePage(`https://example.com/services/${service.toLowerCase()}`, service)),
+      siteProfile: siteProfile({ services })
+    }).recommendations.find((item) => item.id === "suggest-internal-links");
+
+    assert.ok(recommendation);
+    const updated = recommendation.apply(article.markdown);
+    assert.equal((updated.match(/\]\(\/services\//g) ?? []).length, 5);
+  });
 });
 
 function articleFixture(): ArticleDocument {
@@ -244,6 +324,39 @@ function researchFixture(): ResearchPack {
     requestIds: [],
     durationMs: 100,
     createdAt: "2026-06-18T00:00:00.000Z"
+  };
+}
+
+function sitePage(url: string, title: string): SiteKnowledgePageDocument {
+  return {
+    id: title.toLowerCase().replace(/\s+/g, "-"),
+    projectId: "default",
+    url,
+    title,
+    h1: title,
+    metaDescription: `${title} service page.`,
+    shortSummary: `${title} information for customers.`,
+    importedAt: "2026-06-18T00:00:00.000Z",
+    updatedAt: "2026-06-18T00:00:00.000Z",
+    metadata: {}
+  };
+}
+
+function siteProfile(patch: Partial<ProjectSiteProfileDocument>): ProjectSiteProfileDocument {
+  return {
+    projectId: "default",
+    domain: "example.com",
+    pageCount: 0,
+    services: [],
+    products: [],
+    audiences: [],
+    locations: [],
+    ctas: [],
+    writingSignals: [],
+    generatedAt: "2026-06-18T00:00:00.000Z",
+    updatedAt: "2026-06-18T00:00:00.000Z",
+    metadata: {},
+    ...patch
   };
 }
 

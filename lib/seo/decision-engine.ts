@@ -1,4 +1,4 @@
-import type { ArticleDocument, ProjectProfile, ResearchPack } from "@/lib/types";
+import type { ArticleDocument, ProjectProfile, ProjectSiteProfileDocument, ResearchPack, SiteKnowledgePageDocument } from "@/lib/types";
 
 export type SeoRecommendationSection = "fix" | "improve" | "project";
 
@@ -14,6 +14,7 @@ export interface SeoRecommendation {
   proposedText: string;
   difference: string;
   apply: (markdown: string) => string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SeoDecisionResult {
@@ -28,17 +29,30 @@ interface SeoDecisionInput {
   markdown: string;
   research?: ResearchPack | null;
   profile?: ProjectProfile | null;
+  sitePages?: SiteKnowledgePageDocument[];
+  siteProfile?: ProjectSiteProfileDocument | null;
 }
 
 type FaqCoverageStatus = "missing" | "partial" | "complete";
+type LinkOpportunityMatchType = "topic" | "service" | "location" | "partial";
+
+interface InternalLinkOpportunity {
+  url: string;
+  title: string;
+  anchorText: string;
+  reason: string;
+  confidence: number;
+  matchType: LinkOpportunityMatchType;
+}
 
 const RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.7;
 
-export function buildSeoDecisionEngine({ article, markdown, research, profile }: SeoDecisionInput): SeoDecisionResult {
+export function buildSeoDecisionEngine({ article, markdown, research, profile, sitePages = [], siteProfile = null }: SeoDecisionInput): SeoDecisionResult {
   const recommendations = [
     ...buildFixRecommendations(article, markdown, profile),
     ...buildImproveRecommendations(article, markdown, research, profile),
-    ...buildProjectRecommendations(markdown, profile)
+    ...buildProjectRecommendations(markdown, profile),
+    ...buildInternalLinkRecommendations(markdown, sitePages, siteProfile)
   ].sort((left, right) => right.priority - left.priority || right.impact - left.impact);
   const score = Math.max(0, 100 - recommendations.reduce((sum, item) => sum + item.impact, 0));
   const estimatedImpact = recommendations.slice(0, 3).reduce((sum, item) => sum + item.impact, 0);
@@ -691,6 +705,269 @@ function buildProjectRecommendations(markdown: string, profile?: ProjectProfile 
   }
 
   return recommendations.slice(0, 3);
+}
+
+function buildInternalLinkRecommendations(markdown: string, sitePages: SiteKnowledgePageDocument[], siteProfile?: ProjectSiteProfileDocument | null) {
+  const opportunities = findInternalLinkOpportunities(markdown, sitePages, siteProfile);
+  if (!opportunities.length) return [];
+
+  const selected = opportunities.slice(0, 5);
+  const preview = selected.map((item) => `${item.anchorText} -> ${displayInternalUrl(item.url)}`).join("\n");
+  const top = selected[0];
+
+  return [{
+    id: "suggest-internal-links",
+    section: "project" as const,
+    title: `${selected.length} internal linking ${selected.length === 1 ? "opportunity" : "opportunities"} detected`,
+    reason: top ? `${top.title}: ${top.reason}` : "Imported Website Intelligence pages match topics in this article.",
+    actionLabel: "Suggest Links",
+    impact: Math.min(5, Math.max(2, selected.length)),
+    priority: 84,
+    currentText: "No suggested internal links have been inserted for these opportunities.",
+    proposedText: preview,
+    difference: preview.split("\n").map((line) => `+ ${line}`).join("\n"),
+    metadata: { internalLinkOpportunities: selected },
+    apply: (currentMarkdown: string) => insertInternalLinks(currentMarkdown, selected).markdown
+  }];
+}
+
+function findInternalLinkOpportunities(markdown: string, sitePages: SiteKnowledgePageDocument[], siteProfile?: ProjectSiteProfileDocument | null): InternalLinkOpportunity[] {
+  const articleText = normalizeText(markdownWithoutLinks(markdown));
+  const profileServices = normalizedSet(siteProfile?.services ?? []);
+  const profileLocations = normalizedSet(siteProfile?.locations ?? []);
+  const profileProducts = normalizedSet(siteProfile?.products ?? []);
+  const seenUrls = new Set<string>();
+
+  return sitePages
+    .filter((page) => !isUnsafeInternalLinkPage(page))
+    .map((page) => scoreInternalLinkPage(page, markdown, articleText, profileServices, profileLocations, profileProducts))
+    .filter((item): item is InternalLinkOpportunity & { score: number } => Boolean(item))
+    .filter((item) => {
+      const key = normalizeDestination(item.url);
+      if (seenUrls.has(key) || hasExistingDestinationLink(markdown, item.url)) return false;
+      seenUrls.add(key);
+      return true;
+    })
+    .sort((left, right) => matchTypePriority(right.matchType) - matchTypePriority(left.matchType) || right.confidence - left.confidence || right.score - left.score)
+    .map(({ score: _score, ...item }) => item);
+}
+
+function scoreInternalLinkPage(
+  page: SiteKnowledgePageDocument,
+  markdown: string,
+  articleText: string,
+  profileServices: Set<string>,
+  profileLocations: Set<string>,
+  profileProducts: Set<string>
+): (InternalLinkOpportunity & { score: number }) | null {
+  const terms = internalLinkTerms(page);
+  const candidates = terms
+    .map((term) => {
+      const normalized = normalizeText(term);
+      const occurrence = findUnlinkedOccurrence(markdown, term);
+      const exact = normalized.length >= 3 && articleText.includes(normalized) && occurrence;
+      const service = profileServices.has(normalized) || profileProducts.has(normalized) || looksLikeServicePage(page.url);
+      const location = profileLocations.has(normalized) || looksLikeLocationPage(page.url, term);
+      const overlap = relevanceScore(`${page.title} ${page.h1} ${page.shortSummary} ${page.metaDescription} ${urlKeywords(page.url)}`, markdown);
+      const matchType: LinkOpportunityMatchType = exact
+        ? service ? "service" : location ? "location" : "topic"
+        : overlap >= 2 ? "partial" : "topic";
+      const usable = exact || (overlap >= 2 && occurrence);
+      return usable ? { term, occurrence, matchType, overlap, service, location } : null;
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((left, right) => matchTypePriority(right.matchType) - matchTypePriority(left.matchType) || right.overlap - left.overlap || right.term.length - left.term.length);
+
+  const best = candidates[0];
+  if (!best) return null;
+
+  const confidence = confidenceForInternalLink(best.matchType, best.overlap, best.term, page);
+  return {
+    url: displayInternalUrl(page.url),
+    title: cleanLinkLabel(page.title || page.h1 || best.term),
+    anchorText: best.occurrence.text,
+    reason: reasonForInternalLink(best.matchType),
+    confidence,
+    matchType: best.matchType,
+    score: confidence + best.overlap
+  };
+}
+
+function insertInternalLinks(markdown: string, opportunities: InternalLinkOpportunity[]) {
+  let nextMarkdown = markdown;
+  const inserted: InternalLinkOpportunity[] = [];
+
+  for (const opportunity of opportunities) {
+    if (inserted.length >= 5) break;
+    const occurrence = findUnlinkedOccurrence(nextMarkdown, opportunity.anchorText);
+    if (!occurrence || hasExistingDestinationLink(nextMarkdown, opportunity.url)) continue;
+    const linked = `[${occurrence.text}](${opportunity.url})`;
+    nextMarkdown = `${nextMarkdown.slice(0, occurrence.start)}${linked}${nextMarkdown.slice(occurrence.end)}`;
+    inserted.push(opportunity);
+  }
+
+  return { markdown: nextMarkdown, inserted };
+}
+
+function findUnlinkedOccurrence(markdown: string, anchorText: string) {
+  const cleanAnchor = cleanLinkLabel(anchorText);
+  if (cleanAnchor.length < 3) return null;
+  const blocks = markdownBlockRanges(markdown).filter((block) => isParagraphBlock(block.text));
+
+  for (const block of blocks) {
+    const pattern = phrasePattern(cleanAnchor);
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(block.text))) {
+      const text = match[0];
+      const start = block.start + (match.index ?? 0);
+      const end = start + text.length;
+      if (!isInsideMarkdownLink(markdown, start, end)) return { text, start, end };
+    }
+  }
+
+  return null;
+}
+
+function internalLinkTerms(page: SiteKnowledgePageDocument) {
+  const terms = [
+    page.title,
+    page.h1,
+    ...urlTermCandidates(page.url),
+    ...String(page.metadata?.keywords ?? "").split(",")
+  ];
+  return uniqueCleanTerms(terms)
+    .filter((term) => term.length >= 3 && term.length <= 80)
+    .filter((term) => !/^(?:home|homepage|contact|privacy|terms|blog|news|services|products|about)$/i.test(term));
+}
+
+function uniqueCleanTerms(terms: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const term of terms) {
+    const cleaned = cleanPageTerm(term);
+    const key = normalizeText(cleaned);
+    if (!cleaned || seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result.sort((left, right) => right.length - left.length);
+}
+
+function cleanPageTerm(value: string) {
+  return value
+    .replace(/\s+(?:\||\u2013|-)\s+.*$/g, "")
+    .replace(/\b(?:services?|contractors?|company|near me)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function urlTermCandidates(value: string) {
+  const path = pathnameFromUrl(value);
+  const segments = path.split("/").filter(Boolean);
+  const last = segments.at(-1) ?? "";
+  const terms = [slugToWords(last)];
+  if (segments.length >= 2) terms.push(slugToWords(segments.slice(-2).join(" ")));
+  return terms.filter(Boolean);
+}
+
+function isUnsafeInternalLinkPage(page: SiteKnowledgePageDocument) {
+  const path = pathnameFromUrl(page.url).replace(/\/+$/g, "") || "/";
+  const text = normalizeText(`${path} ${page.title} ${page.h1}`);
+  if (path === "/") return true;
+  if (/(^|\/)(?:contact|contact-us|privacy|privacy-policy|terms|terms-and-conditions|cookie-policy|cookies)(?:\/|$)/i.test(path)) return true;
+  if (/^(?:contact|privacy policy|terms|terms and conditions|cookie policy|home|homepage)$/i.test(cleanLinkLabel(page.title || page.h1))) return true;
+  if (/^\/(?:blog|news|articles|posts)$/i.test(path)) return true;
+  return /\b(?:privacy policy|terms and conditions|cookie policy)\b/.test(text);
+}
+
+function displayInternalUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.pathname}${url.search}${url.hash}` || "/";
+  } catch {
+    return value.startsWith("/") ? value : `/${value.replace(/^\/+/, "")}`;
+  }
+}
+
+function normalizeDestination(value: string) {
+  return displayInternalUrl(value).replace(/\/+$/g, "").toLowerCase() || "/";
+}
+
+function hasExistingDestinationLink(markdown: string, url: string) {
+  const destination = normalizeDestination(url);
+  return markdownLinkRanges(markdown).some((range) => normalizeDestination(range.url) === destination);
+}
+
+function markdownWithoutLinks(markdown: string) {
+  return markdown.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+}
+
+function markdownLinkRanges(markdown: string) {
+  return [...markdown.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)].map((match) => ({
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+    url: match[2] ?? ""
+  }));
+}
+
+function isInsideMarkdownLink(markdown: string, start: number, end: number) {
+  return markdownLinkRanges(markdown).some((range) => start >= range.start && end <= range.end);
+}
+
+function phrasePattern(value: string) {
+  const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "giu");
+}
+
+function normalizedSet(values: string[]) {
+  return new Set(values.map(normalizeText).filter((value) => value.length >= 3));
+}
+
+function matchTypePriority(type: LinkOpportunityMatchType) {
+  if (type === "topic") return 4;
+  if (type === "service") return 3;
+  if (type === "location") return 2;
+  return 1;
+}
+
+function confidenceForInternalLink(type: LinkOpportunityMatchType, overlap: number, term: string, page: SiteKnowledgePageDocument) {
+  const base = type === "topic" ? 96 : type === "service" ? 94 : type === "location" ? 90 : 74;
+  const summaryBoost = page.shortSummary ? 1 : 0;
+  const lengthBoost = term.split(/\s+/).length > 1 ? 1 : 0;
+  return Math.min(99, base + Math.min(3, overlap) + summaryBoost + lengthBoost);
+}
+
+function reasonForInternalLink(type: LinkOpportunityMatchType) {
+  if (type === "topic") return "Exact topic discussed in the article.";
+  if (type === "service") return "Primary service discussed extensively in the article.";
+  if (type === "location") return "Location mentioned in the article and matched to an imported local page.";
+  return "Related imported page shares strong topic signals with the article.";
+}
+
+function looksLikeServicePage(url: string) {
+  return /\/(?:services?|solutions?|products?)\//i.test(pathnameFromUrl(url));
+}
+
+function looksLikeLocationPage(url: string, term: string) {
+  const path = pathnameFromUrl(url);
+  return /\/(?:locations?|areas?|service-areas?)\//i.test(path) || /\bin\b/i.test(term);
+}
+
+function urlKeywords(value: string) {
+  return urlTermCandidates(value).join(" ");
+}
+
+function pathnameFromUrl(value: string) {
+  try {
+    return new URL(value).pathname || "/";
+  } catch {
+    const clean = value.split(/[?#]/)[0] ?? "/";
+    return clean.startsWith("/") ? clean : `/${clean}`;
+  }
+}
+
+function slugToWords(value: string) {
+  return value.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function createAppendRecommendation(input: Omit<SeoRecommendation, "currentText" | "proposedText" | "difference" | "apply"> & { markdown: string; block: string }): SeoRecommendation {

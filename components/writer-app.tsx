@@ -4392,6 +4392,7 @@ function Inspector({
           markdown={markdown}
           research={details.research}
           profile={state ? normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords) : null}
+          projectId={state?.project.id ?? article.projectId}
           onApplyMarkdown={onApplyMarkdown}
           onNotify={onNotify}
         />

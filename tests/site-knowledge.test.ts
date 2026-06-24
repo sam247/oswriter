@@ -253,9 +253,43 @@ describe("site knowledge", () => {
     assert.ok(profile.locations.includes("London"));
     assert.equal(profile.locations.includes("Greater London"), false);
     assert.equal(profile.locations.includes("London UK"), false);
+    assert.equal(profile.locations.some((value) => profile.services.includes(value)), false);
+    assert.equal(profile.locations.some((value) => /groundworks|drainage|excavation|piling|underpinning|foundation|concrete/i.test(value)), false);
+    assert.equal(profile.products.includes("Commercial Groundworks") && profile.products.includes("Groundworks"), false);
     assert.equal(profile.services.length <= 10, true);
     assert.equal(profile.products.length <= 10, true);
     assert.equal(profile.locations.length <= 15, true);
+  });
+
+  it("keeps Mainline-style services and locations in the correct buckets", () => {
+    const pages: SiteKnowledgePageDocument[] = [
+      sitePage("https://mainlinegroundworks.co.uk/groundworks/london", "Groundworks Contractors in London", "Groundworks in London"),
+      sitePage("https://mainlinegroundworks.co.uk/commercial-groundworks/chelsea", "Commercial Groundworks in Chelsea", "Commercial Groundworks Chelsea"),
+      sitePage("https://mainlinegroundworks.co.uk/earthworks/putney", "Earthworks Contractors in Putney", "Earthworks in Putney"),
+      sitePage("https://mainlinegroundworks.co.uk/excavation/hammersmith", "Excavation Services in Hammersmith", "Excavation Hammersmith"),
+      sitePage("https://mainlinegroundworks.co.uk/piling/fulham", "Piling Contractors in Fulham", "Piling in Fulham"),
+      sitePage("https://mainlinegroundworks.co.uk/cfa-piling/kensington", "CFA Piling Contractors in Kensington", "CFA Piling Kensington"),
+      sitePage("https://mainlinegroundworks.co.uk/underpinning/chiswick", "Underpinning Contractors in Chiswick", "Underpinning in Chiswick"),
+      sitePage("https://mainlinegroundworks.co.uk/commercial-drainage/kingston", "Commercial Drainage in Kingston", "Commercial Drainage Kingston"),
+      sitePage("https://mainlinegroundworks.co.uk/foundations/putney", "Foundations in Putney", "Foundation Contractors Putney"),
+      sitePage("https://mainlinegroundworks.co.uk/blog/groundworks-category", "Groundworks Category Page", "Groundworks Blog")
+    ];
+
+    const profile = extractProjectSiteProfile({
+      projectId: "mainline",
+      sitemapUrl: "https://mainlinegroundworks.co.uk/sitemap.xml",
+      pages
+    });
+
+    for (const service of ["Groundworks", "Earthworks", "Excavation", "Piling", "CFA Piling", "Underpinning", "Commercial Drainage", "Foundations"]) {
+      assert.ok(profile.services.includes(service), `${service} should be a learned service`);
+    }
+    for (const location of ["London", "Putney", "Chelsea", "Hammersmith", "Fulham", "Kensington", "Chiswick", "Kingston"]) {
+      assert.ok(profile.locations.includes(location), `${location} should be a learned location`);
+    }
+    assert.equal(profile.locations.some((value) => /groundworks|earthworks|excavation|piling|underpinning|drainage|foundation|concrete/i.test(value)), false);
+    assert.equal(profile.services.some((value) => /contact|quote|response|call|home|blog|page|author|category|tag/i.test(value)), false);
+    assert.equal(profile.products.includes("Commercial Groundworks") && profile.products.includes("Groundworks"), false);
   });
 });
 

@@ -3,7 +3,7 @@
 import { Check, CheckCircle2, Circle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { applySeoRecommendations, buildSeoDecisionEngine, type SeoRecommendation, type SeoRecommendationSection } from "@/lib/seo/decision-engine";
-import type { ArticleDocument, ProjectProfile, ResearchPack } from "@/lib/types";
+import type { ArticleDocument, ProjectProfile, ProjectSiteProfileDocument, ResearchPack, SiteKnowledgePageDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface SeoDecisionPanelProps {
@@ -11,6 +11,7 @@ interface SeoDecisionPanelProps {
   markdown: string;
   research?: ResearchPack | null;
   profile?: ProjectProfile | null;
+  projectId?: string;
   onApplyMarkdown: (markdown: string) => void;
   onNotify?: (message: string) => void;
 }
@@ -26,20 +27,33 @@ interface TrackedRecommendation {
   title: string;
 }
 
+interface WebsiteIntelligenceState {
+  pages: SiteKnowledgePageDocument[];
+  profile: ProjectSiteProfileDocument | null;
+}
+
 const SECTIONS: Array<{ key: SeoRecommendationSection; label: string }> = [
   { key: "fix", label: "Fix" },
   { key: "improve", label: "Improve" },
   { key: "project", label: "Project" }
 ];
 
-export function SeoDecisionPanel({ article, markdown, research, profile, onApplyMarkdown, onNotify }: SeoDecisionPanelProps) {
+export function SeoDecisionPanel({ article, markdown, research, profile, projectId, onApplyMarkdown, onNotify }: SeoDecisionPanelProps) {
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [trackedArticleId, setTrackedArticleId] = useState(article.id);
   const [trackedRecommendations, setTrackedRecommendations] = useState<TrackedRecommendation[]>([]);
+  const [websiteIntelligence, setWebsiteIntelligence] = useState<WebsiteIntelligenceState>({ pages: [], profile: null });
   const decision = useMemo(
-    () => buildSeoDecisionEngine({ article, markdown, research, profile }),
-    [article, markdown, research, profile]
+    () => buildSeoDecisionEngine({
+      article,
+      markdown,
+      research,
+      profile,
+      sitePages: websiteIntelligence.pages,
+      siteProfile: websiteIntelligence.profile
+    }),
+    [article, markdown, research, profile, websiteIntelligence]
   );
   const priorityRecommendations = useMemo(() => decision.recommendations.slice(0, 3), [decision.recommendations]);
   const currentRecommendationIds = useMemo(() => new Set(decision.recommendations.map((item) => item.id)), [decision.recommendations]);
@@ -53,6 +67,40 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
     setTrackedArticleId(article.id);
     setTrackedRecommendations(priorityRecommendations.map(toTrackedRecommendation));
   }, [article.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolvedProjectId = projectId ?? article.projectId;
+
+    async function loadWebsiteIntelligence() {
+      if (!resolvedProjectId) {
+        setWebsiteIntelligence({ pages: [], profile: null });
+        return;
+      }
+
+      try {
+        const [pagesRes, profileRes] = await Promise.all([
+          fetch(`/api/project/site-knowledge/pages?projectId=${encodeURIComponent(resolvedProjectId)}`, { cache: "no-store" }),
+          fetch(`/api/project/site-knowledge?projectId=${encodeURIComponent(resolvedProjectId)}`, { cache: "no-store" })
+        ]);
+        const pagesData = await pagesRes.json().catch(() => ({})) as { pages?: SiteKnowledgePageDocument[] };
+        const profileData = await profileRes.json().catch(() => ({})) as { siteProfile?: ProjectSiteProfileDocument | null };
+        if (!cancelled) {
+          setWebsiteIntelligence({
+            pages: Array.isArray(pagesData.pages) ? pagesData.pages : [],
+            profile: profileData.siteProfile ?? null
+          });
+        }
+      } catch {
+        if (!cancelled) setWebsiteIntelligence({ pages: [], profile: null });
+      }
+    }
+
+    void loadWebsiteIntelligence();
+    return () => {
+      cancelled = true;
+    };
+  }, [article.projectId, projectId]);
 
   useEffect(() => {
     setTrackedRecommendations((current) => {
@@ -75,7 +123,8 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
   }, [article.id, currentRecommendationIds, decision.recommendations, priorityRecommendations, trackedArticleId]);
 
   function openPreview(recommendations: SeoRecommendation[], title: string, actionLabel: string) {
-    setPreview({ recommendations, title, actionLabel });
+    const resolvedActionLabel = recommendations.some((item) => item.id === "suggest-internal-links") ? "Insert Links" : actionLabel;
+    setPreview({ recommendations, title, actionLabel: resolvedActionLabel });
   }
 
   function applyPreview() {
@@ -86,6 +135,7 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
     if (preview.recommendations.some((item) => item.id === "add-example")) onNotify?.("Example added");
     if (preview.recommendations.some((item) => item.id === "cite-sources")) onNotify?.("Citations inserted");
     if (preview.recommendations.some((item) => item.id === "insert-citation-list")) onNotify?.("References added");
+    if (preview.recommendations.some((item) => item.id === "suggest-internal-links")) onNotify?.("Internal links inserted");
     setPreview(null);
   }
 

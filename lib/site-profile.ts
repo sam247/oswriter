@@ -74,7 +74,15 @@ const CTA_TERMS = [
 ];
 
 const CTA_CONTAMINATION = /\b(?:get|request|quote|call|contact|enquire|enquiry|fast\s+response|speak\s+to|book|today|now)\b/i;
+const SERVICE_NOISE = /\b(?:contact|quote|response|call|home|blog|page|author|category|tag)\b/i;
 const BAD_ENTITY_CHARS = /[<>]|&[a-z#0-9]+;|[{}[\]\\]|(?:[!?.,;:]){2,}/i;
+const SERVICE_LABELS = new Set(SERVICE_PATTERNS.map((service) => service.label.toLowerCase()));
+const UK_PLACE_ALLOWLIST = new Set([
+  "london", "putney", "chelsea", "hammersmith", "fulham", "kensington", "chiswick", "kingston",
+  "surrey", "kent", "west midlands", "wimbledon", "ealing", "richmond", "battersea", "clapham",
+  "islington", "camden", "croydon", "hackney", "bromley", "barnet", "brent", "greenwich",
+  "hounslow", "lambeth", "southwark", "wandsworth", "westminster"
+]);
 const LOCATION_STOPWORDS = new Set(["services", "service", "contractors", "contractor", "company", "local", "trusted", "groundworks", "commercial", "page", "home"]);
 const GENERIC_PRODUCT_TERMS = new Set(["home", "about", "contact", "blog", "news", "services", "areas", "projects", "privacy", "terms"]);
 
@@ -110,15 +118,20 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
   if (!ctas.size) addEntity(ctas, "Get A Quote", { value: "Get A Quote", source: "summary", pageKey: domain });
   if (!writingSignals.size && domain.endsWith(".uk")) writingSignals.add("UK English");
 
+  const serviceLabels = rankedLabels(services, 10, 8);
+  const productLabels = rankedCategories(products, serviceLabels, 10, 8);
+  const audienceLabels = rankedLabels(audiences, 8, 2);
+  const locationLabels = rankedLocations(locations, 15, 4, new Set([...serviceLabels, ...productLabels]));
+
   return {
     projectId,
     ...(organisationId ? { organisationId } : {}),
     domain,
     pageCount: pages.length,
-    services: rankedLabels(services, 10, 6),
-    products: rankedLabels(products, 10, 6),
-    audiences: rankedLabels(audiences, 8, 2),
-    locations: rankedLocations(locations, 15, 2),
+    services: serviceLabels,
+    products: productLabels,
+    audiences: audienceLabels,
+    locations: locationLabels,
     ctas: rankedLabels(ctas, 4, 1),
     writingSignals: [...writingSignals].slice(0, 8),
     generatedAt,
@@ -195,6 +208,7 @@ function matchedAudiences(text: string) {
 
 function normalizeService(value: string) {
   if (hasCtaContamination(value)) return null;
+  if (SERVICE_NOISE.test(value)) return null;
   const cleaned = cleanEntityLabel(value);
   if (!isQualityEntity(cleaned)) return null;
   for (const service of SERVICE_PATTERNS) {
@@ -205,6 +219,7 @@ function normalizeService(value: string) {
 
 function normalizeProductOrCategory(value: string) {
   if (hasCtaContamination(value)) return null;
+  if (SERVICE_NOISE.test(value)) return null;
   const cleaned = cleanEntityLabel(value);
   if (!isQualityEntity(cleaned)) return null;
   if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
@@ -221,6 +236,8 @@ function normalizeLocation(value: string) {
     .trim();
   if (!isQualityEntity(cleaned)) return null;
   if (LOCATION_STOPWORDS.has(cleaned.toLowerCase())) return null;
+  if (isServiceLabel(cleaned)) return null;
+  if (!isRecognisedLocation(cleaned)) return null;
   if (!/^[A-Z][a-z]+(?: [A-Z][a-z]+)?$/.test(cleaned)) return null;
   return cleaned;
 }
@@ -277,10 +294,28 @@ function rankedLabels(map: Map<string, EntityRecord>, limit: number, minimumConf
     .map((record) => record.label);
 }
 
-function rankedLocations(map: Map<string, EntityRecord>, limit: number, minimumConfidence: number) {
+function rankedCategories(map: Map<string, EntityRecord>, services: string[], limit: number, minimumConfidence: number) {
+  const serviceSet = new Set(services.map(entityKey));
+  return rankedRecords(map)
+    .filter((record) => confidence(record) >= minimumConfidence)
+    .filter((record) => {
+      const key = entityKey(record.label);
+      if (!key) return false;
+      const broader = broaderCategory(record.label);
+      if (!broader) return true;
+      const broaderKey = entityKey(broader);
+      return !broaderKey || !serviceSet.has(broaderKey);
+    })
+    .slice(0, limit)
+    .map((record) => record.label);
+}
+
+function rankedLocations(map: Map<string, EntityRecord>, limit: number, minimumConfidence: number, blockedLabels: Set<string>) {
+  const blocked = new Set([...blockedLabels].map(entityKey));
   const deduped = new Map<string, EntityRecord>();
   for (const record of rankedRecords(map)) {
     const key = locationKey(record.label);
+    if (!key || blocked.has(entityKey(record.label)) || isServiceLabel(record.label)) continue;
     const existing = deduped.get(key);
     if (!existing || record.label.length < existing.label.length || confidence(record) > confidence(existing)) deduped.set(key, record);
   }
@@ -308,6 +343,27 @@ function rankedRecords(map: Map<string, EntityRecord>) {
 
 function confidence(record: EntityRecord) {
   return record.score + record.pages.size * 2 + record.urlHits * 3 + record.titleHits * 2 + record.h1Hits * 2;
+}
+
+function isServiceLabel(value: string) {
+  const key = entityKey(value);
+  return SERVICE_LABELS.has(key) || SERVICE_PATTERNS.some((service) => service.pattern.test(value));
+}
+
+function isRecognisedLocation(value: string) {
+  const key = locationKey(value);
+  if (UK_PLACE_ALLOWLIST.has(key)) return true;
+  if (/\b(?:london|surrey|kent|yorkshire|midlands|essex|sussex|hertfordshire|hampshire|berkshire|buckinghamshire|oxfordshire|cambridgeshire)\b/i.test(value)) return true;
+  return false;
+}
+
+function broaderCategory(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("groundworks") && normalized !== "groundworks") return "Groundworks";
+  if (normalized.includes("drainage") && normalized !== "drainage") return "Drainage";
+  if (normalized.includes("piling") && normalized !== "piling" && normalized !== "cfa piling" && normalized !== "mini piling") return "Piling";
+  if (normalized.includes("foundation") && normalized !== "foundations") return "Foundations";
+  return null;
 }
 
 function cleanestLabel(left: string, right: string) {
