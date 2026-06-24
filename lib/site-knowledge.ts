@@ -497,7 +497,8 @@ function buildSiteKnowledgeCrawlQueue(
 ) {
   const homepage = normalizeUrlForPriority(homepageUrl);
   const navigationUrls = navigationTargetSet(navigationTargets);
-  const forcedNavigationTargets = orderedNavigationTargets(navigationTargets, sitemapUrl);
+  const forcedNavigationTargets = orderedNavigationTargets(navigationTargets, sitemapUrl)
+    .filter((url) => !homepage || url !== homepage);
   const prioritized = prioritizeSiteKnowledgeUrls(urls, sitemapUrl, navigationUrls);
   const buckets = {
     about: [] as string[],
@@ -1003,9 +1004,11 @@ function buildSearchDiscoveryQueries(homepageUrl: string) {
   const hostname = new URL(homepageUrl).hostname.replace(/^www\./, "");
   return [
     `site:${hostname}`,
-    `site:${hostname} about contact pricing`,
-    `site:${hostname} services solutions features`,
-    `site:${hostname} blog resources insights`
+    `site:${hostname} about contact pricing quote locations`,
+    `site:${hostname} services solutions features platform software demo trial`,
+    `site:${hostname} shop products collections categories brands`,
+    `site:${hostname} industries sectors customers audiences case studies`,
+    `site:${hostname} blog resources insights guides articles`
   ];
 }
 

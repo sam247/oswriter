@@ -119,6 +119,39 @@ describe("site knowledge", () => {
     assert.equal(urls[6]?.startsWith("https://shop.example.com/products/"), true);
   });
 
+  it("does not duplicate the homepage when navigation also links back to it", async () => {
+    const responses = new Map<string, string>([
+      ["https://example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://example.com/about</loc></url>
+          <url><loc>https://example.com/contact</loc></url>
+        </urlset>`],
+      ["https://example.com/", `
+        <html>
+          <body>
+            <header>
+              <a href="/">Home</a>
+              <a href="/about">About</a>
+            </header>
+            <footer>
+              <a href="/">Home</a>
+              <a href="/contact">Contact</a>
+            </footer>
+          </body>
+        </html>
+      `]
+    ]);
+
+    const urls = await collectSitemapUrls(createFetchStub(responses), "https://example.com/sitemap.xml", 10);
+
+    assert.equal(urls.filter((url) => url === "https://example.com/").length, 1);
+    assert.deepEqual(urls.slice(0, 3), [
+      "https://example.com/",
+      "https://example.com/contact",
+      "https://example.com/about"
+    ]);
+  });
+
   it("skips rate-limited nested sitemaps without failing the whole import", async () => {
     const responses = new Map<string, string | { status: number; body?: string; contentType?: string }>([
       ["https://example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
@@ -213,14 +246,16 @@ describe("site knowledge", () => {
         searchResult("https://disclosurely.com/contact", "Contact Disclosurely", "Contact the Disclosurely team to discuss your disclosure requirements."),
         searchResult("https://disclosurely.com/pricing", "Disclosurely Pricing", "Book a demo and explore pricing for entity monitoring and disclosure workflows.")
       ]],
-      ["site:disclosurely.com about contact pricing", [
+      ["site:disclosurely.com about contact pricing quote locations", [
         searchResult("https://disclosurely.com/book-demo", "Book Demo | Disclosurely", "Book a demo with the Disclosurely team."),
         searchResult("https://disclosurely.com/features/disclosure-monitoring", "Disclosure Monitoring Software", "Disclosure monitoring software for compliance teams and legal operations. Book a demo today.")
       ]],
-      ["site:disclosurely.com services solutions features", [
+      ["site:disclosurely.com services solutions features platform software demo trial", [
         searchResult("https://disclosurely.com/services/entity-intelligence", "Entity Intelligence Services", "Entity intelligence services for regulated businesses and governance teams.")
       ]],
-      ["site:disclosurely.com blog resources insights", [
+      ["site:disclosurely.com shop products collections categories brands", []],
+      ["site:disclosurely.com industries sectors customers audiences case studies", []],
+      ["site:disclosurely.com blog resources insights guides articles", [
         searchResult("https://disclosurely.com/blog", "Disclosurely Blog", "Compliance insights and disclosure guidance.")
       ]]
     ]));
