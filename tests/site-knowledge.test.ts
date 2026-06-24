@@ -141,6 +141,93 @@ describe("site knowledge", () => {
     assert.equal(urls.includes("https://example.com/collections/gifts"), true);
   });
 
+  it("falls back to homepage discovery when sitemap access is unavailable", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const responses = new Map<string, string | { status: number; body?: string; contentType?: string }>([
+      ["https://disclosurely.com/sitemaps.xml", { status: 429 }],
+      ["https://disclosurely.com/sitemap.xml", { status: 429 }],
+      ["https://disclosurely.com/sitemap_index.xml", { status: 404 }],
+      ["https://disclosurely.com/robots.txt", { status: 404 }],
+      ["https://disclosurely.com/", `
+        <html>
+          <body>
+            <header>
+              <a href="/about">About</a>
+              <a href="/pricing">Pricing</a>
+            </header>
+            <main>
+              <a class="primary-cta" href="/book-demo">Book Demo</a>
+              <a href="/features/disclosure-monitoring">Disclosure Monitoring</a>
+              <a href="/services/entity-intelligence">Entity Intelligence</a>
+              <a href="/industries/saas">SaaS</a>
+              <a href="/blog">Blog</a>
+            </main>
+            <footer>
+              <a href="/contact">Contact</a>
+            </footer>
+          </body>
+        </html>
+      `],
+      ["https://disclosurely.com/about", `<html><head><title>About Disclosurely</title><meta name="description" content="Disclosurely helps compliance teams monitor disclosure obligations and entity changes." /></head><body><h1>About Disclosurely</h1><p>Built for compliance teams, legal operations, and regulated businesses.</p></body></html>`],
+      ["https://disclosurely.com/pricing", `<html><head><title>Disclosurely Pricing</title><meta name="description" content="Book a demo and explore pricing for entity monitoring and disclosure workflows." /></head><body><h1>Pricing</h1></body></html>`],
+      ["https://disclosurely.com/book-demo", `<html><head><title>Book Demo | Disclosurely</title><meta name="description" content="Book a demo with the Disclosurely team." /></head><body><h1>Book Demo</h1></body></html>`],
+      ["https://disclosurely.com/features/disclosure-monitoring", `<html><head><title>Disclosure Monitoring Software</title><meta name="description" content="Disclosure monitoring software for compliance teams and legal operations. Book a demo today." /></head><body><h1>Disclosure Monitoring</h1></body></html>`],
+      ["https://disclosurely.com/services/entity-intelligence", `<html><head><title>Entity Intelligence Services</title><meta name="description" content="Entity intelligence services for regulated businesses and governance teams." /></head><body><h1>Entity Intelligence</h1></body></html>`],
+      ["https://disclosurely.com/industries/saas", `<html><head><title>SaaS Compliance Workflows</title><meta name="description" content="SaaS teams use Disclosurely to manage compliance workflows." /></head><body><h1>SaaS Compliance</h1></body></html>`],
+      ["https://disclosurely.com/blog", `<html><head><title>Disclosurely Blog</title></head><body><h1>Blog</h1><p>Compliance insights and disclosure guidance.</p></body></html>`],
+      ["https://disclosurely.com/contact", `<html><head><title>Contact Disclosurely</title><meta name="description" content="Contact the Disclosurely team to discuss your disclosure requirements." /></head><body><h1>Contact</h1></body></html>`]
+    ]);
+
+    const result = await importSiteKnowledge({
+      projectId: "disclosurely",
+      sitemapUrl: "https://disclosurely.com/sitemaps.xml",
+      store,
+      fetcher: createFetchStub(responses)
+    });
+    const savedStatus = await store.getProjectSiteKnowledge("disclosurely");
+    const metadata = (savedStatus?.metadata ?? {}) as Record<string, unknown>;
+
+    assert.equal(savedStatus?.status, "ready");
+    assert.equal(metadata.discoveryMode, true);
+    assert.equal(metadata.crawlMode, "discovery");
+    assert.equal(result.siteProfile.domain, "disclosurely.com");
+    assert.ok(result.siteProfile.pageCount >= 5);
+    assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/about"));
+    assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/contact"));
+    assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/features/disclosure-monitoring"));
+    assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/services/entity-intelligence"));
+  });
+
+  it("uses robots.txt sitemap declarations before homepage-only discovery", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const responses = new Map<string, string | { status: number; body?: string; contentType?: string }>([
+      ["https://example.com/missing-sitemap.xml", { status: 404 }],
+      ["https://example.com/sitemap.xml", { status: 404 }],
+      ["https://example.com/sitemap_index.xml", { status: 404 }],
+      ["https://example.com/robots.txt", "User-agent: *\nSitemap: https://example.com/custom-sitemap.txt\n"],
+      ["https://example.com/custom-sitemap.txt", "https://example.com/about-us\nhttps://example.com/services/groundworks\n"],
+      ["https://example.com/", `<html><body><footer><a href="/contact">Contact</a></footer></body></html>`],
+      ["https://example.com/about-us", `<html><head><title>About Example</title></head><body><h1>About Example</h1><p>Groundworks for property developers.</p></body></html>`],
+      ["https://example.com/services/groundworks", `<html><head><title>Groundworks Services</title><meta name="description" content="Groundworks services for property developers. Get a quote today." /></head><body><h1>Groundworks</h1></body></html>`]
+    ]);
+
+    const result = await importSiteKnowledge({
+      projectId: "robots-sitemap",
+      sitemapUrl: "https://example.com/missing-sitemap.xml",
+      store,
+      fetcher: createFetchStub(responses)
+    });
+    const savedStatus = await store.getProjectSiteKnowledge("robots-sitemap");
+    const metadata = (savedStatus?.metadata ?? {}) as Record<string, unknown>;
+
+    assert.equal(savedStatus?.status, "ready");
+    assert.equal(metadata.discoveryMode, false);
+    assert.equal(metadata.crawlMode, "sitemap");
+    assert.equal(metadata.sitemapSource, "robots");
+    assert.equal(result.siteProfile.pageCount, 3);
+    assert.ok(result.siteProfile.services.includes("Groundworks"));
+  });
+
   it("keeps directly navigated pages ahead of ordinary service pages", () => {
     const navigationUrls = new Set(["https://example.com/projects"]);
     const prioritized = prioritizeSiteKnowledgeUrls([
@@ -281,8 +368,15 @@ describe("site knowledge", () => {
         sitePage("https://annadavies.co.uk/collections/seasalt", "Seasalt Clothing | Anna Davies", "Seasalt Clothing", "Browse collection of Seasalt womenswear and clothing."),
         sitePage("https://annadavies.co.uk/collections/white-stuff", "White Stuff Clothing | Anna Davies", "White Stuff", "Browse collection of White Stuff clothing, dresses, and knitwear."),
         sitePage("https://annadavies.co.uk/collections/barbour", "Barbour Jackets | Anna Davies", "Barbour", "Shop now for Barbour jackets and clothing."),
+        sitePage("https://annadavies.co.uk/collections/elizabeth-scarlett", "Elizabeth Scarlett Accessories | Anna Davies", "Elizabeth Scarlett", "Browse Elizabeth Scarlett accessories, gift sets, and travel bags."),
         sitePage("https://annadavies.co.uk/collections/accessories", "Accessories | Anna Davies", "Accessories", "View range of handbags, scarves, and accessories for women."),
         sitePage("https://annadavies.co.uk/collections/gifts", "Gift Ideas | Anna Davies", "Gifts", "Gift ideas for gift buyers and lifestyle shoppers."),
+        sitePage("https://annadavies.co.uk/collections/wellies", "Wellies | Anna Davies", "Wellies", "Shop wellies and waterproof footwear for outdoor days."),
+        sitePage("https://annadavies.co.uk/collections/belts", "Belts | Anna Davies", "Belts", "Browse belts and accessories."),
+        sitePage("https://annadavies.co.uk/collections/eye-masks", "Eye Masks | Anna Davies", "Eye Masks", "Browse eye masks and accessories."),
+        sitePage("https://annadavies.co.uk/collections/shirts-tops", "Shirts & Tops | Anna Davies", "Shirts & Tops", "Browse shirts, tops, and womenswear clothing."),
+        sitePage("https://annadavies.co.uk/collections/trousers-shorts", "Trousers & Shorts | Anna Davies", "Trousers & Shorts", "Browse trousers, shorts, and clothing."),
+        sitePage("https://annadavies.co.uk/collections/slippers", "Slippers | Anna Davies", "Slippers", "Browse slippers and footwear."),
         sitePage("https://annadavies.co.uk/collections/mens-activewear", "Mens Activewear | Anna Davies", "Mens Activewear", "Browse mens activewear and clothing."),
         sitePage("https://annadavies.co.uk/collections/mens-underwear", "Mens Underwear | Anna Davies", "Mens Underwear", "Browse mens underwear and clothing."),
         sitePage("https://annadavies.co.uk/collections/homeware", "Homeware | Anna Davies", "Homeware", "Shop now for homeware gifts and home accessories."),
@@ -297,6 +391,11 @@ describe("site knowledge", () => {
     const brands = Array.isArray(ecommerce.brands) ? ecommerce.brands : [];
     const categories = Array.isArray(ecommerce.categories) ? ecommerce.categories : [];
     const productTypes = Array.isArray(ecommerce.productTypes) ? ecommerce.productTypes : [];
+    const debug = (ecommerce.debug ?? {}) as Record<string, unknown>;
+    const detectedBrands = Array.isArray(debug.detectedBrands)
+      ? debug.detectedBrands as Array<{ label: string; confidence: number; pages: number; associatedCategories?: string[]; supportingPages?: string[] }>
+      : [];
+    const inisDebug = detectedBrands.find((entry) => entry.label === "Inis");
 
     assert.equal(metadata.businessType, "ecommerce");
     assert.equal(metadata.strategyBusinessType, "ecommerce");
@@ -306,8 +405,15 @@ describe("site knowledge", () => {
     assert.ok(brands.includes("Seasalt"));
     assert.ok(brands.includes("White Stuff"));
     assert.ok(brands.includes("Barbour"));
+    assert.ok(brands.includes("Elizabeth Scarlett"));
     assert.equal(brands.includes("Anna Davies"), false);
     assert.equal(brands.some((value) => /mens\s+(?:activewear|underwear|nightwear)/i.test(String(value))), false);
+    assert.equal(brands.includes("Wellies"), false);
+    assert.equal(brands.includes("Belts"), false);
+    assert.equal(brands.includes("Eye Masks"), false);
+    assert.equal(brands.includes("Tops"), false);
+    assert.equal(brands.includes("Trousers & Shorts"), false);
+    assert.equal(brands.includes("Slippers"), false);
     assert.ok(categories.includes("Fragrance"));
     assert.ok(categories.includes("Clothing"));
     assert.ok(categories.includes("Gifts"));
@@ -316,6 +422,10 @@ describe("site knowledge", () => {
     assert.ok(categories.includes("Homeware"));
     assert.ok(categories.includes("Beauty"));
     assert.ok(productTypes.includes("Trainers"));
+    assert.ok(productTypes.includes("Wellies"));
+    assert.ok(productTypes.includes("Belts"));
+    assert.ok(productTypes.includes("Eye Masks"));
+    assert.ok(productTypes.includes("Slippers"));
     assert.ok(profile.products.includes("Jellycat"));
     assert.ok(profile.products.includes("Fragrance"));
     assert.ok(profile.audiences.includes("Gift Buyers"));
@@ -324,6 +434,9 @@ describe("site knowledge", () => {
     assert.ok(profile.ctas.some((cta) => ["Shop Now", "Browse Collection", "View Range"].includes(cta)));
     assert.equal(profile.services.length, 0);
     assert.ok(profile.writingSignals.includes("UK English"));
+    assert.deepEqual((ecommerce.brandRelationships as Record<string, string[]>)["inis"], ["Fragrance", "Diffusers", "Gifts"]);
+    assert.deepEqual(inisDebug?.associatedCategories, ["Fragrance", "Diffusers", "Gifts"]);
+    assert.ok(inisDebug?.supportingPages?.includes("https://annadavies.co.uk/collections/inis"));
   });
 
   it("uses explicit project business type before auto detection when Website Intelligence runs", () => {

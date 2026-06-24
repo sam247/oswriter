@@ -34,12 +34,60 @@ const BRAND_PAGE_TERMS = ["brand", "brands", "designer", "designers", "makers", 
 const COLLECTION_PAGE_TERMS = ["collection", "collections", "range", "ranges", "shop"];
 const PRODUCT_PAGE_TERMS = ["product", "products", "item", "items"];
 const UTILITY_NAV_TERMS = ["utility", "topbar", "top-bar", "topnav", "top-nav", "meta-nav", "quick-links", "account", "help", "support", "store-info", "store-information"];
+const CONTACT_PAGE_TERMS = ["contact", "contact-us", "get-in-touch", "talk-to-us", "talk-to-sales", "book-call", "book-a-call", "support"];
+const PRICING_PAGE_TERMS = ["pricing", "plans", "plan", "quote", "quotes", "estimate", "estimates", "cost", "costs"];
+const FEATURE_PAGE_TERMS = ["feature", "features", "service", "services", "solution", "solutions", "platform", "software", "product", "products"];
+const BLOG_PAGE_TERMS = ["blog", "news", "insights", "guides", "guide", "articles", "resources"];
+const CTA_TEXT_TERMS = ["get quote", "request quote", "book call", "book a call", "book demo", "request demo", "talk to sales", "contact us", "get in touch", "start free trial", "start trial"];
 
 interface SiteKnowledgeNavigationTargets {
   footer: string[];
   header: string[];
   utility: string[];
   primary: string[];
+}
+
+interface FallbackDiscoveryTargets {
+  footer: string[];
+  header: string[];
+  about: string[];
+  contact: string[];
+  pricing: string[];
+  features: string[];
+  categories: string[];
+  blog: string[];
+  remaining: string[];
+}
+
+interface HomepageLinkData {
+  navigationTargets: SiteKnowledgeNavigationTargets;
+  discoveryTargets: FallbackDiscoveryTargets;
+}
+
+type SitemapSource = "user_supplied" | "sitemap.xml" | "sitemap_index.xml" | "robots";
+
+interface SitemapCandidate {
+  url: string;
+  source: SitemapSource;
+}
+
+interface SitemapFailure {
+  url: string;
+  source: SitemapSource;
+  status: number | null;
+}
+
+interface SiteKnowledgeUrlDiscoveryResult {
+  urls: string[];
+  crawlMode: "sitemap" | "discovery";
+  sitemapSource: SitemapSource | null;
+  attemptedSitemaps: string[];
+  failedSitemaps: SitemapFailure[];
+}
+
+interface LinkRecord {
+  url: string;
+  text: string;
 }
 
 interface ImportSiteKnowledgeOptions {
@@ -109,7 +157,8 @@ export async function importSiteKnowledge({
   await persistSiteKnowledgeStatus(store, baseStatus, onProgress);
 
   try {
-    const urls = await collectSitemapUrls(fetcher, normalizedSitemapUrl, SITE_KNOWLEDGE_MAX_URLS);
+    const discoveredUrls = await discoverSiteKnowledgeUrls(fetcher, normalizedSitemapUrl, SITE_KNOWLEDGE_MAX_URLS);
+    const urls = discoveredUrls.urls;
     const pages: SiteKnowledgePageDocument[] = [];
     const failedUrls: string[] = [];
     let progress = {
@@ -178,7 +227,12 @@ export async function importSiteKnowledge({
       lastError: null,
       metadata: {
         failedCount: failedUrls.length,
-        staleDeletedCount: stalePages.length
+        staleDeletedCount: stalePages.length,
+        crawlMode: discoveredUrls.crawlMode,
+        discoveryMode: discoveredUrls.crawlMode === "discovery",
+        sitemapSource: discoveredUrls.sitemapSource,
+        attemptedSitemaps: discoveredUrls.attemptedSitemaps,
+        failedSitemaps: discoveredUrls.failedSitemaps
       },
       updatedAt: completedAt
     };
@@ -208,10 +262,71 @@ export async function importSiteKnowledge({
 }
 
 export async function collectSitemapUrls(fetcher: typeof fetch, sitemapUrl: string, limit = SITE_KNOWLEDGE_MAX_URLS) {
-  const homepage = homepageUrlFromSitemap(sitemapUrl);
-  const navigationTargets = await collectHomepageNavigationUrls(fetcher, sitemapUrl);
-  const navigationUrls = navigationTargetSet(navigationTargets);
   const rootSitemapUrl = normalizeSiteKnowledgeUrl(sitemapUrl);
+  const discovered = await discoverSiteKnowledgeUrls(fetcher, rootSitemapUrl, limit);
+  return discovered.urls;
+}
+
+async function discoverSiteKnowledgeUrls(fetcher: typeof fetch, sitemapUrl: string, limit: number): Promise<SiteKnowledgeUrlDiscoveryResult> {
+  const rootSitemapUrl = normalizeSiteKnowledgeUrl(sitemapUrl);
+  const homepage = homepageUrlFromSitemap(rootSitemapUrl);
+  const homepageData = await collectHomepageLinkData(fetcher, homepage);
+  const navigationTargets = homepageData?.navigationTargets ?? emptyNavigationTargets();
+  const sitemapCandidates = buildSitemapCandidates(rootSitemapUrl);
+  const robotCandidates = await collectRobotsDeclaredSitemaps(fetcher, homepage);
+  const candidates = dedupeSitemapCandidates([...sitemapCandidates, ...robotCandidates]);
+  const failedSitemaps: SitemapFailure[] = [];
+
+  for (const candidate of candidates) {
+    try {
+      const urls = await collectUrlsFromSitemap(fetcher, candidate.url, homepage, navigationTargets, limit);
+      if (urls.length) {
+        return {
+          urls,
+          crawlMode: "sitemap",
+          sitemapSource: candidate.source,
+          attemptedSitemaps: candidates.map((item) => item.url),
+          failedSitemaps
+        };
+      }
+      failedSitemaps.push({ url: candidate.url, source: candidate.source, status: null });
+    } catch (error) {
+      failedSitemaps.push({
+        url: candidate.url,
+        source: candidate.source,
+        status: error instanceof SiteKnowledgeFetchError ? error.status : null
+      });
+    }
+  }
+
+  if (homepageData) {
+    const urls = buildFallbackDiscoveryQueue(homepage, homepageData.discoveryTargets, limit);
+    if (urls.length) {
+      return {
+        urls,
+        crawlMode: "discovery",
+        sitemapSource: null,
+        attemptedSitemaps: candidates.map((item) => item.url),
+        failedSitemaps
+      };
+    }
+  }
+
+  const blockingFailure = failedSitemaps.find((entry) => typeof entry.status === "number" && entry.status !== 404);
+  if (blockingFailure) {
+    throw new Error(`Website discovery failed after sitemap access was unavailable (${blockingFailure.url}${blockingFailure.status ? `: ${blockingFailure.status}` : ""}).`);
+  }
+  throw new Error("Website discovery failed because no sitemap or crawlable homepage links were available.");
+}
+
+async function collectUrlsFromSitemap(
+  fetcher: typeof fetch,
+  rootSitemapUrl: string,
+  homepage: string,
+  navigationTargets: SiteKnowledgeNavigationTargets,
+  limit: number
+) {
+  const navigationUrls = navigationTargetSet(navigationTargets);
   const pending = [rootSitemapUrl];
   const visited = new Set<string>();
   const urls = new Set<string>();
@@ -238,7 +353,7 @@ export async function collectSitemapUrls(fetcher: typeof fetch, sitemapUrl: stri
     }
   }
 
-  return buildSiteKnowledgeCrawlQueue([...urls], sitemapUrl, homepage, navigationTargets, limit);
+  return buildSiteKnowledgeCrawlQueue([...urls], rootSitemapUrl, homepage, navigationTargets, limit);
 }
 
 export function prioritizeSiteKnowledgeUrls(urls: string[], sitemapUrl: string, navigationUrls: Set<string> = new Set()) {
@@ -391,14 +506,26 @@ function normalizeRelativeUrl(value: string, baseUrl?: string) {
   }
 }
 
-async function collectHomepageNavigationUrls(fetcher: typeof fetch, sitemapUrl: string) {
+async function collectHomepageLinkData(fetcher: typeof fetch, siteUrl: string) {
   try {
-    const origin = homepageUrlFromSitemap(sitemapUrl);
-    const html = await fetchSiteText(fetcher, origin, "text/html,application/xhtml+xml");
-    return extractNavigationUrls(html, origin);
+    const homepage = homepageUrlFromSitemap(siteUrl);
+    const html = await fetchSiteText(fetcher, homepage, "text/html,application/xhtml+xml");
+    return extractHomepageLinkData(html, homepage);
   } catch {
-    return { footer: [], header: [], utility: [], primary: [] };
+    return null;
   }
+}
+
+async function collectHomepageNavigationUrls(fetcher: typeof fetch, sitemapUrl: string) {
+  return (await collectHomepageLinkData(fetcher, sitemapUrl))?.navigationTargets ?? emptyNavigationTargets();
+}
+
+function extractHomepageLinkData(html: string, baseUrl: string): HomepageLinkData {
+  const navigationTargets = extractNavigationUrls(html, baseUrl);
+  return {
+    navigationTargets,
+    discoveryTargets: extractFallbackDiscoveryTargets(html, baseUrl, navigationTargets)
+  };
 }
 
 function extractNavigationUrls(html: string, baseUrl: string) {
@@ -420,6 +547,41 @@ function extractNavigationUrls(html: string, baseUrl: string) {
     utility: extractNavigationLinks(utilityBlocks, baseUrl),
     primary: extractNavigationLinks(primaryBlocks.length ? primaryBlocks : [fallbackSource], baseUrl)
   };
+}
+
+function extractFallbackDiscoveryTargets(html: string, baseUrl: string, navigationTargets: SiteKnowledgeNavigationTargets): FallbackDiscoveryTargets {
+  const footer = uniqueSameOriginUrls(navigationTargets.footer, baseUrl);
+  const header = uniqueSameOriginUrls([
+    ...navigationTargets.header,
+    ...navigationTargets.utility,
+    ...navigationTargets.primary
+  ], baseUrl);
+  const links = uniqueLinkRecords([
+    ...extractLinkRecords([html], baseUrl),
+    ...extractCtaLinkRecords(html, baseUrl)
+  ]);
+  const buckets: FallbackDiscoveryTargets = {
+    footer,
+    header,
+    about: [],
+    contact: [],
+    pricing: [],
+    features: [],
+    categories: [],
+    blog: [],
+    remaining: []
+  };
+  const seen = new Set<string>([...footer, ...header]);
+
+  for (const link of links) {
+    if (seen.has(link.url)) continue;
+    const bucket = classifyFallbackDiscoveryUrl(link);
+    if (bucket === "ignore") continue;
+    buckets[bucket].push(link.url);
+    seen.add(link.url);
+  }
+
+  return buckets;
 }
 
 function scoreSiteKnowledgeUrl(url: string, navigationUrls: Set<string>) {
@@ -490,6 +652,21 @@ function classifySiteKnowledgeUrl(url: string, navigationUrls: Set<string>) {
   return "remaining" as const;
 }
 
+function classifyFallbackDiscoveryUrl(link: LinkRecord) {
+  const parts = pathParts(link.url);
+  const path = normalizedPath(link.url);
+  const text = link.text.toLowerCase();
+
+  if (!parts.length && isHomepagePath(path)) return "ignore" as const;
+  if (looksLikeAboutPage(parts) || /\b(?:about|our story|company|team|who we are)\b/.test(text)) return "about" as const;
+  if (looksLikeContactPage(parts, text)) return "contact" as const;
+  if (looksLikePricingPage(parts, text)) return "pricing" as const;
+  if (looksLikeFeaturePage(parts, text)) return "features" as const;
+  if (looksLikeCategoryOrCollectionPage(parts)) return "categories" as const;
+  if (looksLikeBlogPage(parts, text)) return "blog" as const;
+  return "remaining" as const;
+}
+
 function looksLikeAboutPage(parts: string[]) {
   const path = parts.join("/");
   return ABOUT_PAGE_TERMS.some((term) => path.includes(term))
@@ -514,6 +691,26 @@ function looksLikeServicePage(parts: string[]) {
   return false;
 }
 
+function looksLikeContactPage(parts: string[], text = "") {
+  const path = parts.join("/");
+  return CONTACT_PAGE_TERMS.some((term) => path.includes(term))
+    || /\b(?:contact|support|get in touch|talk to sales|book call|request callback)\b/.test(text);
+}
+
+function looksLikePricingPage(parts: string[], text = "") {
+  const path = parts.join("/");
+  return PRICING_PAGE_TERMS.some((term) => path.includes(term))
+    || /\b(?:pricing|plans|quote|estimate|cost)\b/.test(text);
+}
+
+function looksLikeFeaturePage(parts: string[], text = "") {
+  const path = parts.join("/");
+  return looksLikeServicePage(parts)
+    || FEATURE_PAGE_TERMS.some((term) => path.includes(term))
+    || /\b(?:features?|services?|solutions?|platform|software|demo|trial)\b/.test(text)
+    || CTA_TEXT_TERMS.some((term) => text.includes(term));
+}
+
 function looksLikeBrandPage(parts: string[]) {
   return parts.some((part) => BRAND_PAGE_TERMS.includes(part));
 }
@@ -527,6 +724,12 @@ function looksLikeProductPage(parts: string[]) {
   if (parts.length < 2) return false;
   const [first] = parts;
   return ["shop", "store"].includes(first ?? "") && parts.length >= 2;
+}
+
+function looksLikeBlogPage(parts: string[], text = "") {
+  const path = parts.join("/");
+  return BLOG_PAGE_TERMS.some((term) => path.includes(term))
+    || /\b(?:blog|news|insights|guides|articles|resources)\b/.test(text);
 }
 
 function sameOrigin(left: string, right: string) {
@@ -650,6 +853,34 @@ function homepageUrlFromSitemap(sitemapUrl: string) {
   return new URL("/", sitemapUrl).toString();
 }
 
+function buildSitemapCandidates(sitemapUrl: string): SitemapCandidate[] {
+  const homepage = homepageUrlFromSitemap(sitemapUrl);
+  return dedupeSitemapCandidates([
+    { url: sitemapUrl, source: "user_supplied" },
+    { url: new URL("/sitemap.xml", homepage).toString(), source: "sitemap.xml" },
+    { url: new URL("/sitemap_index.xml", homepage).toString(), source: "sitemap_index.xml" }
+  ]);
+}
+
+async function collectRobotsDeclaredSitemaps(fetcher: typeof fetch, homepageUrl: string): Promise<SitemapCandidate[]> {
+  try {
+    const robotsUrl = new URL("/robots.txt", homepageUrl).toString();
+    const robots = await fetchSiteText(fetcher, robotsUrl, "text/plain,text/*");
+    return dedupeSitemapCandidates(parseRobotsSitemapDeclarations(robots, robotsUrl).map((url) => ({ url, source: "robots" as const })));
+  } catch {
+    return [];
+  }
+}
+
+function parseRobotsSitemapDeclarations(text: string, baseUrl: string) {
+  return uniqueUrls(text
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*sitemap\s*:\s*(.+)\s*$/i)?.[1] ?? "")
+    .filter(Boolean)
+    .map((value) => normalizeRelativeUrl(value, baseUrl))
+    .filter((value): value is string => Boolean(value)));
+}
+
 function uniqueSameOriginUrls(values: string[], sitemapUrl: string) {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -680,6 +911,10 @@ function navigationTargetSet(targets: SiteKnowledgeNavigationTargets) {
   ]);
 }
 
+function emptyNavigationTargets(): SiteKnowledgeNavigationTargets {
+  return { footer: [], header: [], utility: [], primary: [] };
+}
+
 function extractNavigationLinks(blocks: string[], baseUrl: string) {
   return uniqueSameOriginUrls(blocks
     .flatMap((block) => [...block.matchAll(/<a\b[^>]*\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi)])
@@ -690,6 +925,83 @@ function extractNavigationLinks(blocks: string[], baseUrl: string) {
     .filter((url): url is string => Boolean(url))
     .filter((url) => sameOrigin(url, baseUrl))
     .filter((url) => !isLowValueUrl(normalizedPath(url))), baseUrl);
+}
+
+function extractLinkRecords(blocks: string[], baseUrl: string) {
+  return blocks
+    .flatMap((block) => [...block.matchAll(/<a\b[^>]*\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi)])
+    .map((match) => ({
+      url: normalizeRelativeUrl(decodeEntities(match[2] ?? match[3] ?? match[4] ?? ""), baseUrl),
+      text: cleanText(textFromHtml(match[5] ?? ""))
+    }))
+    .filter((link): link is { url: string; text: string } => Boolean(link.url))
+    .map((link) => ({ ...link, url: normalizeUrlForPriority(link.url) }))
+    .filter((link): link is LinkRecord => Boolean(link.url))
+    .filter((link) => sameOrigin(link.url, baseUrl))
+    .filter((link) => !isLowValueUrl(normalizedPath(link.url)));
+}
+
+function extractCtaLinkRecords(html: string, baseUrl: string) {
+  return extractLinkRecords([
+    ...[...html.matchAll(/<a\b[^>]*(?:class|id)\s*=\s*("([^"]*(?:btn|button|cta|primary)[^"]*)"|'([^']*(?:btn|button|cta|primary)[^']*)')[^>]*>[\s\S]*?<\/a>/gi)].map((match) => match[0]),
+    ...[...html.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/gi)]
+      .map((match) => match[0])
+      .filter((link) => CTA_TEXT_TERMS.some((term) => textFromHtml(link).toLowerCase().includes(term)))
+  ], baseUrl);
+}
+
+function uniqueLinkRecords(links: LinkRecord[]) {
+  const seen = new Set<string>();
+  const result: LinkRecord[] = [];
+  for (const link of links) {
+    if (seen.has(link.url)) continue;
+    seen.add(link.url);
+    result.push(link);
+  }
+  return result;
+}
+
+function buildFallbackDiscoveryQueue(homepageUrl: string, targets: FallbackDiscoveryTargets, limit: number) {
+  const homepage = normalizeUrlForPriority(homepageUrl);
+  const queue: string[] = [];
+  const seen = new Set<string>();
+  if (homepage) {
+    queue.push(homepage);
+    seen.add(homepage);
+  }
+
+  const pushUniqueGroup = (values: string[]) => {
+    for (const value of values) {
+      const normalized = normalizeUrlForPriority(value);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      queue.push(normalized);
+      if (queue.length >= limit) return;
+    }
+  };
+
+  pushUniqueGroup(targets.footer);
+  pushUniqueGroup(targets.header);
+  pushUniqueGroup(targets.about);
+  pushUniqueGroup(targets.contact);
+  pushUniqueGroup(targets.pricing);
+  pushUniqueGroup(targets.features);
+  pushUniqueGroup(targets.categories);
+  pushUniqueGroup(targets.blog);
+  pushUniqueGroup(targets.remaining);
+  return queue.slice(0, limit);
+}
+
+function dedupeSitemapCandidates(candidates: SitemapCandidate[]) {
+  const seen = new Set<string>();
+  const result: SitemapCandidate[] = [];
+  for (const candidate of candidates) {
+    const normalized = normalizeUrlForPriority(candidate.url);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push({ ...candidate, url: normalized });
+  }
+  return result;
 }
 
 function pushLimited(target: string[], values: string[], count: number) {

@@ -138,6 +138,43 @@
 - Added a non-promotional brand usage target of `2-5` contextual brand mentions per article when the title naturally supports them.
 - Added regressions for coastal clothing, gifting, and accessories titles to ensure relevant website-owned brands are surfaced in generation context.
 
+### Website Intelligence Relationship Ranking
+
+- Tightened ecommerce brand extraction so retail taxonomy labels such as `Wellies`, `Belts`, `Eye Masks`, `Tops`, `Trousers & Shorts`, and `Slippers` are reclassified into category or product-type buckets instead of leaking into brands.
+- Added brand-to-category relationship extraction during Website Intelligence analysis so retained brands carry related retail topics such as `Fragrance`, `Gift Sets`, `Accessories`, `Clothing`, and `Footwear`.
+- Stored those relationship signals in the Website Intelligence profile and used them in title-aware recommendation ranking so topic-matched brands are boosted ahead of generic site brands.
+- Added persisted Website Intelligence debug data for brands showing associated categories, confidence, and supporting pages to make future relationship tuning inspectable from the UI.
+- Added regressions proving Anna Davies-style ecommerce extraction retains real brands like `Inis` and `Elizabeth Scarlett`, suppresses taxonomy leakage, and prioritises fragrance-related brands for fragrance gift articles.
+
+### Website Intelligence Discovery Resilience
+
+- Changed Website Intelligence sitemap discovery to try sources in order:
+  - user-supplied URL
+  - `/sitemap.xml`
+  - `/sitemap_index.xml`
+  - `robots.txt` sitemap declarations
+- Added homepage-only fallback discovery mode so Website Intelligence still builds a useful crawl queue when sitemap access is unavailable, blocked, rate-limited, or absent.
+- Added homepage link extraction for:
+  - footer navigation
+  - header, utility, and primary navigation
+  - CTA-style links
+  - about, contact, pricing, feature/service, category, and blog targets
+- Changed fallback queue priority to focus on business understanding:
+  - homepage
+  - footer links
+  - header links
+  - about pages
+  - contact pages
+  - pricing pages
+  - feature and service pages
+  - category pages
+  - blog pages
+- Stored crawl-mode metadata on Website Intelligence imports so the UI can distinguish sitemap imports from website discovery mode without a schema migration.
+- Updated the Website Intelligence UI to show `Website Intelligence completed using website discovery mode.` instead of treating sitemap failure as an import-ending error.
+- Added regressions covering:
+  - fallback discovery after `429` sitemap failures
+  - robots.txt-declared sitemap recovery before homepage fallback
+
 ## Deferred
 
 ### WordPress Publishing (Phase 2)

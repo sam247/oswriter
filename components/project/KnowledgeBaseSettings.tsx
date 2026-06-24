@@ -42,6 +42,8 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
 
   const siteSummary = siteKnowledge ?? createEmptyProjectSiteKnowledge(projectId);
   const hasSiteKnowledge = Boolean(siteProfile || siteSummary.pagesIndexed > 0 || siteSummary.lastImportedAt);
+  const discoveryModeActive = siteKnowledgeUsesDiscoveryMode(siteSummary);
+  const displayedSiteError = siteError ?? siteSummary.lastError ?? null;
   const filteredPages = useMemo(() => {
     const needle = pageQuery.trim().toLowerCase();
     if (!needle) return pages;
@@ -201,7 +203,7 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
 
           <div className="mt-4 rounded-md border border-line bg-surface-2 p-3">
             <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">This profile becomes the foundation for generation, SEO suggestions, internal links, entity detection, topical authority, and CTA recommendations.</p>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">This profile becomes the foundation for generation, SEO suggestions, internal links, entity detection, topical authority, and CTA recommendations. If sitemap access is unavailable, QueueWrite falls back to website discovery mode.</p>
 
             <label className="mt-3 block text-[12px] text-ink-muted">
               <span>Website Type</span>
@@ -226,7 +228,7 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
                 className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-subtle focus:border-ink"
               />
             </label>
-            <div className="mt-1 text-[10.5px] text-ink-subtle">Example: `https://example.com/sitemap.xml`</div>
+            <div className="mt-1 text-[10.5px] text-ink-subtle">Example: `https://example.com/sitemap.xml` or `https://example.com`</div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
@@ -284,7 +286,10 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
               )}
             </div>
 
-            {siteError && <div className="mt-3 text-[11px] text-warn">{siteError}</div>}
+            {discoveryModeActive && siteSummary.status === "ready" && (
+              <div className="mt-3 text-[11px] text-ink">Website Intelligence completed using website discovery mode.</div>
+            )}
+            {displayedSiteError && <div className="mt-3 text-[11px] text-warn">{displayedSiteError}</div>}
             {siteProfile && siteSummary.status === "ready" && (
               <WebsiteIntelligenceCard profile={siteProfile} importedAt={siteSummary.lastImportedAt} />
             )}
@@ -438,7 +443,7 @@ function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSite
   const strategyLabel = siteProfileStrategyLabel(profile);
   const ecommerce = siteProfileEcommerceFacets(profile);
   const ecommerceDebug = siteProfileEcommerceDebug(profile) as null | {
-    detectedBrands?: Array<{ label: string; confidence: number; pages: number }>;
+    detectedBrands?: Array<{ label: string; confidence: number; pages: number; associatedCategories?: string[]; supportingPages?: string[] }>;
     detectedCategories?: Array<{ label: string; confidence: number; pages: number }>;
     detectedProductTypes?: Array<{ label: string; confidence: number; pages: number }>;
     rejectedTerms?: Array<{ term: string; reason: string }>;
@@ -484,7 +489,7 @@ function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSite
         <div className="mt-4 rounded-md border border-line bg-surface-1 px-3 py-3">
           <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">Website Intelligence Debug</div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <ProfileDebugList title="Detected Brands (confidence)" items={ecommerceDebug.detectedBrands ?? []} limit={12} />
+            <ProfileDebugList title="Detected Brands (associations, confidence, supporting pages)" items={ecommerceDebug.detectedBrands ?? []} limit={12} />
             <ProfileDebugList title="Detected Categories (confidence)" items={ecommerceDebug.detectedCategories ?? []} limit={12} />
             <ProfileDebugList title="Detected Product Types (confidence)" items={ecommerceDebug.detectedProductTypes ?? []} limit={12} />
             <ProfileDebugRejected title="Rejected Terms" items={ecommerceDebug.rejectedTerms ?? []} limit={18} />
@@ -520,14 +525,28 @@ function ProfileList({ title, values, limit = 8 }: { title: string; values: stri
   );
 }
 
-function ProfileDebugList({ title, items, limit = 12 }: { title: string; items: Array<{ label: string; confidence: number; pages: number }>; limit?: number }) {
+function ProfileDebugList({
+  title,
+  items,
+  limit = 12
+}: {
+  title: string;
+  items: Array<{ label: string; confidence: number; pages: number; associatedCategories?: string[]; supportingPages?: string[] }>;
+  limit?: number;
+}) {
   const visible = items.slice(0, limit);
   return (
     <div>
       <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
       {visible.length ? (
         <ul className="mt-1 space-y-0.5 text-[11.5px] text-ink-muted">
-          {visible.map((item) => <li key={item.label}>- {item.label} ({item.confidence}, {item.pages}p)</li>)}
+          {visible.map((item) => (
+            <li key={item.label}>
+              <div>- {item.label} ({item.confidence}, {item.pages}p)</div>
+              {item.associatedCategories?.length ? <div className="pl-3 text-[10.5px] text-ink-subtle">Associations: {item.associatedCategories.join(", ")}</div> : null}
+              {item.supportingPages?.length ? <div className="pl-3 text-[10.5px] text-ink-subtle">Pages: {item.supportingPages.join(", ")}</div> : null}
+            </li>
+          ))}
         </ul>
       ) : (
         <div className="mt-1 text-[11.5px] text-ink-subtle">No signals recorded.</div>
@@ -658,4 +677,8 @@ function formatBusinessType(value: ReturnType<typeof siteProfileBusinessType>) {
   if (value === "ecommerce") return "Ecommerce";
   if (value === "mixed") return "Mixed";
   return "Service";
+}
+
+function siteKnowledgeUsesDiscoveryMode(siteKnowledge: ProjectSiteKnowledgeDocument | null) {
+  return Boolean(siteKnowledge?.metadata?.discoveryMode || siteKnowledge?.metadata?.crawlMode === "discovery");
 }
