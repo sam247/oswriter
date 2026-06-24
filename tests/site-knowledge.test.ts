@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { importSiteKnowledge, parseSitemap, extractSiteKnowledgePageFields } from "@/lib/site-knowledge";
+import { SITE_KNOWLEDGE_MAX_URLS, importSiteKnowledge, parseSitemap, extractSiteKnowledgePageFields, collectSitemapUrls, prioritizeSiteKnowledgeUrls } from "@/lib/site-knowledge";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
 
@@ -25,6 +25,57 @@ describe("site knowledge", () => {
       pageUrls: ["https://example.com/about", "https://example.com/contact"],
       sitemapUrls: []
     });
+  });
+
+  it("prioritizes high-signal pages before low-value location and archive urls", async () => {
+    const lowValueUrls = Array.from({ length: 80 }, (_, index) => `https://example.com/piling-contractors/location-${index + 1}`);
+    const highValueUrls = [
+      "https://example.com/blog/market-update",
+      "https://example.com/tag/piling",
+      "https://example.com/",
+      "https://example.com/about-us",
+      "https://example.com/contact",
+      "https://example.com/services/earthworks",
+      "https://example.com/solutions/basement-excavation",
+      "https://example.com/industries/property-developers"
+    ];
+    const responses = new Map<string, string>([
+      ["https://example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          ${[...lowValueUrls, ...highValueUrls].map((url) => `<url><loc>${url}</loc></url>`).join("\n")}
+        </urlset>`],
+      ["https://example.com", `<html><body><header><a href="/services/earthworks">Earthworks</a><a href="/solutions/basement-excavation">Basement Excavation</a></header></body></html>`]
+    ]);
+
+    const urls = await collectSitemapUrls(createFetchStub(responses), "https://example.com/sitemap.xml");
+
+    assert.equal(urls.length, SITE_KNOWLEDGE_MAX_URLS);
+    assert.deepEqual(urls.slice(0, 5), [
+      "https://example.com/",
+      "https://example.com/about-us",
+      "https://example.com/contact",
+      "https://example.com/services/earthworks",
+      "https://example.com/solutions/basement-excavation"
+    ]);
+    assert.equal(urls.includes("https://example.com/tag/piling"), false);
+    assert.equal(urls.includes("https://example.com/blog/market-update"), true);
+  });
+
+  it("keeps directly navigated pages ahead of ordinary service pages", () => {
+    const navigationUrls = new Set(["https://example.com/projects"]);
+    const prioritized = prioritizeSiteKnowledgeUrls([
+      "https://example.com/services/drainage",
+      "https://example.com/projects",
+      "https://example.com/blog/news",
+      "https://example.com/foundation-repair/putney"
+    ], "https://example.com/sitemap.xml", navigationUrls);
+
+    assert.deepEqual(prioritized.slice(0, 3), [
+      "https://example.com/projects",
+      "https://example.com/services/drainage",
+      "https://example.com/blog/news"
+    ]);
+    assert.equal(prioritized.at(-1), "https://example.com/foundation-repair/putney");
   });
 
   it("extracts lightweight metadata and summary fields from html", () => {

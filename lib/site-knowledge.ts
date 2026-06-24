@@ -5,7 +5,29 @@ import { extractProjectSiteProfile } from "@/lib/site-profile";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
-export const SITE_KNOWLEDGE_MAX_URLS = 500;
+export const SITE_KNOWLEDGE_MAX_URLS = 50;
+const SITE_KNOWLEDGE_MAX_CANDIDATE_URLS = 500;
+const SERVICE_PAGE_TERMS = [
+  "service",
+  "services",
+  "solution",
+  "solutions",
+  "category",
+  "categories",
+  "product",
+  "products",
+  "groundworks",
+  "earthworks",
+  "excavation",
+  "piling",
+  "underpinning",
+  "foundation",
+  "drainage",
+  "demolition",
+  "utilities",
+  "basement",
+  "concrete"
+];
 
 interface ImportSiteKnowledgeOptions {
   projectId: string;
@@ -161,23 +183,39 @@ export async function collectSitemapUrls(fetcher: typeof fetch, sitemapUrl: stri
   const pending = [normalizeSiteKnowledgeUrl(sitemapUrl)];
   const visited = new Set<string>();
   const urls = new Set<string>();
+  const candidateLimit = Math.max(limit, SITE_KNOWLEDGE_MAX_CANDIDATE_URLS);
 
-  while (pending.length && urls.size < limit) {
+  while (pending.length && urls.size < candidateLimit) {
     const current = pending.shift();
     if (!current || visited.has(current)) continue;
     visited.add(current);
     const xml = await fetchSiteText(fetcher, current, "application/xml,text/xml,text/plain");
     const parsed = parseSitemap(xml, current);
     for (const nested of parsed.sitemapUrls) {
-      if (!visited.has(nested) && pending.length + urls.size < limit * 4) pending.push(nested);
+      if (!visited.has(nested) && pending.length + urls.size < candidateLimit * 4) pending.push(nested);
     }
     for (const url of parsed.pageUrls) {
       urls.add(url);
-      if (urls.size >= limit) break;
+      if (urls.size >= candidateLimit) break;
     }
   }
 
-  return [...urls].slice(0, limit);
+  const navigationUrls = await collectHomepageNavigationUrls(fetcher, sitemapUrl);
+  return prioritizeSiteKnowledgeUrls([...urls], sitemapUrl, navigationUrls).slice(0, limit);
+}
+
+export function prioritizeSiteKnowledgeUrls(urls: string[], sitemapUrl: string, navigationUrls: Set<string> = new Set()) {
+  const seen = new Set<string>();
+  return urls
+    .map((url, index) => ({ url: normalizeUrlForPriority(url), index }))
+    .filter((item): item is { url: string; index: number } => {
+      if (!item.url || seen.has(item.url)) return false;
+      seen.add(item.url);
+      return sameOrigin(item.url, sitemapUrl);
+    })
+    .map((item) => ({ ...item, priority: scoreSiteKnowledgeUrl(item.url, navigationUrls) }))
+    .sort((left, right) => right.priority - left.priority || left.index - right.index)
+    .map((item) => item.url);
 }
 
 export function parseSitemap(xml: string, baseUrl?: string): SitemapParseResult {
@@ -266,6 +304,126 @@ function normalizeRelativeUrl(value: string, baseUrl?: string) {
   } catch {
     return null;
   }
+}
+
+async function collectHomepageNavigationUrls(fetcher: typeof fetch, sitemapUrl: string) {
+  try {
+    const origin = new URL(sitemapUrl).origin;
+    const html = await fetchSiteText(fetcher, origin, "text/html,application/xhtml+xml");
+    return extractNavigationUrls(html, origin);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function extractNavigationUrls(html: string, baseUrl: string) {
+  const blocks = [
+    ...html.matchAll(/<nav\b[\s\S]*?<\/nav>/gi),
+    ...html.matchAll(/<header\b[\s\S]*?<\/header>/gi)
+  ].map((match) => match[0]);
+  const source = blocks.length ? blocks.join("\n") : html.slice(0, 20000);
+  return new Set([...source.matchAll(/<a\b[^>]*\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi)]
+    .map((match) => match[2] ?? match[3] ?? match[4] ?? "")
+    .map((href) => normalizeRelativeUrl(decodeEntities(href), baseUrl))
+    .filter((url): url is string => Boolean(url))
+    .map(normalizeUrlForPriority)
+    .filter((url): url is string => Boolean(url)));
+}
+
+function scoreSiteKnowledgeUrl(url: string, navigationUrls: Set<string>) {
+  const tier = siteKnowledgeUrlTier(url, navigationUrls);
+  const parts = pathParts(url);
+  const depthBonus = Math.max(0, 5 - parts.length) * 10;
+  const serviceDiversityBonus = SERVICE_PAGE_TERMS.some((term) => normalizedPath(url).includes(term)) ? 25 : 0;
+  const hubBonus = parts.length <= 2 ? 20 : 0;
+  return (7 - tier) * 10000 + depthBonus + serviceDiversityBonus + hubBonus;
+}
+
+function siteKnowledgeUrlTier(url: string, navigationUrls: Set<string>) {
+  const path = normalizedPath(url);
+  const parts = pathParts(url);
+  const leaf = parts[parts.length - 1] ?? "";
+  const normalizedUrl = normalizeUrlForPriority(url);
+
+  if (isHomepagePath(path) || /\b(?:about|about-us|contact|contact-us)\b/.test(path)) return 1;
+  if (normalizedUrl && navigationUrls.has(normalizedUrl)) return 2;
+  if (isLowValueUrl(path)) return 6;
+  if (isDeepLocationVariant(parts)) return 6;
+  if (/\b(?:blog|news|insights|guides|articles|resources)\b/.test(path)) return 5;
+  if (/\b(?:industries|industry|sectors|audiences|customers|clients|areas|locations|service-areas)\b/.test(path)) return 4;
+  if (looksLikeLocationHub(parts)) return 4;
+  if (/\b(?:services|service|solutions|solution|categories|category|products|product)\b/.test(path)) return 3;
+  if (SERVICE_PAGE_TERMS.some((term) => path.includes(term))) return 3;
+  if (leaf && parts.length <= 2) return 3;
+  return 5;
+}
+
+function isLowValueUrl(path: string) {
+  return /\/(?:tag|tags|author|authors|archive|archives|search|feed|page|wp-json)\b/.test(path)
+    || /[?&](?:s|search|filter|replytocom|utm_)=/i.test(path);
+}
+
+function isDeepLocationVariant(parts: string[]) {
+  if (parts.length < 2) return false;
+  const last = parts[parts.length - 1] ?? "";
+  const hasService = parts.slice(0, -1).some((part) => SERVICE_PAGE_TERMS.some((term) => part.includes(term)));
+  return hasService && looksLikeLocationSlug(last);
+}
+
+function looksLikeLocationHub(parts: string[]) {
+  if (parts.length !== 1) return false;
+  const part = parts[0] ?? "";
+  return /^(?:areas?|locations?|service-areas?)$/.test(part);
+}
+
+function looksLikeLocationSlug(value: string) {
+  if (!value || SERVICE_PAGE_TERMS.some((term) => value.includes(term))) return false;
+  if (/^(?:services?|solutions?|products?|categories?|about|contact|blog|news|guide|guides)$/.test(value)) return false;
+  return /^[a-z0-9]+(?:-[a-z0-9]+){0,3}$/.test(value);
+}
+
+function sameOrigin(left: string, right: string) {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeUrlForPriority(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!/^https?:$/.test(url.protocol)) return null;
+    url.hash = "";
+    [...url.searchParams.keys()].forEach((key) => {
+      if (/^(?:utm_|fbclid|gclid|mc_)/i.test(key) || ["replytocom"].includes(key.toLowerCase())) url.searchParams.delete(key);
+    });
+    if (url.pathname !== "/") url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizedPath(url: string) {
+  try {
+    return new URL(url).pathname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function pathParts(url: string) {
+  try {
+    return new URL(url).pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part).toLowerCase());
+  } catch {
+    return [];
+  }
+}
+
+function isHomepagePath(path: string) {
+  return path === "" || path === "/";
 }
 
 function matchTag(html: string, tag: string) {

@@ -144,7 +144,7 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
-            <div className="mono mt-0.5 text-[10px] text-ink-subtle">{siteProfile ? `${siteProfile.pageCount} pages learned` : "Import a sitemap to learn this business"}</div>
+            <div className="mono mt-0.5 text-[10px] text-ink-subtle">{siteProfile ? `${siteProfile.pageCount} knowledge pages analysed` : "Import a sitemap to learn this business"}</div>
           </div>
           <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
@@ -201,7 +201,7 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
                     <span className="text-right text-ink">{siteSummary.status === "importing" ? `${siteSummary.processedPages}/${Math.max(siteSummary.totalDiscoveredUrls, siteSummary.processedPages || 0, 1)}` : formatDateTime(siteSummary.lastImportedAt)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-4">
-                    <span>Pages Indexed</span>
+                    <span>Knowledge Pages Analysed</span>
                     <span className="text-right text-ink">{siteSummary.pagesIndexed}</span>
                   </div>
                   {siteSummary.status === "importing" && siteSummary.currentUrl && (
@@ -315,10 +315,10 @@ function SiteKnowledgePagesModal({
 function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSiteProfileDocument; importedAt?: string | null }) {
   return (
     <div className="mt-3 rounded-md border border-line bg-background px-3 py-3">
-      <div className="text-[12.5px] font-semibold text-ink">QueueWrite analysed {profile.pageCount} pages and learned the following about your business.</div>
+      <div className="text-[12.5px] font-semibold text-ink">QueueWrite analysed {profile.pageCount} priority pages and learned the following about your business.</div>
       <div className="mt-3 grid gap-3 text-[11.5px] sm:grid-cols-2">
         <ProfileLine label="Website" value={profile.domain || "-"} />
-        <ProfileLine label="Pages Indexed" value={profile.pageCount || "-"} />
+        <ProfileLine label="Knowledge Pages Analysed" value={profile.pageCount || "-"} />
         <ProfileLine label="Last Synced" value={formatDate(importedAt ?? profile.generatedAt)} />
         <ProfileLine label="Suggested CTA" value={profile.ctas[0] ?? "-"} />
       </div>
