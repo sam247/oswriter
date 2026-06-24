@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { SITE_KNOWLEDGE_MAX_URLS, importSiteKnowledge, parseSitemap, extractSiteKnowledgePageFields, collectSitemapUrls, prioritizeSiteKnowledgeUrls } from "@/lib/site-knowledge";
+import { extractProjectSiteProfile } from "@/lib/site-profile";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
+import type { SiteKnowledgePageDocument } from "@/lib/types";
 
 describe("site knowledge", () => {
   it("parses sitemap indexes and url sets", () => {
@@ -189,6 +191,43 @@ describe("site knowledge", () => {
     assert.ok(saved?.writingSignals.includes("UK English"));
     assert.ok(saved?.writingSignals.includes("Industry terminology detected"));
   });
+
+  it("cleans noisy profile entities, CTA fragments, and duplicate service variants", () => {
+    const pages: SiteKnowledgePageDocument[] = [
+      sitePage("https://mainlinegroundworks.co.uk/groundworks", "Groundworks...", "Groundworks <!"),
+      sitePage("https://mainlinegroundworks.co.uk/commercial-groundworks", "Commercial Groundworks Services", "Commercial Groundworks Contractors"),
+      sitePage("https://mainlinegroundworks.co.uk/get-groundworks-fast-response", "Get Groundworks With Fast Response", "Request Commercial Groundworks Quote"),
+      sitePage("https://mainlinegroundworks.co.uk/cfa-piling/chelsea", "CFA Piling Contractors in Chelsea", "CFA Piling in Chelsea"),
+      sitePage("https://mainlinegroundworks.co.uk/earthworks/london-uk", "Earthworks in London UK", "Earthworks Contractors in Greater London"),
+      sitePage("https://mainlinegroundworks.co.uk/excavation/greater-london", "Excavation in Greater London", "Excavation Services in London"),
+      sitePage("https://mainlinegroundworks.co.uk/audiences/property-developers", "Groundworks for Developers", "Groundworks for Property Developers"),
+      sitePage("https://mainlinegroundworks.co.uk/audiences/main-contractors", "Groundworks for Main Contractors", "Groundworks for Contractors")
+    ];
+
+    const profile = extractProjectSiteProfile({
+      projectId: "mainline",
+      sitemapUrl: "https://mainlinegroundworks.co.uk/sitemap.xml",
+      pages
+    });
+
+    assert.ok(profile.services.includes("Groundworks"));
+    assert.ok(profile.services.includes("Commercial Groundworks"));
+    assert.ok(profile.services.includes("CFA Piling"));
+    assert.ok(profile.services.includes("Earthworks"));
+    assert.ok(profile.services.includes("Excavation"));
+    assert.equal(profile.services.some((value) => /fast response|get|request|quote|<!|\.{2,}/i.test(value)), false);
+    assert.equal(profile.products.some((value) => /fast response|get|request|quote|<!|\.{2,}/i.test(value)), false);
+    assert.equal(profile.services.filter((value) => value === "Groundworks").length, 1);
+    assert.ok(profile.audiences.includes("Property Developers"));
+    assert.ok(profile.audiences.includes("Main Contractors"));
+    assert.ok(profile.audiences.includes("Contractors"));
+    assert.ok(profile.locations.includes("London"));
+    assert.equal(profile.locations.includes("Greater London"), false);
+    assert.equal(profile.locations.includes("London UK"), false);
+    assert.equal(profile.services.length <= 10, true);
+    assert.equal(profile.products.length <= 10, true);
+    assert.equal(profile.locations.length <= 15, true);
+  });
 });
 
 function createFetchStub(responses: Map<string, string>): typeof fetch {
@@ -197,5 +236,20 @@ function createFetchStub(responses: Map<string, string>): typeof fetch {
     const body = responses.get(url);
     if (body === undefined) return new Response("Not found", { status: 404 });
     return new Response(body, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+  };
+}
+
+function sitePage(url: string, title: string, h1: string, metaDescription = "Groundworks and excavation services for property developers and main contractors. Request a quote today."): SiteKnowledgePageDocument {
+  return {
+    id: url,
+    projectId: "mainline",
+    url,
+    title,
+    h1,
+    metaDescription,
+    shortSummary: metaDescription,
+    importedAt: "2026-06-24T00:00:00.000Z",
+    updatedAt: "2026-06-24T00:00:00.000Z",
+    metadata: {}
   };
 }

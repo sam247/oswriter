@@ -323,10 +323,10 @@ function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSite
         <ProfileLine label="Suggested CTA" value={profile.ctas[0] ?? "-"} />
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <ProfileList title="Learned Services" values={profile.services} />
-        <ProfileList title="Learned Products / Categories" values={profile.products} />
-        <ProfileList title="Learned Audiences" values={profile.audiences} />
-        <ProfileList title="Learned Locations" values={profile.locations} />
+        <ProfileList title="Learned Services" values={profile.services} limit={10} />
+        <ProfileList title="Learned Products / Categories" values={profile.products} limit={10} />
+        <ProfileList title="Learned Audiences" values={profile.audiences} limit={8} />
+        <ProfileList title="Learned Locations" values={profile.locations} limit={15} />
         <ProfileList title="Writing Preferences" values={profile.writingSignals} />
       </div>
     </div>
@@ -342,8 +342,8 @@ function ProfileLine({ label, value }: { label: string; value: string | number }
   );
 }
 
-function ProfileList({ title, values }: { title: string; values: string[] }) {
-  const visible = values.slice(0, 8);
+function ProfileList({ title, values, limit = 8 }: { title: string; values: string[]; limit?: number }) {
+  const visible = values.slice(0, limit);
   return (
     <div>
       <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
