@@ -37,7 +37,9 @@ describe("site knowledge", () => {
       "https://example.com/tag/piling",
       "https://example.com/",
       "https://example.com/about-us",
+      "https://example.com/our-story",
       "https://example.com/contact",
+      "https://example.com/store-information",
       "https://example.com/services/earthworks",
       "https://example.com/solutions/basement-excavation",
       "https://example.com/industries/property-developers",
@@ -49,53 +51,56 @@ describe("site knowledge", () => {
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
           ${[...productUrls, ...lowValueUrls, ...highValueUrls].map((url) => `<url><loc>${url}</loc></url>`).join("\n")}
         </urlset>`],
-      ["https://example.com/", `<html><body><header><a href="/services/earthworks">Earthworks</a><a href="/solutions/basement-excavation">Basement Excavation</a><a href="/collections/gifts">Gifts</a></header><nav><a href="/brands/inis">Inis</a></nav><footer><a href="/contact">Contact</a></footer></body></html>`]
+      ["https://example.com/", `<html><body><header><a href="/services/earthworks">Earthworks</a><a href="/solutions/basement-excavation">Basement Excavation</a></header><div class="utility-nav"><a href="/store-information">Store Information</a></div><nav><a href="/collections/gifts">Gifts</a></nav><footer><a href="/contact">Contact</a></footer></body></html>`]
     ]);
 
     const urls = await collectSitemapUrls(createFetchStub(responses), "https://example.com/sitemap.xml");
 
     assert.equal(urls.length, SITE_KNOWLEDGE_MAX_URLS);
-    assert.deepEqual(urls.slice(0, 7), [
+    assert.deepEqual(urls.slice(0, 9), [
       "https://example.com/",
+      "https://example.com/contact",
       "https://example.com/services/earthworks",
       "https://example.com/solutions/basement-excavation",
+      "https://example.com/store-information",
       "https://example.com/collections/gifts",
-      "https://example.com/brands/inis",
-      "https://example.com/contact",
-      "https://example.com/about-us"
+      "https://example.com/about-us",
+      "https://example.com/our-story",
+      "https://example.com/brands/inis"
     ]);
     assert.equal(urls.includes("https://example.com/tag/piling"), false);
-    assert.equal(urls.includes("https://example.com/blog/market-update"), true);
+    assert.equal(urls.includes("https://example.com/blog/market-update"), false);
     assert.equal(urls.includes("https://example.com/products/alex-clark-product-1"), false);
-    assert.equal(urls.some((url) => url.includes("/products/alex-clark-product-")), true);
+    assert.equal(urls.some((url) => url.includes("/products/alex-clark-product-")), false);
   });
 
-  it("builds the crawl queue from homepage navigation before sitemap order", async () => {
+  it("builds the crawl queue from footer, header, and utility navigation before sitemap order", async () => {
     const responses = new Map<string, string>([
       ["https://shop.example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
           ${[
             ...Array.from({ length: 40 }, (_, index) => `https://shop.example.com/products/alex-clark-${index + 1}`),
-            "https://shop.example.com/services/gift-wrapping",
             "https://shop.example.com/brands/jellycat",
+            "https://shop.example.com/about-us",
             "https://shop.example.com/collections/fragrance",
-            "https://shop.example.com/collections/accessories"
+            "https://shop.example.com/services/gift-wrapping",
+            "https://shop.example.com/store-information"
           ].map((url) => `<url><loc>${url}</loc></url>`).join("\n")}
         </urlset>`],
       ["https://shop.example.com/", `
         <html>
           <body>
-            <header>
-              <a href="/collections/fragrance">Fragrance</a>
-              <a href="/brands/jellycat">Jellycat</a>
-            </header>
-            <nav>
-              <a href="/collections/accessories">Accessories</a>
-              <a href="/services/gift-wrapping">Gift Wrapping</a>
-            </nav>
             <footer>
-              <a href="/contact">Contact</a>
+              <a href="/about-us">About Us</a>
             </footer>
+            <header>
+              <a href="/brands/jellycat">Jellycat</a>
+              <a href="/collections/fragrance">Fragrance</a>
+            </header>
+            <div class="utility-nav">
+              <a href="/store-information">Store Information</a>
+            </div>
+            <nav><a href="/services/gift-wrapping">Gift Wrapping</a></nav>
           </body>
         </html>
       `]
@@ -105,11 +110,11 @@ describe("site knowledge", () => {
 
     assert.deepEqual(urls.slice(0, 6), [
       "https://shop.example.com/",
-      "https://shop.example.com/collections/fragrance",
+      "https://shop.example.com/about-us",
       "https://shop.example.com/brands/jellycat",
-      "https://shop.example.com/collections/accessories",
+      "https://shop.example.com/collections/fragrance",
+      "https://shop.example.com/store-information",
       "https://shop.example.com/services/gift-wrapping",
-      "https://shop.example.com/contact"
     ]);
     assert.equal(urls[6]?.startsWith("https://shop.example.com/products/"), true);
   });
@@ -126,9 +131,9 @@ describe("site knowledge", () => {
     assert.deepEqual(prioritized.slice(0, 3), [
       "https://example.com/projects",
       "https://example.com/services/drainage",
-      "https://example.com/blog/news"
+      "https://example.com/foundation-repair/putney"
     ]);
-    assert.equal(prioritized.at(-1), "https://example.com/foundation-repair/putney");
+    assert.equal(prioritized.at(-1), "https://example.com/blog/news");
   });
 
   it("extracts lightweight metadata and summary fields from html", () => {

@@ -90,6 +90,28 @@
 - Added representative product sampling so the remaining product budget is spread across the catalogue instead of defaulting to the first product URLs in the sitemap.
 - Added regression coverage to prevent sitemap-first crawling from crowding out higher-signal navigation, category, brand, and collection pages.
 
+### Website Intelligence Crawl Strategy V2.1
+
+- Refined navigation extraction so Website Intelligence now captures and orders:
+  - footer navigation
+  - header navigation
+  - utility navigation
+  - primary and mega-menu navigation
+- Changed crawl priority to optimise for business understanding:
+  - homepage
+  - footer navigation targets
+  - header navigation targets
+  - utility navigation targets
+  - remaining primary navigation targets
+  - about and story pages
+  - brand pages
+  - category and collection pages
+  - service and location pages
+  - representative product pages
+  - remaining sitemap URLs
+- Promoted high-signal business pages such as `about`, `our-story`, `brands`, and `store-information` ahead of generic catalogue coverage.
+- Tightened regression coverage so the crawler now prefers business-identity pages over blog pages and low-value product-heavy sitemap ordering.
+
 ## Deferred
 
 ### WordPress Publishing (Phase 2)
