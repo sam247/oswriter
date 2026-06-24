@@ -2,7 +2,7 @@
 
 import { ChevronDown, ExternalLink, Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { siteProfileBusinessType, siteProfileEcommerceFacets } from "@/lib/site-profile";
+import { siteProfileBusinessType, siteProfileEcommerceDebug, siteProfileEcommerceFacets, siteProfileStrategyLabel } from "@/lib/site-profile";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
@@ -403,7 +403,15 @@ function SiteKnowledgePagesModal({
 
 function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSiteProfileDocument; importedAt?: string | null }) {
   const businessType = siteProfileBusinessType(profile);
+  const strategyLabel = siteProfileStrategyLabel(profile);
   const ecommerce = siteProfileEcommerceFacets(profile);
+  const ecommerceDebug = siteProfileEcommerceDebug(profile) as null | {
+    detectedBrands?: Array<{ label: string; confidence: number; pages: number }>;
+    detectedCategories?: Array<{ label: string; confidence: number; pages: number }>;
+    detectedProductTypes?: Array<{ label: string; confidence: number; pages: number }>;
+    rejectedTerms?: Array<{ term: string; reason: string }>;
+  };
+  const [debugOpen, setDebugOpen] = useState(false);
   const showEcommerceLists = businessType === "ecommerce" || businessType === "mixed" || ecommerce.brands.length > 0 || ecommerce.categories.length > 0 || ecommerce.productTypes.length > 0;
   const showServiceLists = businessType !== "ecommerce" || profile.services.length > 0;
   const showLegacyProductList = !showEcommerceLists || businessType === "service" || businessType === "unknown";
@@ -411,10 +419,21 @@ function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSite
 
   return (
     <div className="mt-3 rounded-md border border-line bg-background px-3 py-3">
-      <div className="text-[12.5px] font-semibold text-ink">QueueWrite analysed {profile.pageCount} priority pages and learned the following about your business.</div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="text-[12.5px] font-semibold text-ink">QueueWrite analysed {profile.pageCount} priority pages and learned the following about your business.</div>
+        {ecommerceDebug ? (
+          <button
+            type="button"
+            onClick={() => setDebugOpen((value) => !value)}
+            className="mono shrink-0 rounded-md border border-line bg-surface-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-ink-muted hover:text-ink"
+          >
+            {debugOpen ? "Hide Debug" : "Show Debug"}
+          </button>
+        ) : null}
+      </div>
       <div className="mt-3 grid gap-3 text-[11.5px] sm:grid-cols-2">
         <ProfileLine label="Website" value={profile.domain || "-"} />
-        <ProfileLine label="Business Type" value={formatBusinessType(businessType)} />
+        <ProfileLine label="Business Type" value={strategyLabel || formatBusinessType(businessType)} />
         <ProfileLine label="Knowledge Pages Analysed" value={profile.pageCount || "-"} />
         <ProfileLine label="Last Synced" value={formatDate(importedAt ?? profile.generatedAt)} />
         <ProfileLine label="Suggested CTA" value={profile.ctas[0] ?? "-"} />
@@ -429,6 +448,17 @@ function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSite
         {showLocations ? <ProfileList title="Learned Locations" values={profile.locations} limit={15} /> : null}
         <ProfileList title="Writing Preferences" values={profile.writingSignals} />
       </div>
+      {ecommerceDebug && debugOpen ? (
+        <div className="mt-4 rounded-md border border-line bg-surface-1 px-3 py-3">
+          <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">Website Intelligence Debug</div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <ProfileDebugList title="Detected Brands (confidence)" items={ecommerceDebug.detectedBrands ?? []} limit={12} />
+            <ProfileDebugList title="Detected Categories (confidence)" items={ecommerceDebug.detectedCategories ?? []} limit={12} />
+            <ProfileDebugList title="Detected Product Types (confidence)" items={ecommerceDebug.detectedProductTypes ?? []} limit={12} />
+            <ProfileDebugRejected title="Rejected Terms" items={ecommerceDebug.rejectedTerms ?? []} limit={18} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -453,6 +483,38 @@ function ProfileList({ title, values, limit = 8 }: { title: string; values: stri
         </ul>
       ) : (
         <div className="mt-1 text-[11.5px] text-ink-subtle">Not enough signal yet.</div>
+      )}
+    </div>
+  );
+}
+
+function ProfileDebugList({ title, items, limit = 12 }: { title: string; items: Array<{ label: string; confidence: number; pages: number }>; limit?: number }) {
+  const visible = items.slice(0, limit);
+  return (
+    <div>
+      <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
+      {visible.length ? (
+        <ul className="mt-1 space-y-0.5 text-[11.5px] text-ink-muted">
+          {visible.map((item) => <li key={item.label}>- {item.label} ({item.confidence}, {item.pages}p)</li>)}
+        </ul>
+      ) : (
+        <div className="mt-1 text-[11.5px] text-ink-subtle">No signals recorded.</div>
+      )}
+    </div>
+  );
+}
+
+function ProfileDebugRejected({ title, items, limit = 18 }: { title: string; items: Array<{ term: string; reason: string }>; limit?: number }) {
+  const visible = items.slice(0, limit);
+  return (
+    <div>
+      <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
+      {visible.length ? (
+        <ul className="mt-1 space-y-0.5 text-[11.5px] text-ink-muted">
+          {visible.map((item) => <li key={`${item.term}:${item.reason}`}>- {item.term} ({item.reason})</li>)}
+        </ul>
+      ) : (
+        <div className="mt-1 text-[11.5px] text-ink-subtle">No rejected terms recorded.</div>
       )}
     </div>
   );

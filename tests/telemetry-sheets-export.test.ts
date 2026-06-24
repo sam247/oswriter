@@ -262,6 +262,8 @@ function sampleArticle(overrides: Partial<ArticleDocument> & { researchScore?: n
       industryLabel: "Utilities",
       audience: "procurement_teams",
       audienceLabel: "Procurement Teams",
+      businessType: "auto_detect",
+      businessTypeLabel: "Auto Detect",
       profileKey: "utilities_procurement_teams",
       targetWords: 1000,
       regionAwarenessActive: true,

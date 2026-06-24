@@ -10,6 +10,7 @@ describe("project profile", () => {
     assert.equal(profile.regionKey, "global");
     assert.equal(profile.industryKey, "general");
     assert.equal(profile.audienceKey, "general_audience");
+    assert.equal(profile.businessTypeKey, "auto_detect");
     assert.equal(profile.defaultTargetWords, 1400);
   });
 
@@ -25,6 +26,7 @@ describe("project profile", () => {
     assert.equal(profile.industryKey, "healthcare");
     assert.equal(profile.audienceKey, "practice_managers");
     assert.equal(profile.audienceLabel, "Practice Managers");
+    assert.equal(profile.businessTypeKey, "auto_detect");
     assert.equal(profile.defaultTargetWords, 5000);
   });
 
@@ -41,6 +43,7 @@ describe("project profile", () => {
       region: snapshot.region,
       industry: snapshot.industry,
       audience: snapshot.audience,
+      businessType: snapshot.businessType,
       targetWords: snapshot.targetWords,
       regionAwarenessActive: snapshot.regionAwarenessActive,
       industryAwarenessActive: snapshot.industryAwarenessActive,
@@ -50,6 +53,7 @@ describe("project profile", () => {
       region: "united_kingdom",
       industry: "construction",
       audience: "procurement_teams",
+      businessType: "auto_detect",
       targetWords: 2500,
       regionAwarenessActive: true,
       industryAwarenessActive: true,

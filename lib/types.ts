@@ -24,6 +24,8 @@ export interface ProjectProfile {
   customIndustryLabel?: string;
   audienceKey: string;
   audienceLabel: string;
+  businessTypeKey: string;
+  businessTypeLabel: string;
   defaultTargetWords: number;
 }
 
@@ -35,6 +37,8 @@ export interface ProjectProfileSnapshot {
   industryLabel: string;
   audience: string;
   audienceLabel: string;
+  businessType: string;
+  businessTypeLabel: string;
   profileKey: string;
   targetWords: number;
   regionAwarenessActive: boolean;

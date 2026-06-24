@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
+import { BUSINESS_TYPE_OPTIONS, type BusinessTypeKey } from "@/lib/project/profile";
 import { getSettingsMutationBlocker } from "@/lib/queue/safety";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import { extractProjectSiteProfile } from "@/lib/site-profile";
 import { getAccessibleProject } from "@/lib/server/project-access";
 import { requireAuth } from "@/lib/server/auth";
 import { createRuntime } from "@/lib/server/runtime";
+
+function normalizedBusinessTypeKey(value: unknown): BusinessTypeKey {
+  const keys = new Set<BusinessTypeKey>(BUSINESS_TYPE_OPTIONS.map((option) => option.key));
+  return typeof value === "string" && keys.has(value as BusinessTypeKey) ? value as BusinessTypeKey : "auto_detect";
+}
 
 export async function GET(req: Request) {
   const unauth = await requireAuth();
@@ -24,7 +30,8 @@ export async function GET(req: Request) {
       projectId,
       organisationId: siteKnowledge.organisationId,
       sitemapUrl: siteKnowledge.sitemapUrl,
-      pages
+      pages,
+      configuredBusinessType: normalizedBusinessTypeKey(project.profile?.businessTypeKey)
     });
     await store.saveProjectSiteProfile(siteProfile);
   }

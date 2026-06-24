@@ -252,12 +252,20 @@ describe("site knowledge", () => {
     const profile = extractProjectSiteProfile({
       projectId: "anna-davies",
       sitemapUrl: "https://annadavies.co.uk/sitemap.xml",
+      configuredBusinessType: "ecommerce",
       pages: [
         sitePage("https://annadavies.co.uk/collections/jellycat", "Jellycat | Anna Davies", "Jellycat", "Browse collection of Jellycat gifts and soft toys for lifestyle shoppers."),
         sitePage("https://annadavies.co.uk/collections/inis", "Inis Fragrance | Anna Davies", "Inis Fragrance", "Shop now for Inis fragrance gifts and diffusers."),
         sitePage("https://annadavies.co.uk/collections/seasalt", "Seasalt Clothing | Anna Davies", "Seasalt Clothing", "Browse collection of Seasalt womenswear and clothing."),
+        sitePage("https://annadavies.co.uk/collections/white-stuff", "White Stuff Clothing | Anna Davies", "White Stuff", "Browse collection of White Stuff clothing, dresses, and knitwear."),
+        sitePage("https://annadavies.co.uk/collections/barbour", "Barbour Jackets | Anna Davies", "Barbour", "Shop now for Barbour jackets and clothing."),
         sitePage("https://annadavies.co.uk/collections/accessories", "Accessories | Anna Davies", "Accessories", "View range of handbags, scarves, and accessories for women."),
         sitePage("https://annadavies.co.uk/collections/gifts", "Gift Ideas | Anna Davies", "Gifts", "Gift ideas for gift buyers and lifestyle shoppers."),
+        sitePage("https://annadavies.co.uk/collections/mens-activewear", "Mens Activewear | Anna Davies", "Mens Activewear", "Browse mens activewear and clothing."),
+        sitePage("https://annadavies.co.uk/collections/mens-underwear", "Mens Underwear | Anna Davies", "Mens Underwear", "Browse mens underwear and clothing."),
+        sitePage("https://annadavies.co.uk/collections/homeware", "Homeware | Anna Davies", "Homeware", "Shop now for homeware gifts and home accessories."),
+        sitePage("https://annadavies.co.uk/collections/beauty", "Beauty | Anna Davies", "Beauty", "Browse collection of beauty, skincare, and fragrance."),
+        sitePage("https://annadavies.co.uk/collections/footwear", "Footwear | Anna Davies", "Footwear", "Browse footwear including trainers, boots and sandals."),
         sitePage("https://annadavies.co.uk/products/hoff-trainers", "Hoff Trainers | Anna Davies", "Hoff Trainers", "Shop now for Hoff trainers and footwear.")
       ]
     });
@@ -269,15 +277,22 @@ describe("site knowledge", () => {
     const productTypes = Array.isArray(ecommerce.productTypes) ? ecommerce.productTypes : [];
 
     assert.equal(metadata.businessType, "ecommerce");
+    assert.equal(metadata.strategyBusinessType, "ecommerce");
+    assert.equal(metadata.strategySource, "project_setting");
     assert.ok(brands.includes("Jellycat"));
     assert.ok(brands.includes("Inis"));
     assert.ok(brands.includes("Seasalt"));
+    assert.ok(brands.includes("White Stuff"));
+    assert.ok(brands.includes("Barbour"));
     assert.equal(brands.includes("Anna Davies"), false);
+    assert.equal(brands.some((value) => /mens\s+(?:activewear|underwear|nightwear)/i.test(String(value))), false);
     assert.ok(categories.includes("Fragrance"));
     assert.ok(categories.includes("Clothing"));
     assert.ok(categories.includes("Gifts"));
     assert.ok(categories.includes("Accessories"));
     assert.ok(categories.includes("Footwear"));
+    assert.ok(categories.includes("Homeware"));
+    assert.ok(categories.includes("Beauty"));
     assert.ok(productTypes.includes("Trainers"));
     assert.ok(profile.products.includes("Jellycat"));
     assert.ok(profile.products.includes("Fragrance"));
@@ -287,6 +302,33 @@ describe("site knowledge", () => {
     assert.ok(profile.ctas.some((cta) => ["Shop Now", "Browse Collection", "View Range"].includes(cta)));
     assert.equal(profile.services.length, 0);
     assert.ok(profile.writingSignals.includes("UK English"));
+  });
+
+  it("uses explicit project business type before auto detection when Website Intelligence runs", () => {
+    const ecommerceProfile = extractProjectSiteProfile({
+      projectId: "configured-ecommerce",
+      sitemapUrl: "https://example.com/sitemap.xml",
+      configuredBusinessType: "ecommerce",
+      pages: [
+        sitePage("https://example.com/about", "About Example", "About Example", "Independent retailer with gift collections and lifestyle brands."),
+        sitePage("https://example.com/contact", "Contact Example", "Contact Example", "Contact our shop team today.")
+      ]
+    });
+    const localServiceProfile = extractProjectSiteProfile({
+      projectId: "configured-local-service",
+      sitemapUrl: "https://example.com/sitemap.xml",
+      configuredBusinessType: "local_service",
+      pages: [
+        sitePage("https://example.com/collections/inis", "Inis | Example", "Inis", "Shop now for Inis fragrance gifts."),
+        sitePage("https://example.com/products/hoff-trainers", "Hoff Trainers | Example", "Hoff Trainers", "Browse footwear and trainers.")
+      ]
+    });
+
+    assert.equal((ecommerceProfile.metadata as Record<string, unknown>).businessType, "ecommerce");
+    assert.equal((ecommerceProfile.metadata as Record<string, unknown>).strategyBusinessType, "ecommerce");
+    assert.equal((localServiceProfile.metadata as Record<string, unknown>).businessType, "service");
+    assert.equal((localServiceProfile.metadata as Record<string, unknown>).strategyBusinessType, "local_service");
+    assert.equal((localServiceProfile.metadata as Record<string, unknown>).strategySource, "project_setting");
   });
 
   it("forgets imported site knowledge, pages, and generated profile data", async () => {

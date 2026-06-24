@@ -112,6 +112,21 @@
 - Promoted high-signal business pages such as `about`, `our-story`, `brands`, and `store-information` ahead of generic catalogue coverage.
 - Tightened regression coverage so the crawler now prefers business-identity pages over blog pages and low-value product-heavy sitemap ordering.
 
+### Website Intelligence Entity Classification V2
+
+- Added explicit ecommerce entity typing so retail terms are classified as `brand`, `category`, or `product_type` before being added to the profile.
+- Prevented cross-bucket leakage by resolving ecommerce entities with suppression rules so the same term cannot appear in multiple ecommerce buckets.
+- Improved retail taxonomy handling so terms like `Mens Activewear`, `Mens Nightwear`, and `Mens Underwear` map to `Clothing` category signals rather than being misclassified as brands.
+- Refined category patterns to prefer broad business categories (e.g. `Clothing`, `Footwear`, `Accessories`, `Gifts`, `Homeware`, `Beauty`, `Fragrance`) while keeping specific items like `Boots` and `Trainers` in product types.
+- Added a Website Intelligence debug panel to show detected brands, categories, product types (with confidence) plus rejected terms for easier tuning.
+
+### Explicit Business Type Selection
+
+- Added `Business Type` to project settings with options for `Auto Detect`, `Ecommerce`, `Service Business`, `Local Service`, `Agency`, `SaaS`, and `Charity`.
+- Stored the selected business type on `project.profile` so it is available across the application architecture, including Website Intelligence, planning, and future recommendation systems.
+- Updated Website Intelligence import and lazy rebuild paths to use the selected project business type as the primary strategy source, only falling back to auto detection when the setting is `Auto Detect`.
+- Updated the Website Intelligence UI to show the strategy used for the current analysis, including `Auto Detect (DetectedType)` when automatic routing is active.
+
 ## Deferred
 
 ### WordPress Publishing (Phase 2)

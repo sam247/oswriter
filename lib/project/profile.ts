@@ -50,13 +50,25 @@ export const INDUSTRY_OPTIONS = [
   { key: "local_business", label: "Local Business" }
 ] as const;
 
+export const BUSINESS_TYPE_OPTIONS = [
+  { key: "auto_detect", label: "Auto Detect" },
+  { key: "ecommerce", label: "Ecommerce" },
+  { key: "service_business", label: "Service Business" },
+  { key: "local_service", label: "Local Service" },
+  { key: "agency", label: "Agency" },
+  { key: "saas", label: "SaaS" },
+  { key: "charity", label: "Charity" }
+] as const;
+
 export type RegionKey = typeof REGION_OPTIONS[number]["key"];
 export type AudienceKey = typeof AUDIENCE_OPTIONS[number]["key"];
 export type IndustryKey = typeof INDUSTRY_OPTIONS[number]["key"];
+export type BusinessTypeKey = typeof BUSINESS_TYPE_OPTIONS[number]["key"];
 
 const REGION_LABELS = new Map(REGION_OPTIONS.map((item) => [item.key, item.label]));
 const AUDIENCE_LABELS = new Map(AUDIENCE_OPTIONS.map((item) => [item.key, item.label]));
 const INDUSTRY_LABELS = new Map(INDUSTRY_OPTIONS.map((item) => [item.key, item.label]));
+const BUSINESS_TYPE_LABELS = new Map(BUSINESS_TYPE_OPTIONS.map((item) => [item.key, item.label]));
 
 export const INDUSTRY_AUDIENCES: Record<IndustryKey, readonly AudienceKey[]> = {
   construction: ["procurement_teams", "project_managers", "site_managers", "contractors", "commercial_managers"],
@@ -89,6 +101,7 @@ export function normalizeProjectProfile(input: Partial<ProjectProfile> | null | 
   const industryKey = optionKey(input?.industryKey, INDUSTRY_LABELS, "general");
   const requestedAudience = optionKey(input?.audienceKey, AUDIENCE_LABELS, defaultAudienceForIndustry(industryKey));
   const audienceKey = INDUSTRY_AUDIENCES[industryKey].includes(requestedAudience) ? requestedAudience : defaultAudienceForIndustry(industryKey);
+  const businessTypeKey = optionKey(input?.businessTypeKey, BUSINESS_TYPE_LABELS, "auto_detect");
   return {
     profileVersion: PROFILE_VERSION,
     regionKey,
@@ -97,6 +110,8 @@ export function normalizeProjectProfile(input: Partial<ProjectProfile> | null | 
     industryLabel: INDUSTRY_LABELS.get(industryKey) ?? "General",
     audienceKey,
     audienceLabel: AUDIENCE_LABELS.get(audienceKey) ?? "General Audience",
+    businessTypeKey,
+    businessTypeLabel: BUSINESS_TYPE_LABELS.get(businessTypeKey) ?? "Auto Detect",
     defaultTargetWords: clampTargetWords(input?.defaultTargetWords ?? fallbackTargetWords)
   };
 }
@@ -111,6 +126,8 @@ export function snapshotProjectProfile(profile: ProjectProfile): ProjectProfileS
     industryLabel: normalized.industryLabel,
     audience: normalized.audienceKey,
     audienceLabel: normalized.audienceLabel,
+    businessType: normalized.businessTypeKey,
+    businessTypeLabel: normalized.businessTypeLabel,
     profileKey: profileKeyFor(normalized.industryKey, normalized.audienceKey),
     targetWords: normalized.defaultTargetWords,
     regionAwarenessActive: normalized.regionKey !== "global",
@@ -184,6 +201,7 @@ export function profileContextLines(snapshot?: ProjectProfileSnapshot | null) {
     `Region: ${snapshot.regionLabel}`,
     `Industry: ${snapshot.industryLabel}`,
     `Audience: ${snapshot.audienceLabel}`,
+    `Business type: ${snapshot.businessTypeLabel}`,
     `Target words: ${snapshot.targetWords}`,
     ...(planningPriorities.length ? [`Planning priorities: ${planningPriorities.join(", ")}`] : []),
     `Preference: use sources, terminology, examples and standards that fit the region, industry and audience.`

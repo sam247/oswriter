@@ -1,4 +1,5 @@
 import { nowIso } from "@/lib/defaults";
+import type { BusinessTypeKey } from "@/lib/project/profile";
 import type { ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
 export interface ExtractSiteProfileInput {
@@ -6,6 +7,7 @@ export interface ExtractSiteProfileInput {
   organisationId?: string;
   sitemapUrl?: string;
   pages: SiteKnowledgePageDocument[];
+  configuredBusinessType?: BusinessTypeKey;
 }
 
 export type SiteProfileBusinessType = "service" | "ecommerce" | "mixed" | "unknown";
@@ -101,14 +103,16 @@ const ECOMMERCE_URL_HINTS = [/\/products?(?:\/|$)/i, /\/collections?(?:\/|$)/i, 
 const SERVICE_TEXT_HINT = /\b(?:services?|contractors?|specialists?|quote|consultation|areas we cover|groundworks|excavation|piling|drainage|underpinning|foundations?)\b/i;
 const ECOMMERCE_TEXT_HINT = /\b(?:shop|product|products|collection|collections|brand|brands|gift|gifts|footwear|clothing|fragrance|accessories|add to (?:bag|basket|cart)|wishlist)\b/i;
 const ECOMMERCE_CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\bfragrance\b|\bperfume\b|\bcologne\b|\bdiffusers?\b|\bcandles?\b/i, label: "Fragrance" },
-  { pattern: /\bclothing\b|\bapparel\b|\bdresses?\b|\bknitwear\b|\bcoats?\b|\bjackets?\b|\bshirts?\b|\btops?\b|\btrousers?\b/i, label: "Clothing" },
-  { pattern: /\bfootwear\b|\bboots?\b|\bshoes?\b|\btrainers?\b|\bsandals?\b|\bslippers?\b/i, label: "Footwear" },
+  { pattern: /\bfragrance\b/i, label: "Fragrance" },
+  { pattern: /\bclothing\b|\bapparel\b|\bwomenswear\b|\bmenswear\b/i, label: "Clothing" },
+  { pattern: /\bfootwear\b/i, label: "Footwear" },
   { pattern: /\bgifts?\b|\bgiftware\b|\bgift\s+ideas?\b|\bgift\s+guide\b/i, label: "Gifts" },
-  { pattern: /\baccessories\b|\bbags?\b|\bhandbags?\b|\bwallets?\b|\bscarves?\b|\bjewellery\b|\bjewelry\b|\bhats?\b/i, label: "Accessories" },
-  { pattern: /\bbeauty\b|\bskincare\b|\bsoap\b|\blotion\b|\bcream\b/i, label: "Beauty" },
+  { pattern: /\baccessories\b/i, label: "Accessories" },
+  { pattern: /\bbeauty\b|\bskincare\b/i, label: "Beauty" },
   { pattern: /\bhomeware\b|\bhome\s+fragrance\b|\bhome\s+accessories\b/i, label: "Homeware" },
-  { pattern: /\btoys?\b|\bsoft\s+toys?\b|\bplush\b/i, label: "Toys" }
+  { pattern: /\btoys?\b|\bsoft\s+toys?\b|\bplush\b/i, label: "Toys" },
+  { pattern: /\bactivewear\b|\bnightwear\b|\bunderwear\b|\bloungewear\b|\bswimwear\b|\bsleepwear\b/i, label: "Clothing" },
+  { pattern: /\bmens?\b|\bwomens?\b|\bmen'?s\b|\bwomen'?s\b|\bgents?\b|\bladies\b/i, label: "Clothing" }
 ];
 const ECOMMERCE_PRODUCT_TYPE_PATTERNS: Array<{ pattern: RegExp; label: string; broader?: string }> = [
   { pattern: /\bperfumes?\b|\bcologne\b/i, label: "Perfume", broader: "Fragrance" },
@@ -133,10 +137,10 @@ const ALL_AUDIENCE_TERMS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\blifestyle\b|\blifestyle\s+store\b|\blifestyle\s+brand\b/i, label: "Lifestyle Shoppers" }
 ];
 
-export function extractProjectSiteProfile({ projectId, organisationId, sitemapUrl, pages }: ExtractSiteProfileInput): ProjectSiteProfileDocument {
+export function extractProjectSiteProfile({ projectId, organisationId, sitemapUrl, pages, configuredBusinessType = "auto_detect" }: ExtractSiteProfileInput): ProjectSiteProfileDocument {
   const generatedAt = nowIso();
   const domain = domainFromUrl(sitemapUrl) || domainFromUrl(pages[0]?.url ?? "");
-  const detection = detectBusinessType(pages);
+  const detection = detectBusinessType(pages, configuredBusinessType);
   const services = new Map<string, EntityRecord>();
   const products = new Map<string, EntityRecord>();
   const ecommerceBrands = new Map<string, EntityRecord>();
@@ -147,6 +151,7 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
   const ctas = new Map<string, EntityRecord>();
   const writingSignals = new Set<string>();
   const runEcommerceExtraction = detection.businessType === "ecommerce" || detection.businessType === "mixed";
+  const ecommerceRejected: Array<{ term: string; reason: string; pageKey: string }> = [];
 
   for (const page of pages) {
     const text = pageText(page);
@@ -159,14 +164,11 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
       if (category) addEntity(products, category, candidate);
 
       if (runEcommerceExtraction) {
-        const brand = normalizeEcommerceBrand(candidate, page);
-        if (brand) addEntity(ecommerceBrands, brand, candidate);
-
-        const retailCategory = normalizeEcommerceCategory(candidate.value);
-        if (retailCategory) addEntity(ecommerceCategories, retailCategory, candidate);
-
-        const productType = normalizeEcommerceProductType(candidate.value);
-        if (productType) addEntity(ecommerceProductTypes, productType, candidate);
+        const classified = classifyEcommerceEntity(candidate, page);
+        if (classified?.type === "brand" && classified.label) addEntity(ecommerceBrands, classified.label, candidate, classified.bonus);
+        else if (classified?.type === "category" && classified.label) addEntity(ecommerceCategories, classified.label, candidate, classified.bonus);
+        else if (classified?.type === "product_type" && classified.label) addEntity(ecommerceProductTypes, classified.label, candidate, classified.bonus);
+        else if (classified?.rejected && ecommerceRejected.length < 120) ecommerceRejected.push({ term: classified.term, reason: classified.rejected, pageKey });
       }
     }
     for (const location of candidateLocations(page)) addEntity(locations, location, { value: location, source: "title", pageKey });
@@ -183,9 +185,13 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
 
   const serviceLabels = rankedLabels(services, 10, 8);
   const legacyProductLabels = rankedCategories(products, serviceLabels, 10, 8);
-  const brandLabels = runEcommerceExtraction ? rankedLabels(ecommerceBrands, 8, 8) : [];
-  const ecommerceCategoryLabels = runEcommerceExtraction ? rankedCategories(ecommerceCategories, serviceLabels, 8, 6) : [];
-  const ecommerceProductTypeLabels = runEcommerceExtraction ? rankedRetailProductTypes(ecommerceProductTypes, ecommerceCategoryLabels, 8, 6) : [];
+  const resolvedEcommerce = runEcommerceExtraction
+    ? resolveEcommerceFacets(ecommerceBrands, ecommerceCategories, ecommerceProductTypes)
+    : { brands: [] as string[], categories: [] as string[], productTypes: [] as string[], debug: null as EcommerceDebugSummary | null };
+  const brandLabels = resolvedEcommerce.brands;
+  const ecommerceCategoryLabels = resolvedEcommerce.categories;
+  const ecommerceProductTypeLabels = resolvedEcommerce.productTypes;
+  const ecommerceDebug = mergeEcommerceDebug(resolvedEcommerce.debug, ecommerceRejected);
   const productLabels = uniqueLabels(
     detection.businessType === "service"
       ? legacyProductLabels
@@ -210,8 +216,11 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
     generatedAt,
     updatedAt: generatedAt,
     metadata: {
-      extraction: "heuristic_v3",
+      extraction: "heuristic_v4",
       businessType: detection.businessType,
+      strategyBusinessType: configuredBusinessType,
+      strategyBusinessTypeLabel: businessTypeLabel(configuredBusinessType),
+      strategySource: configuredBusinessType === "auto_detect" ? "auto_detect" : "project_setting",
       businessTypeSignals: {
         service: detection.serviceSignals,
         ecommerce: detection.ecommerceSignals
@@ -219,7 +228,8 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
       ecommerce: {
         brands: brandLabels,
         categories: ecommerceCategoryLabels,
-        productTypes: ecommerceProductTypeLabels
+        productTypes: ecommerceProductTypeLabels,
+        debug: ecommerceDebug
       },
       confidence: {
         services: rankedConfidence(services),
@@ -228,7 +238,8 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
         locations: rankedConfidence(locations),
         brands: rankedConfidence(ecommerceBrands),
         categories: rankedConfidence(ecommerceCategories),
-        productTypes: rankedConfidence(ecommerceProductTypes)
+        productTypes: rankedConfidence(ecommerceProductTypes),
+        rejected: ecommerceRejected.slice(0, 60)
       }
     }
   };
@@ -237,10 +248,12 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
 export function siteProfileContextLines(profile?: ProjectSiteProfileDocument | null) {
   if (!profile) return [];
   const businessType = siteProfileBusinessType(profile);
+  const strategyLabel = siteProfileStrategyLabel(profile);
   const ecommerce = siteProfileEcommerceFacets(profile);
   return [
     ["Website", profile.domain],
-    ["Business Type", businessType === "unknown" ? "" : titleCase(businessType)],
+    ["Business Type", strategyLabel],
+    ["Detected Website Type", businessType === "unknown" ? "" : titleCase(businessType)],
     ["Learned Services", profile.services.join(", ")],
     ["Primary Brands", ecommerce.brands.join(", ")],
     ["Primary Categories", ecommerce.categories.join(", ")],
@@ -276,6 +289,19 @@ export function siteProfileBusinessType(profile?: ProjectSiteProfileDocument | n
   return value === "service" || value === "ecommerce" || value === "mixed" ? value : "unknown";
 }
 
+export function siteProfileStrategyKey(profile?: ProjectSiteProfileDocument | null) {
+  const metadata = metadataRecord(profile?.metadata);
+  const value = metadata.strategyBusinessType;
+  return typeof value === "string" ? value : "auto_detect";
+}
+
+export function siteProfileStrategyLabel(profile?: ProjectSiteProfileDocument | null) {
+  const strategy = siteProfileStrategyKey(profile);
+  const detected = siteProfileBusinessType(profile);
+  if (strategy === "auto_detect") return detected === "unknown" ? "Auto Detect" : `Auto Detect (${titleCase(detected)})`;
+  return businessTypeLabel(strategy);
+}
+
 export function siteProfileEcommerceFacets(profile?: ProjectSiteProfileDocument | null) {
   const metadata = metadataRecord(profile?.metadata);
   const ecommerce = metadataRecord(metadata.ecommerce);
@@ -284,6 +310,13 @@ export function siteProfileEcommerceFacets(profile?: ProjectSiteProfileDocument 
     categories: stringArrayFromUnknown(ecommerce.categories),
     productTypes: stringArrayFromUnknown(ecommerce.productTypes)
   };
+}
+
+export function siteProfileEcommerceDebug(profile?: ProjectSiteProfileDocument | null) {
+  const metadata = metadataRecord(profile?.metadata);
+  const ecommerce = metadataRecord(metadata.ecommerce);
+  const debug = metadataRecord(ecommerce.debug);
+  return Object.keys(debug).length ? debug : null;
 }
 
 function pageText(page: SiteKnowledgePageDocument) {
@@ -343,27 +376,30 @@ function normalizeProductOrCategory(value: string) {
   return null;
 }
 
-function normalizeEcommerceBrand(candidate: PhraseCandidate, page: SiteKnowledgePageDocument) {
+function normalizeEcommerceBrandLabel(value: string, candidate: PhraseCandidate, page: SiteKnowledgePageDocument) {
   if (candidate.source === "summary") return null;
   if (!looksLikeBrandPage(page)) return null;
-  if (hasCtaContamination(candidate.value)) return null;
-  const cleaned = cleanEntityLabel(candidate.value);
+  if (hasCtaContamination(value)) return null;
+  const cleaned = cleanEntityLabel(value);
   const focus = ecommercePageFocus(page.url);
-  if (!isQualityEntity(cleaned)) return null;
-  if (focus && entityKey(cleaned) !== entityKey(focus)) return null;
-  if (BRAND_STOPWORDS.has(cleaned.toLowerCase())) return null;
-  if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
-  if (normalizeService(cleaned)) return null;
-  if (normalizeEcommerceCategory(cleaned)) return null;
-  if (normalizeEcommerceProductType(cleaned)) return null;
-  if (/\b(?:gift|sale|shop|collection|collections|range|browse|view|new in|new arrivals?)\b/i.test(cleaned)) return null;
-  return cleaned;
+  const normalized = stripRetailQualifiers(cleaned);
+  if (!isQualityEntity(normalized)) return null;
+  if (focus && entityKey(normalized) !== entityKey(stripRetailQualifiers(focus))) return null;
+  const lower = normalized.toLowerCase();
+  if (BRAND_STOPWORDS.has(lower)) return null;
+  if (GENERIC_PRODUCT_TERMS.has(lower)) return null;
+  if (normalizeService(normalized)) return null;
+  if (normalizeEcommerceCategory(normalized)) return null;
+  if (normalizeEcommerceProductType(normalized)) return null;
+  if (isRetailTaxonomyTerm(normalized)) return null;
+  if (/\b(?:gift|sale|shop|collection|collections|range|browse|view|new in|new arrivals?)\b/i.test(normalized)) return null;
+  return normalized;
 }
 
 function normalizeEcommerceCategory(value: string) {
   if (hasCtaContamination(value)) return null;
   if (SERVICE_NOISE.test(value)) return null;
-  const cleaned = cleanEntityLabel(value);
+  const cleaned = stripRetailQualifiers(cleanEntityLabel(value));
   if (!isQualityEntity(cleaned)) return null;
   if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
   for (const category of ECOMMERCE_CATEGORY_PATTERNS) {
@@ -375,10 +411,9 @@ function normalizeEcommerceCategory(value: string) {
 function normalizeEcommerceProductType(value: string) {
   if (hasCtaContamination(value)) return null;
   if (SERVICE_NOISE.test(value)) return null;
-  const cleaned = cleanEntityLabel(value);
+  const cleaned = stripRetailQualifiers(cleanEntityLabel(value));
   if (!isQualityEntity(cleaned)) return null;
   if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
-  if (normalizeEcommerceCategory(cleaned) === cleaned) return null;
   for (const productType of ECOMMERCE_PRODUCT_TYPE_PATTERNS) {
     if (productType.pattern.test(cleaned)) return productType.label;
   }
@@ -419,7 +454,7 @@ function hasCtaContamination(value: string) {
   return CTA_CONTAMINATION.test(value);
 }
 
-function addEntity(map: Map<string, EntityRecord>, label: string, candidate: PhraseCandidate) {
+function addEntity(map: Map<string, EntityRecord>, label: string, candidate: PhraseCandidate, scoreBonus = 0) {
   if (!isQualityEntity(label)) return;
   const key = entityKey(label);
   if (!key) return;
@@ -434,6 +469,7 @@ function addEntity(map: Map<string, EntityRecord>, label: string, candidate: Phr
   };
   current.label = cleanestLabel(current.label, label);
   current.score += sourceScore(candidate.source);
+  current.score += scoreBonus;
   if (!current.pages.has(candidate.pageKey)) current.score += 2;
   current.pages.add(candidate.pageKey);
   if (candidate.source === "url") current.urlHits += 1;
@@ -558,7 +594,213 @@ function sourceScore(source: EntitySource) {
   return 1;
 }
 
-function detectBusinessType(pages: SiteKnowledgePageDocument[]) {
+type EcommerceEntityType = "brand" | "category" | "product_type";
+
+interface EcommerceClassification {
+  type?: EcommerceEntityType;
+  label?: string;
+  bonus?: number;
+  rejected?: string;
+  term: string;
+}
+
+interface EcommerceDebugEntry {
+  label: string;
+  confidence: number;
+  pages: number;
+}
+
+interface EcommerceDebugSummary {
+  detectedBrands: EcommerceDebugEntry[];
+  detectedCategories: EcommerceDebugEntry[];
+  detectedProductTypes: EcommerceDebugEntry[];
+  rejectedTerms: Array<{ term: string; reason: string }>;
+}
+
+function mergeEcommerceDebug(debug: EcommerceDebugSummary | null, rejected: Array<{ term: string; reason: string; pageKey: string }>) {
+  if (!debug && !rejected.length) return null;
+  const base = debug ?? { detectedBrands: [], detectedCategories: [], detectedProductTypes: [], rejectedTerms: [] };
+  const combinedRejected = [
+    ...base.rejectedTerms,
+    ...rejected.slice(0, 40).map((item) => ({ term: item.term, reason: item.reason }))
+  ];
+  return {
+    ...base,
+    rejectedTerms: combinedRejected.slice(0, 80)
+  };
+}
+
+function classifyEcommerceEntity(candidate: PhraseCandidate, page: SiteKnowledgePageDocument): EcommerceClassification | null {
+  const cleaned = stripRetailQualifiers(cleanEntityLabel(candidate.value));
+  if (!isQualityEntity(cleaned)) return null;
+  if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
+  if (hasCtaContamination(cleaned)) return null;
+
+  const retailCategory = normalizeEcommerceCategory(cleaned);
+  if (retailCategory) {
+    return {
+      type: "category",
+      label: retailCategory,
+      bonus: ecommerceEntityBonus("category", page.url, candidate.source),
+      term: cleaned
+    };
+  }
+
+  const productType = normalizeEcommerceProductType(cleaned);
+  if (productType) {
+    return {
+      type: "product_type",
+      label: productType,
+      bonus: ecommerceEntityBonus("product_type", page.url, candidate.source),
+      term: cleaned
+    };
+  }
+
+  const brand = normalizeEcommerceBrandLabel(cleaned, candidate, page);
+  if (brand) {
+    return {
+      type: "brand",
+      label: brand,
+      bonus: ecommerceEntityBonus("brand", page.url, candidate.source) + (looksLikeBrandPage(page) ? 4 : 0),
+      term: cleaned
+    };
+  }
+
+  if (looksLikeBrandPage(page) && candidate.source !== "summary") {
+    const focus = ecommercePageFocus(page.url);
+    if (focus && isRetailTaxonomyTerm(focus)) return { term: cleaned, rejected: "retail_taxonomy_in_brand_context" };
+    if (focus && normalizeEcommerceCategory(focus)) return { term: cleaned, rejected: "category_like_brand_focus" };
+    return { term: cleaned, rejected: "not_classified" };
+  }
+
+  return null;
+}
+
+function ecommerceEntityBonus(type: EcommerceEntityType, url: string, source: EntitySource) {
+  const page = ecommercePageKind(url);
+  const base = page === "homepage"
+    ? 10
+    : page === "about"
+      ? 8
+      : page === "brand"
+        ? 8
+        : page === "collection"
+          ? 6
+          : page === "product"
+            ? 3
+            : page === "blog"
+              ? 0
+              : 4;
+
+  const typeWeight = type === "brand" ? 2 : type === "category" ? 1 : 1;
+  const sourceWeight = source === "url" || source === "title" || source === "h1" ? 2 : 0;
+  return base + typeWeight + sourceWeight;
+}
+
+function ecommercePageKind(url: string) {
+  const lower = url.toLowerCase();
+  if (lower.endsWith("/") || /\/$/.test(lower)) {
+    try {
+      if (new URL(url).pathname === "/") return "homepage" as const;
+    } catch {
+      return "other" as const;
+    }
+  }
+  if (/\b(?:about|about-us|our-story|story|who-we-are|store-information|store-info)\b/i.test(lower)) return "about" as const;
+  if (/\/brands?\b/i.test(lower) || /\/collections?\/[^/]+$/.test(lower) && /\/collections?\/(?:brand|brands)\b/i.test(lower)) return "brand" as const;
+  if (/\/brands?\//i.test(lower)) return "brand" as const;
+  if (/\/collections?\//i.test(lower)) return "collection" as const;
+  if (/\/products?\//i.test(lower)) return "product" as const;
+  if (/\/(?:blog|news|articles)\b/i.test(lower)) return "blog" as const;
+  return "other" as const;
+}
+
+function resolveEcommerceFacets(
+  brands: Map<string, EntityRecord>,
+  categories: Map<string, EntityRecord>,
+  productTypes: Map<string, EntityRecord>
+) {
+  const brandThreshold = 16;
+  const categoryThreshold = 14;
+  const productTypeThreshold = 14;
+  const comparisonFloor = 8;
+  const registry = new Map<string, { brand?: EntityRecord; category?: EntityRecord; productType?: EntityRecord }>();
+  const rejected: Array<{ term: string; reason: string }> = [];
+
+  for (const record of brands.values()) {
+    if (confidence(record) < comparisonFloor) continue;
+    registry.set(entityKey(record.label), { ...(registry.get(entityKey(record.label)) ?? {}), brand: record });
+  }
+  for (const record of categories.values()) {
+    if (confidence(record) < comparisonFloor) continue;
+    registry.set(entityKey(record.label), { ...(registry.get(entityKey(record.label)) ?? {}), category: record });
+  }
+  for (const record of productTypes.values()) {
+    if (confidence(record) < comparisonFloor) continue;
+    registry.set(entityKey(record.label), { ...(registry.get(entityKey(record.label)) ?? {}), productType: record });
+  }
+
+  const resolved: Array<{ type: EcommerceEntityType; record: EntityRecord }> = [];
+  for (const entry of registry.values()) {
+    const brandScore = entry.brand ? confidence(entry.brand) : -1;
+    const categoryScore = entry.category ? confidence(entry.category) : -1;
+    const productTypeScore = entry.productType ? confidence(entry.productType) : -1;
+
+    const winner = resolveEcommerceWinner({ brandScore, categoryScore, productTypeScore });
+    if (winner === "brand" && entry.brand && brandScore >= brandThreshold) resolved.push({ type: "brand", record: entry.brand });
+    else if (winner === "category" && entry.category && categoryScore >= categoryThreshold) resolved.push({ type: "category", record: entry.category });
+    else if (winner === "product_type" && entry.productType && productTypeScore >= productTypeThreshold) resolved.push({ type: "product_type", record: entry.productType });
+    else {
+      const label = entry.brand?.label ?? entry.category?.label ?? entry.productType?.label ?? "";
+      if (label) rejected.push({ term: label, reason: "below_threshold_or_suppressed" });
+    }
+  }
+
+  const brandsResolved = resolved.filter((item) => item.type === "brand").sort((a, b) => confidence(b.record) - confidence(a.record)).slice(0, 10);
+  const categoriesResolved = resolved.filter((item) => item.type === "category").sort((a, b) => confidence(b.record) - confidence(a.record)).slice(0, 10);
+  const productTypesResolved = resolved.filter((item) => item.type === "product_type").sort((a, b) => confidence(b.record) - confidence(a.record)).slice(0, 10);
+
+  return {
+    brands: brandsResolved.map((item) => item.record.label),
+    categories: categoriesResolved.map((item) => item.record.label),
+    productTypes: productTypesResolved.map((item) => item.record.label),
+    debug: {
+      detectedBrands: rankedRecords(brands).slice(0, 25).map((record) => ({ label: record.label, confidence: confidence(record), pages: record.pages.size })),
+      detectedCategories: rankedRecords(categories).slice(0, 25).map((record) => ({ label: record.label, confidence: confidence(record), pages: record.pages.size })),
+      detectedProductTypes: rankedRecords(productTypes).slice(0, 25).map((record) => ({ label: record.label, confidence: confidence(record), pages: record.pages.size })),
+      rejectedTerms: rejected.slice(0, 60)
+    } satisfies EcommerceDebugSummary
+  };
+}
+
+function resolveEcommerceWinner(scores: { brandScore: number; categoryScore: number; productTypeScore: number }): EcommerceEntityType {
+  const { brandScore, categoryScore, productTypeScore } = scores;
+  if (productTypeScore >= 0 && productTypeScore >= brandScore + 3 && productTypeScore >= categoryScore + 2) return "product_type";
+  if (brandScore >= 0 && brandScore >= categoryScore + 3 && brandScore >= productTypeScore + 2) return "brand";
+  if (categoryScore >= 0 && categoryScore >= productTypeScore + 2 && categoryScore >= brandScore) return "category";
+  if (brandScore >= categoryScore && brandScore >= productTypeScore) return "brand";
+  if (productTypeScore >= categoryScore) return "product_type";
+  return "category";
+}
+
+function stripRetailQualifiers(value: string) {
+  return value
+    .replace(/\b(?:men'?s|mens|women'?s|womens|ladies|gents)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isRetailTaxonomyTerm(value: string) {
+  const lower = value.toLowerCase();
+  if (!lower) return false;
+  if (/\b(?:mens?|women'?s|womens?|ladies|gents)\b/.test(lower)) return true;
+  if (/\b(?:activewear|nightwear|underwear|loungewear|swimwear|sleepwear)\b/.test(lower)) return true;
+  if (/\b(?:clothing|footwear|accessories|gifts|beauty|homeware|toys)\b/.test(lower)) return true;
+  if (/\b(?:new in|new arrivals|sale|offers|clearance)\b/.test(lower)) return true;
+  return false;
+}
+
+function detectBusinessType(pages: SiteKnowledgePageDocument[], configuredBusinessType: BusinessTypeKey) {
   let serviceSignals = 0;
   let ecommerceSignals = 0;
 
@@ -571,6 +813,11 @@ function detectBusinessType(pages: SiteKnowledgePageDocument[]) {
     if (ECOMMERCE_TEXT_HINT.test(text) || ECOMMERCE_CATEGORY_PATTERNS.some((category) => category.pattern.test(text))) ecommerceSignals += 2;
   }
 
+  const forced = configuredBusinessTypeToSiteProfileType(configuredBusinessType);
+  if (forced) {
+    return { businessType: forced, serviceSignals, ecommerceSignals };
+  }
+
   let businessType: SiteProfileBusinessType = "unknown";
   if (serviceSignals >= 6 && ecommerceSignals >= 6) businessType = "mixed";
   else if (ecommerceSignals >= 6 && ecommerceSignals >= serviceSignals + 2) businessType = "ecommerce";
@@ -581,6 +828,22 @@ function detectBusinessType(pages: SiteKnowledgePageDocument[]) {
   else if (serviceSignals > 0) businessType = "service";
 
   return { businessType, serviceSignals, ecommerceSignals };
+}
+
+function configuredBusinessTypeToSiteProfileType(value: BusinessTypeKey) {
+  if (value === "auto_detect") return null;
+  if (value === "ecommerce") return "ecommerce" as const;
+  return "service" as const;
+}
+
+function businessTypeLabel(value: string) {
+  if (value === "ecommerce") return "Ecommerce";
+  if (value === "service_business") return "Service Business";
+  if (value === "local_service") return "Local Service";
+  if (value === "agency") return "Agency";
+  if (value === "saas") return "SaaS";
+  if (value === "charity") return "Charity";
+  return "Auto Detect";
 }
 
 function looksLikeBrandPage(page: SiteKnowledgePageDocument) {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { nowIso } from "@/lib/defaults";
+import type { BusinessTypeKey } from "@/lib/project/profile";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import { extractProjectSiteProfile } from "@/lib/site-profile";
 import type { WorkspaceStore } from "@/lib/storage/storage";
@@ -44,6 +45,7 @@ interface SiteKnowledgeNavigationTargets {
 interface ImportSiteKnowledgeOptions {
   projectId: string;
   sitemapUrl: string;
+  configuredBusinessType?: BusinessTypeKey;
   store: WorkspaceStore;
   fetcher?: typeof fetch;
   onProgress?: (siteKnowledge: ProjectSiteKnowledgeDocument) => void | Promise<void>;
@@ -70,6 +72,7 @@ interface ExtractedPageFields {
 export async function importSiteKnowledge({
   projectId,
   sitemapUrl,
+  configuredBusinessType = "auto_detect",
   store,
   fetcher = fetch,
   onProgress
@@ -171,7 +174,8 @@ export async function importSiteKnowledge({
       projectId,
       organisationId: siteKnowledge.organisationId,
       sitemapUrl: normalizedSitemapUrl,
-      pages
+      pages,
+      configuredBusinessType
     });
     await store.saveProjectSiteProfile(siteProfile);
     await persistSiteKnowledgeStatus(store, siteKnowledge, onProgress);

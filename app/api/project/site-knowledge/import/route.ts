@@ -1,3 +1,4 @@
+import { BUSINESS_TYPE_OPTIONS, type BusinessTypeKey } from "@/lib/project/profile";
 import { getSettingsMutationBlocker } from "@/lib/queue/safety";
 import { importSiteKnowledge } from "@/lib/site-knowledge";
 import { getAccessibleProject } from "@/lib/server/project-access";
@@ -7,6 +8,11 @@ import { createRuntime } from "@/lib/server/runtime";
 interface ImportSiteKnowledgeBody {
   projectId?: string;
   sitemapUrl?: string;
+}
+
+function normalizedBusinessTypeKey(value: unknown): BusinessTypeKey {
+  const keys = new Set<BusinessTypeKey>(BUSINESS_TYPE_OPTIONS.map((option) => option.key));
+  return typeof value === "string" && keys.has(value as BusinessTypeKey) ? value as BusinessTypeKey : "auto_detect";
 }
 
 export async function POST(req: Request) {
@@ -45,6 +51,7 @@ export async function POST(req: Request) {
           const result = await importSiteKnowledge({
             projectId,
             sitemapUrl,
+            configuredBusinessType: normalizedBusinessTypeKey(project.profile?.businessTypeKey),
             store,
             onProgress(siteKnowledge) {
               emit({ type: "progress", siteKnowledge });
