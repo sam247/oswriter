@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DEFAULT_CONTROLS } from "@/lib/defaults";
 import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
+import { buildGenerationPrompt } from "@/lib/models/openai";
 import { normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
 import { heuristicValidation } from "@/lib/validation/heuristics";
-import type { ResearchPack } from "@/lib/types";
+import type { ProjectSiteProfileDocument, ResearchPack } from "@/lib/types";
 
 describe("article generation planning", () => {
   it("scales section count and token budget for 3000 word articles", () => {
@@ -128,6 +129,24 @@ Short section.`,
     assert.ok(withBreadthAdvisory.advisories?.includes("Topic breadth may be underrepresented."));
     assert.equal(withBreadthAdvisory.needsReviewReasons.includes("Topic breadth may be underrepresented."), false);
   });
+
+  it("recommends website-owned entities before generic retail examples during planning and prompting", () => {
+    const title = "What To Wear For A Seaside Weekend In Britain";
+    const siteProfile = ecommerceSiteProfile();
+    const plan = buildArticleGenerationPlan(DEFAULT_CONTROLS, null, siteProfile, "industry_explainer", title);
+    const prompt = buildGenerationPrompt({ title, controls: DEFAULT_CONTROLS, research: researchPack(), siteProfile, plan });
+
+    assert.deepEqual(plan.websiteEntityRecommendations?.brands, ["Joules", "White Stuff", "Seasalt", "Barbour"]);
+    assert.deepEqual(plan.websiteEntityRecommendations?.categories, ["Clothing", "Footwear", "Accessories"]);
+    assert.deepEqual(plan.websiteEntityRecommendations?.productTypes, ["Knitwear", "Handbags", "Boots", "Scarves"]);
+    assert.ok(plan.planningPriorities.some((value) => value.includes("prefer website-owned brands before external brands")));
+    assert.ok(plan.planningPriorities.some((value) => value.includes("only introduce external brands, retailers, or product examples")));
+    assert.ok(plan.knowledgeContext?.some((value) => value.includes("Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour")));
+    assert.match(prompt, /Website entity recommendations for this article:/);
+    assert.match(prompt, /Prefer website-owned entities before external brands, retailers, or generic examples when they are relevant to the title\./);
+    assert.match(prompt, /Recommended website categories for this article: Clothing, Footwear, Accessories/);
+    assert.match(prompt, /Preferred website CTA for this article: Shop Now/);
+  });
 });
 
 function broadMarkdown() {
@@ -163,5 +182,30 @@ function researchPack(): ResearchPack {
     requestIds: [],
     durationMs: 0,
     createdAt: new Date().toISOString()
+  };
+}
+
+function ecommerceSiteProfile(): ProjectSiteProfileDocument {
+  return {
+    projectId: "anna-davies",
+    domain: "annadavies.co.uk",
+    pageCount: 50,
+    services: [],
+    products: ["Clothing", "Footwear", "Accessories", "Knitwear", "Boots"],
+    audiences: ["Women", "Lifestyle Shoppers", "Gift Buyers"],
+    locations: [],
+    ctas: ["Shop Now"],
+    writingSignals: ["UK English"],
+    generatedAt: "2026-06-24T00:00:00.000Z",
+    updatedAt: "2026-06-24T00:00:00.000Z",
+    metadata: {
+      businessType: "ecommerce",
+      strategyBusinessType: "ecommerce",
+      ecommerce: {
+        brands: ["Joules", "White Stuff", "Seasalt", "Barbour", "Inis"],
+        categories: ["Clothing", "Footwear", "Accessories", "Gifts"],
+        productTypes: ["Knitwear", "Handbags", "Boots", "Scarves", "Dresses"]
+      }
+    }
   };
 }

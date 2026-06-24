@@ -128,6 +128,13 @@
 - Updated the Website Intelligence UI to show the strategy used for the current analysis, including `Auto Detect (DetectedType)` when automatic routing is active.
 - Made sitemap discovery more resilient by skipping rate-limited nested sitemap files (`429`) instead of failing the entire Website Intelligence import when the root sitemap is still accessible.
 
+### Website Entity Recommendations
+
+- Added a planning-stage website entity recommendation layer that ranks website-owned brands, categories, product types, services, audiences, and CTA against the article title before generation begins.
+- Injected those recommended entities into both planning context and generation prompts so article drafting now prefers website-owned examples before external brands, retailers, or generic examples.
+- Added an explicit generation rule that external entities should only be used when no relevant website-owned entity exists or the research specifically requires them.
+- Added regression coverage proving retail website entities are preferred during planning and prompting for title-specific ecommerce content.
+
 ## Deferred
 
 ### WordPress Publishing (Phase 2)

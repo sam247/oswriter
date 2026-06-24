@@ -384,7 +384,7 @@ export class QueueRunner {
       const siteProfile = await this.store.getProjectSiteProfile(job.projectId);
       const knowledgeBase = normalizeProjectKnowledgeBase(project.knowledgeBase);
       const projectIntelligence = siteProfile ?? knowledgeBase;
-      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile);
+      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile, job.title);
 
       if (!stageDone(job, "research")) {
         await this.throwIfEmergencyStopped(job.projectId);

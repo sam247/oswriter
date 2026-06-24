@@ -21,7 +21,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
     const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
-    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.siteProfile ?? input.knowledgeBase, input.contentProfile);
+    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.siteProfile ?? input.knowledgeBase, input.contentProfile, input.title);
     const response = await this.client.chat.completions.create({
       model,
       messages: promptToMessages(
@@ -138,7 +138,7 @@ function normaliseBaseUrl(value: string | undefined) {
     .replace(/\/v1$/i, "");
 }
 
-export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, siteProfile, contentProfile = "industry_explainer", plan = buildArticleGenerationPlan(controls, profileSnapshot, siteProfile ?? knowledgeBase, contentProfile) }: ArticleGenerationInput) {
+export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, siteProfile, contentProfile = "industry_explainer", plan = buildArticleGenerationPlan(controls, profileSnapshot, siteProfile ?? knowledgeBase, contentProfile, title) }: ArticleGenerationInput) {
   const contentDefinition = CONTENT_PROFILES[contentProfile];
   const projectContext = profileContextLines(profileSnapshot);
   const knowledgeContext = siteProfile ? siteProfileContextLines(siteProfile) : projectKnowledgeContextLines(knowledgeBase);
@@ -147,6 +147,9 @@ export function buildGenerationPrompt({ title, research, controls, profileSnapsh
     ? "Website intelligence (learned from the imported sitemap; use during planning, outline construction, and writing; do not force irrelevant mentions)"
     : "Knowledge Base (use during planning, outline construction, and writing; do not force irrelevant mentions)";
   const knowledgeContextBlock = knowledgeContext.length ? `\n${knowledgeContextLabel}:\n${knowledgeContext.map((line) => `- ${line}`).join("\n")}` : "";
+  const websiteEntityBlock = plan.websiteEntityRecommendations
+    ? `\nWebsite entity recommendations for this article:\n${plan.websiteEntityRecommendations.contextLines.map((line) => `- ${line}`).join("\n")}\n- Prefer website-owned entities before external brands, retailers, or generic examples when they are relevant to the title.\n- Use external entities only when no relevant website-owned entity exists or the research specifically requires them.`
+    : "";
   return `Write a practical Markdown article.
 
 Non-negotiable:
@@ -158,7 +161,7 @@ Non-negotiable:
 - Write a complete article. Do not stop mid-sentence.
 
 Title: ${title}
-${projectContextBlock}${knowledgeContextBlock}
+${projectContextBlock}${knowledgeContextBlock}${websiteEntityBlock}
 Content profile: ${contentDefinition.label}
 Purpose: ${contentDefinition.purpose}
 Required outline pattern: ${contentDefinition.outline.join(" -> ")}

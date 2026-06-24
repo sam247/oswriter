@@ -1,6 +1,6 @@
 import { clampTargetWords, planningPrioritiesForProfile } from "@/lib/project/profile";
 import { knowledgeBasePlanningPriorities, projectKnowledgeContextLines } from "@/lib/project/knowledge-base";
-import { siteProfileContextLines, siteProfilePlanningPriorities } from "@/lib/site-profile";
+import { siteProfileContextLines, siteProfileEntityRecommendations, siteProfilePlanningPriorities, type SiteEntityRecommendations } from "@/lib/site-profile";
 import type { ContentControls, ProjectKnowledgeBase, ProjectProfileSnapshot, ProjectSiteProfileDocument, ResearchPack } from "@/lib/types";
 import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
 
@@ -21,6 +21,7 @@ export interface ArticleGenerationPlan {
   maxOutputTokens: number;
   planningPriorities: string[];
   knowledgeContext?: string[];
+  websiteEntityRecommendations?: SiteEntityRecommendations;
 }
 
 export interface PlanningDiagnostics {
@@ -42,7 +43,13 @@ export interface PlanningDiagnostics {
   breadthStatus: BreadthStatus;
 }
 
-export function buildArticleGenerationPlan(controls: ContentControls, profileSnapshot?: ProjectProfileSnapshot | null, projectIntelligence?: ProjectSiteProfileDocument | ProjectKnowledgeBase | null, contentProfile?: ContentProfile): ArticleGenerationPlan {
+export function buildArticleGenerationPlan(
+  controls: ContentControls,
+  profileSnapshot?: ProjectProfileSnapshot | null,
+  projectIntelligence?: ProjectSiteProfileDocument | ProjectKnowledgeBase | null,
+  contentProfile?: ContentProfile,
+  title?: string
+): ArticleGenerationPlan {
   const targetWords = clampTargetWords(profileSnapshot?.targetWords ?? controls.lengthTargetWords);
   const density = sectionDensityForAudience(profileSnapshot?.audience);
   const contentDefinition = CONTENT_PROFILES[contentProfile ?? "industry_explainer"];
@@ -51,7 +58,10 @@ export function buildArticleGenerationPlan(controls: ContentControls, profileSna
   const h3SectionCount = plannedH3CountForDepth(h2SectionCount, expectedDepth);
   const siteProfile = isProjectSiteProfile(projectIntelligence) ? projectIntelligence : null;
   const knowledgeBase = siteProfile ? null : projectIntelligence as ProjectKnowledgeBase | null | undefined;
-  const knowledgeContext = siteProfile ? siteProfileContextLines(siteProfile) : projectKnowledgeContextLines(knowledgeBase);
+  const websiteEntityRecommendations = siteProfile && title ? siteProfileEntityRecommendations(siteProfile, title) : null;
+  const knowledgeContext = siteProfile
+    ? [...siteProfileContextLines(siteProfile), ...(websiteEntityRecommendations?.contextLines ?? [])]
+    : projectKnowledgeContextLines(knowledgeBase);
   return {
     targetWords,
     minimumWords: Math.round(targetWords * 0.8),
@@ -68,9 +78,11 @@ export function buildArticleGenerationPlan(controls: ContentControls, profileSna
         ...contentDefinition.writingInstructions
       ] : []),
       ...planningPrioritiesForProfile(profileSnapshot),
-      ...(siteProfile ? siteProfilePlanningPriorities(siteProfile) : knowledgeBasePlanningPriorities(knowledgeBase))
+      ...(siteProfile ? siteProfilePlanningPriorities(siteProfile) : knowledgeBasePlanningPriorities(knowledgeBase)),
+      ...(websiteEntityRecommendations?.priorityLines ?? [])
     ],
-    ...(knowledgeContext.length ? { knowledgeContext } : {})
+    ...(knowledgeContext.length ? { knowledgeContext } : {}),
+    ...(websiteEntityRecommendations ? { websiteEntityRecommendations } : {})
   };
 }
 

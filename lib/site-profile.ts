@@ -12,6 +12,16 @@ export interface ExtractSiteProfileInput {
 
 export type SiteProfileBusinessType = "service" | "ecommerce" | "mixed" | "unknown";
 
+export interface SiteEntityRecommendations {
+  brands: string[];
+  categories: string[];
+  productTypes: string[];
+  audiences: string[];
+  cta: string | null;
+  priorityLines: string[];
+  contextLines: string[];
+}
+
 type EntitySource = "url" | "title" | "h1" | "meta" | "summary";
 
 interface PhraseCandidate {
@@ -317,6 +327,45 @@ export function siteProfileEcommerceDebug(profile?: ProjectSiteProfileDocument |
   const ecommerce = metadataRecord(metadata.ecommerce);
   const debug = metadataRecord(ecommerce.debug);
   return Object.keys(debug).length ? debug : null;
+}
+
+export function siteProfileEntityRecommendations(profile: ProjectSiteProfileDocument | null | undefined, title: string): SiteEntityRecommendations | null {
+  if (!profile) return null;
+  const businessType = siteProfileBusinessType(profile);
+  const ecommerce = siteProfileEcommerceFacets(profile);
+  const titleContext = normalizeRecommendationText(title);
+  const brands = rankedEntitySubset(ecommerce.brands, titleContext, 4, "brand");
+  const categories = rankedEntitySubset(ecommerce.categories, titleContext, 3, "category");
+  const productTypes = rankedEntitySubset(ecommerce.productTypes, titleContext, 4, "product_type");
+  const services = rankedEntitySubset(profile.services, titleContext, 4, "service");
+  const products = rankedEntitySubset(profile.products, titleContext, 4, "product_type");
+  const audiences = rankedEntitySubset(profile.audiences, titleContext, 3, "audience");
+  const chosenCategories = businessType === "service" || businessType === "unknown" ? [] : categories;
+  const chosenProductTypes = businessType === "service" ? products : productTypes;
+  const chosenBrands = businessType === "service" ? [] : brands;
+  const chosenServices = businessType === "ecommerce" ? [] : services;
+  const cta = profile.ctas[0] ?? null;
+  const priorityLines = [
+    chosenBrands.length ? `prefer website-owned brands before external brands when relevant: ${chosenBrands.join(", ")}` : "",
+    chosenCategories.length ? `prefer website categories before generic retail examples: ${chosenCategories.join(", ")}` : "",
+    chosenProductTypes.length ? `prefer website product types when giving examples or recommendations: ${chosenProductTypes.join(", ")}` : "",
+    chosenServices.length ? `prefer the website's own services when giving examples or recommendations: ${chosenServices.join(", ")}` : "",
+    audiences.length ? `prefer website audiences when describing readers, shoppers, or use cases: ${audiences.join(", ")}` : "",
+    cta ? `use the website CTA in the conclusion when appropriate: ${cta}` : "",
+    (chosenBrands.length || chosenCategories.length || chosenProductTypes.length || chosenServices.length)
+      ? "only introduce external brands, retailers, or product examples when no relevant website-owned entity exists or the research specifically requires them"
+      : ""
+  ].filter(Boolean);
+  const contextLines = [
+    chosenBrands.length ? `Recommended website brands for this article: ${chosenBrands.join(", ")}` : "",
+    chosenCategories.length ? `Recommended website categories for this article: ${chosenCategories.join(", ")}` : "",
+    chosenProductTypes.length ? `Recommended website product types for this article: ${chosenProductTypes.join(", ")}` : "",
+    chosenServices.length ? `Recommended website services for this article: ${chosenServices.join(", ")}` : "",
+    audiences.length ? `Recommended website audiences for this article: ${audiences.join(", ")}` : "",
+    cta ? `Preferred website CTA for this article: ${cta}` : ""
+  ].filter(Boolean);
+  if (!priorityLines.length && !contextLines.length) return null;
+  return { brands: chosenBrands, categories: chosenCategories, productTypes: chosenProductTypes, audiences, cta, priorityLines, contextLines };
 }
 
 function pageText(page: SiteKnowledgePageDocument) {
@@ -885,6 +934,57 @@ function ecommercePageFocus(value: string) {
 
 function wordCount(value: string) {
   return value.split(/\s+/).filter(Boolean).length;
+}
+
+function rankedEntitySubset(values: string[], titleContext: string, limit: number, type: "brand" | "category" | "product_type" | "audience" | "service") {
+  return values
+    .map((value, index) => ({ value, score: entityRecommendationScore(value, index, titleContext, type) }))
+    .sort((left, right) => right.score - left.score)
+    .map((item) => item.value)
+    .slice(0, limit);
+}
+
+function entityRecommendationScore(value: string, index: number, titleContext: string, type: "brand" | "category" | "product_type" | "audience" | "service") {
+  const normalized = normalizeRecommendationText(value);
+  const tokens = normalized.split(" ").filter((token) => token.length > 2);
+  const overlap = tokens.reduce((total, token) => total + (titleContext.includes(token) ? 1 : 0), 0);
+  const base = Math.max(0, 40 - index * 4);
+  const typeBonus = type === "brand" ? 18 : type === "category" ? 16 : type === "product_type" ? 14 : type === "service" ? 14 : 8;
+  const semanticBonus = recommendationSemanticBonus(value, titleContext, type);
+  return base + typeBonus + overlap * 12 + semanticBonus;
+}
+
+function recommendationSemanticBonus(value: string, titleContext: string, type: "brand" | "category" | "product_type" | "audience" | "service") {
+  const normalized = normalizeRecommendationText(value);
+  if (!titleContext) return 0;
+  if (type === "brand") {
+    if (/\b(?:wear|style|outfit|gift|weekend|holiday|seaside|shop|shopping|fashion)\b/.test(titleContext)) return 10;
+    return 0;
+  }
+  if (type === "category") {
+    if (normalized.includes("clothing") && /\b(?:wear|style|outfit|weekend|fashion|seaside|britain|british|holiday)\b/.test(titleContext)) return 14;
+    if (normalized.includes("footwear") && /\b(?:walk|walking|weekend|travel|seaside|holiday|boots|shoes|sandals|trainers)\b/.test(titleContext)) return 14;
+    if (normalized.includes("accessories") && /\b(?:accessories|bag|handbag|scarf|layering|style|weekend|gift)\b/.test(titleContext)) return 14;
+    if (normalized.includes("gifts") && /\b(?:gift|gifts|present|ideas)\b/.test(titleContext)) return 16;
+    if (normalized.includes("homeware") && /\b(?:home|interior|house|living)\b/.test(titleContext)) return 16;
+    if (normalized.includes("beauty") && /\b(?:beauty|skincare|fragrance)\b/.test(titleContext)) return 16;
+    if (normalized.includes("fragrance") && /\b(?:fragrance|perfume|scent)\b/.test(titleContext)) return 16;
+  }
+  if (type === "product_type") {
+    return normalized.split(" ").reduce((score, token) => score + (titleContext.includes(token) ? 10 : 0), 0);
+  }
+  if (type === "audience") {
+    if (normalized.includes("gift buyers") && /\b(?:gift|present)\b/.test(titleContext)) return 16;
+    if ((normalized.includes("women") || normalized.includes("men")) && /\b(?:women|men|style|outfit|wear|fashion)\b/.test(titleContext)) return 10;
+  }
+  if (type === "service") {
+    return normalized.split(" ").reduce((score, token) => score + (titleContext.includes(token) ? 10 : 0), 0);
+  }
+  return 0;
+}
+
+function normalizeRecommendationText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function titleCase(value: string) {
