@@ -12,6 +12,7 @@ interface SeoDecisionPanelProps {
   research?: ResearchPack | null;
   profile?: ProjectProfile | null;
   onApplyMarkdown: (markdown: string) => void;
+  onNotify?: (message: string) => void;
 }
 
 interface PreviewState {
@@ -26,8 +27,9 @@ const SECTIONS: Array<{ key: SeoRecommendationSection; label: string }> = [
   { key: "project", label: "Project" }
 ];
 
-export function SeoDecisionPanel({ article, markdown, research, profile, onApplyMarkdown }: SeoDecisionPanelProps) {
+export function SeoDecisionPanel({ article, markdown, research, profile, onApplyMarkdown, onNotify }: SeoDecisionPanelProps) {
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const decision = useMemo(
     () => buildSeoDecisionEngine({ article, markdown, research, profile }),
     [article, markdown, research, profile]
@@ -41,7 +43,26 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
   function applyPreview() {
     if (!preview) return;
     onApplyMarkdown(applySeoRecommendations(markdown, preview.recommendations));
+    if (preview.recommendations.some((item) => item.id === "insert-statistics")) onNotify?.("Statistic added");
+    if (preview.recommendations.some((item) => item.id === "insert-findings")) onNotify?.("Research finding added");
+    if (preview.recommendations.some((item) => item.id === "add-example")) onNotify?.("Example added");
+    if (preview.recommendations.some((item) => item.id === "cite-sources")) onNotify?.("Citations inserted");
+    if (preview.recommendations.some((item) => item.id === "insert-citation-list")) onNotify?.("References added");
     setPreview(null);
+  }
+
+  async function applyRecommendation(recommendation: SeoRecommendation) {
+    if (runningActionId) return;
+    if (!isDirectInsertionAction(recommendation.id)) {
+      openPreview([recommendation], recommendation.title, recommendation.actionLabel);
+      return;
+    }
+
+    setRunningActionId(recommendation.id);
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    onApplyMarkdown(recommendation.apply(markdown));
+    onNotify?.(successLabelForRecommendation(recommendation.id));
+    setRunningActionId(null);
   }
 
   return (
@@ -109,10 +130,11 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
                     </button>
                     <button
                       type="button"
-                      onClick={() => openPreview([recommendation], recommendation.title, recommendation.actionLabel)}
+                      onClick={() => void applyRecommendation(recommendation)}
+                      disabled={runningActionId === recommendation.id}
                       className="rounded-md bg-ink px-2 py-1 text-[11px] font-medium text-white"
                     >
-                      {recommendation.actionLabel}
+                      {runningActionId === recommendation.id ? loadingLabelForRecommendation(recommendation.id) : recommendation.actionLabel}
                     </button>
                   </div>
                 </article>
@@ -141,6 +163,26 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
       )}
     </div>
   );
+}
+
+function isDirectInsertionAction(id: string) {
+  return id === "insert-statistics" || id === "insert-findings" || id === "add-example" || id === "cite-sources" || id === "insert-citation-list";
+}
+
+function loadingLabelForRecommendation(id: string) {
+  if (id === "insert-citation-list") return "Building references...";
+  if (id === "cite-sources") return "Adding citations...";
+  if (id === "add-example") return "Adding example...";
+  if (id === "insert-findings") return "Adding research finding...";
+  return "Adding statistic...";
+}
+
+function successLabelForRecommendation(id: string) {
+  if (id === "insert-citation-list") return "References added";
+  if (id === "cite-sources") return "Citations inserted";
+  if (id === "add-example") return "Example added";
+  if (id === "insert-findings") return "Research finding added";
+  return "Statistic added";
 }
 
 function PreviewBlock({ label, text, diff = false }: { label: string; text: string; diff?: boolean }) {

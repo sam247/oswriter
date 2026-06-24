@@ -1864,6 +1864,7 @@ function Workbench() {
             setSelectedStage={setSelectedStage}
             warningsRef={warningsRef}
             highlightWarnings={highlightWarnings}
+            onNotify={setMessage}
           />
         </aside>}
       </div>
@@ -4394,7 +4395,8 @@ function Inspector({
   selectedStage,
   setSelectedStage,
   warningsRef,
-  highlightWarnings
+  highlightWarnings,
+  onNotify
 }: {
   tab: InspectorTab;
   setTab: (tab: InspectorTab) => void;
@@ -4414,6 +4416,7 @@ function Inspector({
   setSelectedStage: (stage: string) => void;
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
+  onNotify: (message: string) => void;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
@@ -4429,6 +4432,7 @@ function Inspector({
           research={details.research}
           profile={state ? normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords) : null}
           onApplyMarkdown={onApplyMarkdown}
+          onNotify={onNotify}
         />
       ) : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}

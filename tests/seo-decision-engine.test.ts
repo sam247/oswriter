@@ -31,6 +31,132 @@ describe("SEO decision engine", () => {
     assert.ok(result.recommendations.some((item) => item.id === "align-audience"));
     assert.ok(result.recommendations.every((item) => item.currentText && item.proposedText && item.difference));
   });
+
+  it("inserts the most relevant unused statistic into paragraph flow", () => {
+    const article = {
+      ...articleFixture(),
+      markdown: "# Planning Better Projects\n\nA short guide to making sound decisions.\n\n## Risk Reviews\n\nProjects need clear evidence before teams commit budget.\n\n## Ownership\n\nDecision owners keep delivery moving."
+    };
+    const research = {
+      ...researchFixture(),
+      usefulFacts: [
+        "Teams with named decision owners completed handovers 19% faster.",
+        "Projects using early risk reviews reduced delays by 28%.",
+        "Clear ownership improves delivery decisions."
+      ]
+    };
+    const result = buildSeoDecisionEngine({ article, markdown: article.markdown, research });
+    const recommendation = result.recommendations.find((item) => item.id === "insert-statistics");
+
+    assert.ok(recommendation);
+    const updated = recommendation.apply(article.markdown);
+
+    assert.match(updated, /Projects need clear evidence before teams commit budget\. For context, projects using early risk reviews reduced delays by 28%\./);
+    assert.doesNotMatch(updated, /^##\s+Key Statistics\b/im);
+    assert.doesNotMatch(updated, /^-\s+Projects using early risk reviews reduced delays by 28%\./m);
+    assert.ok(!buildSeoDecisionEngine({ article, markdown: updated, research }).recommendations.some((item) => item.id === "insert-statistics" && item.proposedText.includes("28%")));
+  });
+
+  it("inserts one unused research finding inline with attribution when available", () => {
+    const article = {
+      ...articleFixture(),
+      markdown: "# Planning Better Projects\n\nA short guide to making sound decisions.\n\n## Ownership\n\nDecision owners keep delivery moving when responsibilities are clear.\n\n## Budget Control\n\nTeams need practical checkpoints before committing spend."
+    };
+    const research: ResearchPack = {
+      ...researchFixture(),
+      sources: [
+        { id: "source-2", title: "Delivery Institute field guide", url: "https://example.com/delivery", domain: "example.com", highlights: [], authorityScore: 82, relevanceScore: 88, accepted: true }
+      ],
+      usefulFacts: [
+        "Named decision owners make escalation paths easier to follow.",
+        "Budget checkpoints help teams pause weak assumptions before costs grow."
+      ],
+      usefulFactSources: [
+        { fact: "Named decision owners make escalation paths easier to follow.", sourceId: "source-2", sourceUrl: "https://example.com/delivery", sourceTitle: "Delivery Institute field guide" }
+      ]
+    };
+    const result = buildSeoDecisionEngine({ article, markdown: article.markdown, research });
+    const recommendation = result.recommendations.find((item) => item.id === "insert-findings");
+
+    assert.ok(recommendation);
+    const updated = recommendation.apply(article.markdown);
+
+    assert.match(updated, /Decision owners keep delivery moving when responsibilities are clear\. Delivery Institute field guide adds that named decision owners make escalation paths easier to follow\./);
+    assert.doesNotMatch(updated, /^##\s+Research Findings\b/im);
+    assert.doesNotMatch(updated, /^-\s+Named decision owners make escalation paths easier to follow\./m);
+    assert.ok(!buildSeoDecisionEngine({ article, markdown: updated, research }).recommendations.some((item) => item.id === "insert-findings" && item.proposedText.includes("escalation paths")));
+  });
+
+  it("inserts a practical example beneath the weakest explanatory section", () => {
+    const article = {
+      ...articleFixture(),
+      title: "Local SEO Strategy",
+      markdown: "# Local SEO Strategy\n\nA guide to improving local search performance.\n\n## Keyword Targeting\n\nChoose terms that match the service area.\n\n## Technical Checks\n\nThe site should load quickly, use clean internal links, and avoid confusing duplicate pages. Teams should also check whether important pages can be crawled and indexed before they spend time rewriting content."
+    };
+    const profile = { ...createDefaultProjectProfile(), industryKey: "seo", industryLabel: "SEO", regionKey: "united_states", regionLabel: "United States" };
+    const initial = buildSeoDecisionEngine({ article, markdown: article.markdown, profile });
+    const recommendation = initial.recommendations.find((item) => item.id === "add-example");
+
+    assert.ok(recommendation);
+    const updated = recommendation.apply(article.markdown);
+    const exampleMatch = updated.match(/Example: A local business targeting[\s\S]+?generic ranking checklist\./);
+
+    assert.ok(exampleMatch);
+    assert.ok(countWords(exampleMatch[0]) >= 100);
+    assert.ok(countWords(exampleMatch[0]) <= 200);
+    assert.match(updated, /## Keyword Targeting\n\nChoose terms that match the service area\.\n\nExample: A local business targeting United States searches/);
+    assert.doesNotMatch(updated, /^-\s+Example:/m);
+    assert.ok(buildSeoDecisionEngine({ article, markdown: updated, profile }).score > initial.score);
+  });
+
+  it("inserts inline citations into evidence-heavy sections without source dumps", () => {
+    const article = {
+      ...articleFixture(),
+      markdown: "# Procurement Risk\n\nBuyers need evidence before they commit to a supplier.\n\n## Market Evidence\n\nSupplier capacity should be checked before tender scoring because weak coverage increases delivery risk.\n\n## Compliance\n\nPublic buyers must keep requirements traceable so evaluation decisions can be defended later.\n\n## Team Notes\n\nAgree owners before the next meeting.",
+      sources: [
+        { id: "source-gartner", title: "Gartner procurement risk report", url: "https://example.com/gartner", domain: "gartner.com", highlights: ["supplier capacity delivery risk"], authorityScore: 88, relevanceScore: 90, accepted: true },
+        { id: "source-gov", title: "UK Government procurement guidance", url: "https://gov.uk/procurement", domain: "gov.uk", highlights: ["public buyers traceable requirements evaluation"], authorityScore: 95, relevanceScore: 92, accepted: true },
+        { id: "source-oecd", title: "OECD public procurement evidence", url: "https://oecd.org/procurement", domain: "oecd.org", highlights: ["evidence procurement decisions"], authorityScore: 91, relevanceScore: 84, accepted: true }
+      ]
+    };
+    const initial = buildSeoDecisionEngine({ article, markdown: article.markdown });
+    const recommendation = initial.recommendations.find((item) => item.id === "cite-sources");
+
+    assert.ok(recommendation);
+    const updated = recommendation.apply(article.markdown);
+    const citations = updated.match(/\(Source: [^)]+\)/g) ?? [];
+
+    assert.ok(citations.length >= 2);
+    assert.ok(citations.length <= 3);
+    assert.equal(new Set(citations).size, citations.length);
+    assert.match(updated, /Supplier capacity should be checked before tender scoring because weak coverage increases delivery risk\. \(Source: Gartner procurement risk\)/);
+    assert.match(updated, /Public buyers must keep requirements traceable so evaluation decisions can be defended later\. \(Source: UK Government procurement\)/);
+    assert.doesNotMatch(updated, /^## Sources\b/im);
+    assert.ok(!buildSeoDecisionEngine({ article, markdown: updated }).recommendations.some((item) => item.id === "cite-sources"));
+  });
+
+  it("appends a deduplicated references section from stored article sources", () => {
+    const article = {
+      ...articleFixture(),
+      markdown: "# Procurement Risk\n\nBuyers need evidence before they commit to a supplier.",
+      sources: [
+        { id: "source-gov", title: "UK Government Guidance", url: "https://www.gov.uk/example", domain: "gov.uk", highlights: [], authorityScore: 95, relevanceScore: 92, accepted: true },
+        { id: "source-gartner", title: "Gartner Research", url: "https://gartner.com/example", domain: "gartner.com", highlights: [], authorityScore: 88, relevanceScore: 90, accepted: true },
+        { id: "source-gov-duplicate", title: "Duplicate Government Source", url: "https://www.gov.uk/example", domain: "gov.uk", highlights: [], authorityScore: 80, relevanceScore: 80, accepted: true },
+        { id: "source-oecd", title: "OECD Report", url: "https://oecd.org/example?ref=stored", domain: "oecd.org", highlights: [], authorityScore: 91, relevanceScore: 84, accepted: true }
+      ]
+    };
+    const result = buildSeoDecisionEngine({ article, markdown: article.markdown });
+    const recommendation = result.recommendations.find((item) => item.id === "insert-citation-list");
+
+    assert.ok(recommendation);
+    const updated = recommendation.apply(article.markdown);
+
+    assert.match(updated, /\n\n## References\n\n- UK Government Guidance\n  https:\/\/www\.gov\.uk\/example\n\n- Gartner Research\n  https:\/\/gartner\.com\/example\n\n- OECD Report\n  https:\/\/oecd\.org\/example\?ref=stored\n$/);
+    assert.equal((updated.match(/https:\/\/www\.gov\.uk\/example/g) ?? []).length, 1);
+    assert.doesNotMatch(updated, /Duplicate Government Source/);
+    assert.ok(!buildSeoDecisionEngine({ article, markdown: updated }).recommendations.some((item) => item.id === "insert-citation-list"));
+  });
 });
 
 function articleFixture(): ArticleDocument {
@@ -72,4 +198,8 @@ function researchFixture(): ResearchPack {
     durationMs: 100,
     createdAt: "2026-06-18T00:00:00.000Z"
   };
+}
+
+function countWords(value: string) {
+  return value.trim().split(/\s+/).filter(Boolean).length;
 }
