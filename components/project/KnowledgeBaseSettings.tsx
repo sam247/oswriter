@@ -2,6 +2,7 @@
 
 import { ChevronDown, ExternalLink, Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { siteProfileBusinessType, siteProfileEcommerceFacets } from "@/lib/site-profile";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
@@ -178,7 +179,7 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
         </summary>
 
         <div className="border-t border-line px-4 pb-4 pt-3">
-          <p className="text-[11.5px] leading-relaxed text-ink-muted">Import a sitemap so QueueWrite can learn services, categories, audiences, locations, CTAs, and writing signals directly from the website.</p>
+          <p className="text-[11.5px] leading-relaxed text-ink-muted">Import a sitemap so QueueWrite can learn services, brands, categories, audiences, locations, CTAs, and writing signals directly from the website.</p>
 
           <div className="mt-4 rounded-md border border-line bg-surface-2 p-3">
             <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
@@ -401,20 +402,31 @@ function SiteKnowledgePagesModal({
 }
 
 function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSiteProfileDocument; importedAt?: string | null }) {
+  const businessType = siteProfileBusinessType(profile);
+  const ecommerce = siteProfileEcommerceFacets(profile);
+  const showEcommerceLists = businessType === "ecommerce" || businessType === "mixed" || ecommerce.brands.length > 0 || ecommerce.categories.length > 0 || ecommerce.productTypes.length > 0;
+  const showServiceLists = businessType !== "ecommerce" || profile.services.length > 0;
+  const showLegacyProductList = !showEcommerceLists || businessType === "service" || businessType === "unknown";
+  const showLocations = businessType !== "ecommerce" || profile.locations.length > 0;
+
   return (
     <div className="mt-3 rounded-md border border-line bg-background px-3 py-3">
       <div className="text-[12.5px] font-semibold text-ink">QueueWrite analysed {profile.pageCount} priority pages and learned the following about your business.</div>
       <div className="mt-3 grid gap-3 text-[11.5px] sm:grid-cols-2">
         <ProfileLine label="Website" value={profile.domain || "-"} />
+        <ProfileLine label="Business Type" value={formatBusinessType(businessType)} />
         <ProfileLine label="Knowledge Pages Analysed" value={profile.pageCount || "-"} />
         <ProfileLine label="Last Synced" value={formatDate(importedAt ?? profile.generatedAt)} />
         <ProfileLine label="Suggested CTA" value={profile.ctas[0] ?? "-"} />
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <ProfileList title="Learned Services" values={profile.services} limit={10} />
-        <ProfileList title="Learned Products / Categories" values={profile.products} limit={10} />
+        {showServiceLists ? <ProfileList title="Learned Services" values={profile.services} limit={10} /> : null}
+        {showLegacyProductList ? <ProfileList title="Learned Products / Categories" values={profile.products} limit={10} /> : null}
+        {showEcommerceLists ? <ProfileList title="Primary Brands" values={ecommerce.brands} limit={8} /> : null}
+        {showEcommerceLists ? <ProfileList title="Primary Categories" values={ecommerce.categories} limit={8} /> : null}
+        {showEcommerceLists && ecommerce.productTypes.length ? <ProfileList title="Product Types" values={ecommerce.productTypes} limit={8} /> : null}
         <ProfileList title="Learned Audiences" values={profile.audiences} limit={8} />
-        <ProfileList title="Learned Locations" values={profile.locations} limit={15} />
+        {showLocations ? <ProfileList title="Learned Locations" values={profile.locations} limit={15} /> : null}
         <ProfileList title="Writing Preferences" values={profile.writingSignals} />
       </div>
     </div>
@@ -545,4 +557,11 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Not Configured";
   return date.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function formatBusinessType(value: ReturnType<typeof siteProfileBusinessType>) {
+  if (value === "unknown") return "General";
+  if (value === "ecommerce") return "Ecommerce";
+  if (value === "mixed") return "Mixed";
+  return "Service";
 }

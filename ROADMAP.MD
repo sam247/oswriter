@@ -57,6 +57,20 @@
   - page listing
 - Added Neon schema support and tests for the Site Knowledge foundation without introducing embeddings, clustering, internal linking, or recommendation logic.
 
+### Website Intelligence Business-Type Branching
+
+- Added business type detection to the Website Intelligence profile extractor so imported sites can be classified as `service`, `ecommerce`, or `mixed`.
+- Kept the existing service-business path intact for service, location, audience, CTA, and writing-signal extraction.
+- Added an ecommerce extraction path that learns:
+  - primary brands
+  - primary categories
+  - product types
+  - ecommerce audience signals
+  - retail CTAs
+- Stored ecommerce facets and business type in site profile metadata so the architectural change stays inside the profile layer without requiring a schema migration.
+- Updated the Project Settings Website Intelligence card to show business type plus ecommerce-specific fields when the site is classified as retail.
+- Added regression coverage to preserve Mainline-style service extraction while validating Anna Davies-style ecommerce extraction.
+
 ## Deferred
 
 ### WordPress Publishing (Phase 2)

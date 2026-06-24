@@ -8,6 +8,8 @@ export interface ExtractSiteProfileInput {
   pages: SiteKnowledgePageDocument[];
 }
 
+export type SiteProfileBusinessType = "service" | "ecommerce" | "mixed" | "unknown";
+
 type EntitySource = "url" | "title" | "h1" | "meta" | "summary";
 
 interface PhraseCandidate {
@@ -70,7 +72,12 @@ const CTA_TERMS = [
   "contact us",
   "call us",
   "enquire today",
-  "get in touch"
+  "get in touch",
+  "shop now",
+  "browse collection",
+  "browse collections",
+  "view range",
+  "view collection"
 ];
 
 const CTA_CONTAMINATION = /\b(?:get|request|quote|call|contact|enquire|enquiry|fast\s+response|speak\s+to|book|today|now)\b/i;
@@ -85,16 +92,61 @@ const UK_PLACE_ALLOWLIST = new Set([
 ]);
 const LOCATION_STOPWORDS = new Set(["services", "service", "contractors", "contractor", "company", "local", "trusted", "groundworks", "commercial", "page", "home"]);
 const GENERIC_PRODUCT_TERMS = new Set(["home", "about", "contact", "blog", "news", "services", "areas", "projects", "privacy", "terms"]);
+const BRAND_STOPWORDS = new Set([
+  "home", "about", "contact", "blog", "news", "sale", "shop", "brands", "brand", "collections", "collection",
+  "gifts", "gift", "women", "men", "kids", "new in", "new arrivals", "range", "view range", "browse collection"
+]);
+const SERVICE_URL_HINTS = [/\/services?(?:\/|$)/i, /\/solutions?(?:\/|$)/i, /\/locations?(?:\/|$)/i, /\/areas?(?:\/|$)/i];
+const ECOMMERCE_URL_HINTS = [/\/products?(?:\/|$)/i, /\/collections?(?:\/|$)/i, /\/brands?(?:\/|$)/i, /\/shop(?:\/|$)/i, /\/category(?:\/|$)/i];
+const SERVICE_TEXT_HINT = /\b(?:services?|contractors?|specialists?|quote|consultation|areas we cover|groundworks|excavation|piling|drainage|underpinning|foundations?)\b/i;
+const ECOMMERCE_TEXT_HINT = /\b(?:shop|product|products|collection|collections|brand|brands|gift|gifts|footwear|clothing|fragrance|accessories|add to (?:bag|basket|cart)|wishlist)\b/i;
+const ECOMMERCE_CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bfragrance\b|\bperfume\b|\bcologne\b|\bdiffusers?\b|\bcandles?\b/i, label: "Fragrance" },
+  { pattern: /\bclothing\b|\bapparel\b|\bdresses?\b|\bknitwear\b|\bcoats?\b|\bjackets?\b|\bshirts?\b|\btops?\b|\btrousers?\b/i, label: "Clothing" },
+  { pattern: /\bfootwear\b|\bboots?\b|\bshoes?\b|\btrainers?\b|\bsandals?\b|\bslippers?\b/i, label: "Footwear" },
+  { pattern: /\bgifts?\b|\bgiftware\b|\bgift\s+ideas?\b|\bgift\s+guide\b/i, label: "Gifts" },
+  { pattern: /\baccessories\b|\bbags?\b|\bhandbags?\b|\bwallets?\b|\bscarves?\b|\bjewellery\b|\bjewelry\b|\bhats?\b/i, label: "Accessories" },
+  { pattern: /\bbeauty\b|\bskincare\b|\bsoap\b|\blotion\b|\bcream\b/i, label: "Beauty" },
+  { pattern: /\bhomeware\b|\bhome\s+fragrance\b|\bhome\s+accessories\b/i, label: "Homeware" },
+  { pattern: /\btoys?\b|\bsoft\s+toys?\b|\bplush\b/i, label: "Toys" }
+];
+const ECOMMERCE_PRODUCT_TYPE_PATTERNS: Array<{ pattern: RegExp; label: string; broader?: string }> = [
+  { pattern: /\bperfumes?\b|\bcologne\b/i, label: "Perfume", broader: "Fragrance" },
+  { pattern: /\bcandles?\b/i, label: "Candles", broader: "Fragrance" },
+  { pattern: /\bdiffusers?\b/i, label: "Diffusers", broader: "Fragrance" },
+  { pattern: /\bdresses?\b/i, label: "Dresses", broader: "Clothing" },
+  { pattern: /\bjackets?\b|\bcoats?\b/i, label: "Jackets", broader: "Clothing" },
+  { pattern: /\bknitwear\b/i, label: "Knitwear", broader: "Clothing" },
+  { pattern: /\bboots?\b/i, label: "Boots", broader: "Footwear" },
+  { pattern: /\btrainers?\b/i, label: "Trainers", broader: "Footwear" },
+  { pattern: /\bsandals?\b/i, label: "Sandals", broader: "Footwear" },
+  { pattern: /\bhandbags?\b|\bbags?\b/i, label: "Handbags", broader: "Accessories" },
+  { pattern: /\bwallets?\b/i, label: "Wallets", broader: "Accessories" },
+  { pattern: /\bscarves?\b/i, label: "Scarves", broader: "Accessories" },
+  { pattern: /\bplush\b|\bsoft\s+toys?\b/i, label: "Soft Toys", broader: "Toys" }
+];
+const ALL_AUDIENCE_TERMS: Array<{ pattern: RegExp; label: string }> = [
+  ...AUDIENCE_TERMS,
+  { pattern: /\bgift\s+buyers?\b|\bgift\s+shoppers?\b|\bshopping\s+for\s+gifts?\b/i, label: "Gift Buyers" },
+  { pattern: /\bwomen'?s\b|\bfor women\b|\bwomenswear\b/i, label: "Women" },
+  { pattern: /\bmen'?s\b|\bfor men\b|\bmenswear\b/i, label: "Men" },
+  { pattern: /\blifestyle\b|\blifestyle\s+store\b|\blifestyle\s+brand\b/i, label: "Lifestyle Shoppers" }
+];
 
 export function extractProjectSiteProfile({ projectId, organisationId, sitemapUrl, pages }: ExtractSiteProfileInput): ProjectSiteProfileDocument {
   const generatedAt = nowIso();
   const domain = domainFromUrl(sitemapUrl) || domainFromUrl(pages[0]?.url ?? "");
+  const detection = detectBusinessType(pages);
   const services = new Map<string, EntityRecord>();
   const products = new Map<string, EntityRecord>();
+  const ecommerceBrands = new Map<string, EntityRecord>();
+  const ecommerceCategories = new Map<string, EntityRecord>();
+  const ecommerceProductTypes = new Map<string, EntityRecord>();
   const audiences = new Map<string, EntityRecord>();
   const locations = new Map<string, EntityRecord>();
   const ctas = new Map<string, EntityRecord>();
   const writingSignals = new Set<string>();
+  const runEcommerceExtraction = detection.businessType === "ecommerce" || detection.businessType === "mixed";
 
   for (const page of pages) {
     const text = pageText(page);
@@ -105,6 +157,17 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
 
       const category = normalizeProductOrCategory(candidate.value);
       if (category) addEntity(products, category, candidate);
+
+      if (runEcommerceExtraction) {
+        const brand = normalizeEcommerceBrand(candidate, page);
+        if (brand) addEntity(ecommerceBrands, brand, candidate);
+
+        const retailCategory = normalizeEcommerceCategory(candidate.value);
+        if (retailCategory) addEntity(ecommerceCategories, retailCategory, candidate);
+
+        const productType = normalizeEcommerceProductType(candidate.value);
+        if (productType) addEntity(ecommerceProductTypes, productType, candidate);
+      }
     }
     for (const location of candidateLocations(page)) addEntity(locations, location, { value: location, source: "title", pageKey });
     for (const audience of matchedAudiences(text)) addEntity(audiences, audience, { value: audience, source: "summary", pageKey });
@@ -115,11 +178,21 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
     if (/\b(?:groundworks|earthworks|excavation|piling|underpinning|foundation|drainage|utilities|demolition|basement)\b/i.test(text)) writingSignals.add("Industry terminology detected");
   }
 
-  if (!ctas.size) addEntity(ctas, "Get A Quote", { value: "Get A Quote", source: "summary", pageKey: domain });
+  if (!ctas.size) addEntity(ctas, detection.businessType === "ecommerce" ? "Shop Now" : "Get A Quote", { value: detection.businessType === "ecommerce" ? "Shop Now" : "Get A Quote", source: "summary", pageKey: domain });
   if (!writingSignals.size && domain.endsWith(".uk")) writingSignals.add("UK English");
 
   const serviceLabels = rankedLabels(services, 10, 8);
-  const productLabels = rankedCategories(products, serviceLabels, 10, 8);
+  const legacyProductLabels = rankedCategories(products, serviceLabels, 10, 8);
+  const brandLabels = runEcommerceExtraction ? rankedLabels(ecommerceBrands, 8, 8) : [];
+  const ecommerceCategoryLabels = runEcommerceExtraction ? rankedCategories(ecommerceCategories, serviceLabels, 8, 6) : [];
+  const ecommerceProductTypeLabels = runEcommerceExtraction ? rankedRetailProductTypes(ecommerceProductTypes, ecommerceCategoryLabels, 8, 6) : [];
+  const productLabels = uniqueLabels(
+    detection.businessType === "service"
+      ? legacyProductLabels
+      : detection.businessType === "mixed"
+        ? [...legacyProductLabels, ...ecommerceCategoryLabels, ...brandLabels, ...ecommerceProductTypeLabels]
+        : [...ecommerceCategoryLabels, ...brandLabels, ...ecommerceProductTypeLabels]
+  ).slice(0, 10);
   const audienceLabels = rankedLabels(audiences, 8, 2);
   const locationLabels = rankedLocations(locations, 15, 4, new Set([...serviceLabels, ...productLabels]));
 
@@ -137,12 +210,25 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
     generatedAt,
     updatedAt: generatedAt,
     metadata: {
-      extraction: "heuristic_v2",
+      extraction: "heuristic_v3",
+      businessType: detection.businessType,
+      businessTypeSignals: {
+        service: detection.serviceSignals,
+        ecommerce: detection.ecommerceSignals
+      },
+      ecommerce: {
+        brands: brandLabels,
+        categories: ecommerceCategoryLabels,
+        productTypes: ecommerceProductTypeLabels
+      },
       confidence: {
         services: rankedConfidence(services),
         products: rankedConfidence(products),
         audiences: rankedConfidence(audiences),
-        locations: rankedConfidence(locations)
+        locations: rankedConfidence(locations),
+        brands: rankedConfidence(ecommerceBrands),
+        categories: rankedConfidence(ecommerceCategories),
+        productTypes: rankedConfidence(ecommerceProductTypes)
       }
     }
   };
@@ -150,10 +236,16 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
 
 export function siteProfileContextLines(profile?: ProjectSiteProfileDocument | null) {
   if (!profile) return [];
+  const businessType = siteProfileBusinessType(profile);
+  const ecommerce = siteProfileEcommerceFacets(profile);
   return [
     ["Website", profile.domain],
+    ["Business Type", businessType === "unknown" ? "" : titleCase(businessType)],
     ["Learned Services", profile.services.join(", ")],
-    ["Learned Products / Categories", profile.products.join(", ")],
+    ["Primary Brands", ecommerce.brands.join(", ")],
+    ["Primary Categories", ecommerce.categories.join(", ")],
+    ["Learned Product Types", ecommerce.productTypes.join(", ")],
+    ["Learned Products / Categories", businessType === "service" || businessType === "unknown" ? profile.products.join(", ") : ""],
     ["Learned Audiences", profile.audiences.join(", ")],
     ["Learned Locations", profile.locations.join(", ")],
     ["Suggested CTA", profile.ctas[0] ?? ""],
@@ -163,13 +255,35 @@ export function siteProfileContextLines(profile?: ProjectSiteProfileDocument | n
 
 export function siteProfilePlanningPriorities(profile?: ProjectSiteProfileDocument | null) {
   if (!profile) return [];
+  const businessType = siteProfileBusinessType(profile);
+  const ecommerce = siteProfileEcommerceFacets(profile);
   return [
     profile.services.length ? "connect relevant sections to the learned services from the website" : "",
-    profile.products.length ? "use learned product and category language where relevant" : "",
+    businessType === "service" || businessType === "unknown"
+      ? (profile.products.length ? "use learned product and category language where relevant" : "")
+      : "",
+    ecommerce.brands.length ? `use learned brand language where relevant: ${ecommerce.brands.slice(0, 3).join(", ")}` : "",
+    ecommerce.categories.length ? `use learned category language where relevant: ${ecommerce.categories.slice(0, 3).join(", ")}` : "",
+    ecommerce.productTypes.length ? `use learned product-type language where relevant: ${ecommerce.productTypes.slice(0, 3).join(", ")}` : "",
     profile.audiences.length ? `write for ${profile.audiences.slice(0, 3).join(", ")}` : "",
     profile.ctas.length ? `use the suggested CTA when a call to action is appropriate: ${profile.ctas[0]}` : "",
     profile.writingSignals.length ? `follow writing preferences: ${profile.writingSignals.join(", ")}` : ""
   ].filter(Boolean);
+}
+
+export function siteProfileBusinessType(profile?: ProjectSiteProfileDocument | null): SiteProfileBusinessType {
+  const value = metadataRecord(profile?.metadata).businessType;
+  return value === "service" || value === "ecommerce" || value === "mixed" ? value : "unknown";
+}
+
+export function siteProfileEcommerceFacets(profile?: ProjectSiteProfileDocument | null) {
+  const metadata = metadataRecord(profile?.metadata);
+  const ecommerce = metadataRecord(metadata.ecommerce);
+  return {
+    brands: stringArrayFromUnknown(ecommerce.brands),
+    categories: stringArrayFromUnknown(ecommerce.categories),
+    productTypes: stringArrayFromUnknown(ecommerce.productTypes)
+  };
 }
 
 function pageText(page: SiteKnowledgePageDocument) {
@@ -200,7 +314,7 @@ function candidateLocations(page: SiteKnowledgePageDocument) {
 
 function matchedAudiences(text: string) {
   const found = new Set<string>();
-  for (const audience of AUDIENCE_TERMS) {
+  for (const audience of ALL_AUDIENCE_TERMS) {
     if (audience.pattern.test(text)) found.add(audience.label);
   }
   return [...found];
@@ -225,6 +339,48 @@ function normalizeProductOrCategory(value: string) {
   if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
   for (const service of SERVICE_PATTERNS) {
     if (service.pattern.test(cleaned)) return service.label;
+  }
+  return null;
+}
+
+function normalizeEcommerceBrand(candidate: PhraseCandidate, page: SiteKnowledgePageDocument) {
+  if (candidate.source === "summary") return null;
+  if (!looksLikeBrandPage(page)) return null;
+  if (hasCtaContamination(candidate.value)) return null;
+  const cleaned = cleanEntityLabel(candidate.value);
+  const focus = ecommercePageFocus(page.url);
+  if (!isQualityEntity(cleaned)) return null;
+  if (focus && entityKey(cleaned) !== entityKey(focus)) return null;
+  if (BRAND_STOPWORDS.has(cleaned.toLowerCase())) return null;
+  if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
+  if (normalizeService(cleaned)) return null;
+  if (normalizeEcommerceCategory(cleaned)) return null;
+  if (normalizeEcommerceProductType(cleaned)) return null;
+  if (/\b(?:gift|sale|shop|collection|collections|range|browse|view|new in|new arrivals?)\b/i.test(cleaned)) return null;
+  return cleaned;
+}
+
+function normalizeEcommerceCategory(value: string) {
+  if (hasCtaContamination(value)) return null;
+  if (SERVICE_NOISE.test(value)) return null;
+  const cleaned = cleanEntityLabel(value);
+  if (!isQualityEntity(cleaned)) return null;
+  if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
+  for (const category of ECOMMERCE_CATEGORY_PATTERNS) {
+    if (category.pattern.test(cleaned)) return category.label;
+  }
+  return null;
+}
+
+function normalizeEcommerceProductType(value: string) {
+  if (hasCtaContamination(value)) return null;
+  if (SERVICE_NOISE.test(value)) return null;
+  const cleaned = cleanEntityLabel(value);
+  if (!isQualityEntity(cleaned)) return null;
+  if (GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return null;
+  if (normalizeEcommerceCategory(cleaned) === cleaned) return null;
+  for (const productType of ECOMMERCE_PRODUCT_TYPE_PATTERNS) {
+    if (productType.pattern.test(cleaned)) return productType.label;
   }
   return null;
 }
@@ -310,6 +466,18 @@ function rankedCategories(map: Map<string, EntityRecord>, services: string[], li
     .map((record) => record.label);
 }
 
+function rankedRetailProductTypes(map: Map<string, EntityRecord>, categories: string[], limit: number, minimumConfidence: number) {
+  const blocked = new Set(categories.map(entityKey));
+  return rankedRecords(map)
+    .filter((record) => confidence(record) >= minimumConfidence)
+    .filter((record) => {
+      const key = entityKey(record.label);
+      return Boolean(key) && !blocked.has(key);
+    })
+    .slice(0, limit)
+    .map((record) => record.label);
+}
+
 function rankedLocations(map: Map<string, EntityRecord>, limit: number, minimumConfidence: number, blockedLabels: Set<string>) {
   const blocked = new Set([...blockedLabels].map(entityKey));
   const deduped = new Map<string, EntityRecord>();
@@ -390,6 +558,40 @@ function sourceScore(source: EntitySource) {
   return 1;
 }
 
+function detectBusinessType(pages: SiteKnowledgePageDocument[]) {
+  let serviceSignals = 0;
+  let ecommerceSignals = 0;
+
+  for (const page of pages) {
+    const url = page.url.toLowerCase();
+    const text = pageText(page);
+    if (SERVICE_URL_HINTS.some((pattern) => pattern.test(url))) serviceSignals += 4;
+    if (ECOMMERCE_URL_HINTS.some((pattern) => pattern.test(url))) ecommerceSignals += 4;
+    if (SERVICE_TEXT_HINT.test(text) || SERVICE_PATTERNS.some((service) => service.pattern.test(text))) serviceSignals += 2;
+    if (ECOMMERCE_TEXT_HINT.test(text) || ECOMMERCE_CATEGORY_PATTERNS.some((category) => category.pattern.test(text))) ecommerceSignals += 2;
+  }
+
+  let businessType: SiteProfileBusinessType = "unknown";
+  if (serviceSignals >= 6 && ecommerceSignals >= 6) businessType = "mixed";
+  else if (ecommerceSignals >= 6 && ecommerceSignals >= serviceSignals + 2) businessType = "ecommerce";
+  else if (serviceSignals >= 4 && serviceSignals >= ecommerceSignals + 2) businessType = "service";
+  else if (serviceSignals >= 4 && ecommerceSignals >= 4) businessType = "mixed";
+  else if (ecommerceSignals > 0 && serviceSignals > 0) businessType = "mixed";
+  else if (ecommerceSignals > 0) businessType = "ecommerce";
+  else if (serviceSignals > 0) businessType = "service";
+
+  return { businessType, serviceSignals, ecommerceSignals };
+}
+
+function looksLikeBrandPage(page: SiteKnowledgePageDocument) {
+  const url = page.url.toLowerCase();
+  if (/\/brands?(?:\/|$)/i.test(url)) return true;
+  if (!/\/collections?(?:\/|$)/i.test(url)) return false;
+  const focus = ecommercePageFocus(page.url);
+  if (!focus) return false;
+  return !normalizeEcommerceCategory(focus) && !normalizeEcommerceProductType(focus);
+}
+
 function urlPathSegments(value: string) {
   try {
     return new URL(value).pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment).replace(/[-_]+/g, " "));
@@ -403,6 +605,19 @@ function splitUsefulPhrases(value: string) {
     .split(/\s*(?:\||,|:|–|-{2,}|\/)\s*/g)
     .map((item) => item.replace(/\b(?:in|near|for)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g, "").trim())
     .filter((item) => item.length >= 3 && item.length <= 100);
+}
+
+function ecommercePageFocus(value: string) {
+  const segments = urlPathSegments(value).map((segment) => segment.toLowerCase());
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (!["collections", "collection", "brands", "brand", "products", "product", "shop"].includes(segment)) continue;
+    const focus = segments[index + 1];
+    if (!focus) continue;
+    const cleaned = cleanEntityLabel(focus);
+    if (cleaned && !GENERIC_PRODUCT_TERMS.has(cleaned.toLowerCase())) return cleaned;
+  }
+  return null;
 }
 
 function wordCount(value: string) {
@@ -431,4 +646,24 @@ function domainFromUrl(value = "") {
   } catch {
     return "";
   }
+}
+
+function uniqueLabels(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const key = entityKey(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
+}
+
+function metadataRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringArrayFromUnknown(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }

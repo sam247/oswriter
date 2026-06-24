@@ -192,6 +192,47 @@ describe("site knowledge", () => {
     assert.ok(saved?.writingSignals.includes("Industry terminology detected"));
   });
 
+  it("detects ecommerce sites and extracts brands, categories, audiences, and retail CTAs", () => {
+    const profile = extractProjectSiteProfile({
+      projectId: "anna-davies",
+      sitemapUrl: "https://annadavies.co.uk/sitemap.xml",
+      pages: [
+        sitePage("https://annadavies.co.uk/collections/jellycat", "Jellycat | Anna Davies", "Jellycat", "Browse collection of Jellycat gifts and soft toys for lifestyle shoppers."),
+        sitePage("https://annadavies.co.uk/collections/inis", "Inis Fragrance | Anna Davies", "Inis Fragrance", "Shop now for Inis fragrance gifts and diffusers."),
+        sitePage("https://annadavies.co.uk/collections/seasalt", "Seasalt Clothing | Anna Davies", "Seasalt Clothing", "Browse collection of Seasalt womenswear and clothing."),
+        sitePage("https://annadavies.co.uk/collections/accessories", "Accessories | Anna Davies", "Accessories", "View range of handbags, scarves, and accessories for women."),
+        sitePage("https://annadavies.co.uk/collections/gifts", "Gift Ideas | Anna Davies", "Gifts", "Gift ideas for gift buyers and lifestyle shoppers."),
+        sitePage("https://annadavies.co.uk/products/hoff-trainers", "Hoff Trainers | Anna Davies", "Hoff Trainers", "Shop now for Hoff trainers and footwear.")
+      ]
+    });
+
+    const metadata = profile.metadata as Record<string, unknown>;
+    const ecommerce = (metadata.ecommerce ?? {}) as Record<string, unknown>;
+    const brands = Array.isArray(ecommerce.brands) ? ecommerce.brands : [];
+    const categories = Array.isArray(ecommerce.categories) ? ecommerce.categories : [];
+    const productTypes = Array.isArray(ecommerce.productTypes) ? ecommerce.productTypes : [];
+
+    assert.equal(metadata.businessType, "ecommerce");
+    assert.ok(brands.includes("Jellycat"));
+    assert.ok(brands.includes("Inis"));
+    assert.ok(brands.includes("Seasalt"));
+    assert.equal(brands.includes("Anna Davies"), false);
+    assert.ok(categories.includes("Fragrance"));
+    assert.ok(categories.includes("Clothing"));
+    assert.ok(categories.includes("Gifts"));
+    assert.ok(categories.includes("Accessories"));
+    assert.ok(categories.includes("Footwear"));
+    assert.ok(productTypes.includes("Trainers"));
+    assert.ok(profile.products.includes("Jellycat"));
+    assert.ok(profile.products.includes("Fragrance"));
+    assert.ok(profile.audiences.includes("Gift Buyers"));
+    assert.ok(profile.audiences.includes("Women"));
+    assert.ok(profile.audiences.includes("Lifestyle Shoppers"));
+    assert.ok(profile.ctas.some((cta) => ["Shop Now", "Browse Collection", "View Range"].includes(cta)));
+    assert.equal(profile.services.length, 0);
+    assert.ok(profile.writingSignals.includes("UK English"));
+  });
+
   it("forgets imported site knowledge, pages, and generated profile data", async () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     const responses = new Map<string, string>([
