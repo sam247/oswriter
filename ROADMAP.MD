@@ -173,10 +173,15 @@
 - Updated the Website Intelligence UI to show `Website Intelligence completed using website discovery mode.` instead of treating sitemap failure as an import-ending error.
 - Added a search-backed discovery fallback for crawler-blocked sites so Website Intelligence can still assemble profile pages from indexed search results when homepage, sitemap, and `robots.txt` requests are challenge-blocked.
 - Deduplicated homepage navigation targets so real-world sites that link `Home` in the header or footer do not crowd the crawl queue with duplicate homepage entries.
+- Hardened Website Intelligence profile extraction for `search_discovery` pages by:
+  - inferring offering names from feature/service URL sections and snippet titles such as `Workflow Automation Software`
+  - broadening generic audience detection for B2B, SaaS, and team-based sites
+  - normalising demo/trial CTAs so discovery-mode imports do not fall back to `Get A Quote` when pages clearly indicate `Book A Demo` or similar
 - Added regressions covering:
   - fallback discovery after `429` sitemap failures
   - robots.txt-declared sitemap recovery before homepage fallback
   - search-backed recovery for crawler-blocked sites such as Vercel challenge pages
+  - search-discovery profile extraction for services, audiences, and CTAs
 
 ## Deferred
 

@@ -277,6 +277,12 @@ describe("site knowledge", () => {
     assert.ok(Array.isArray(metadata.attemptedSearchQueries));
     assert.equal(result.siteProfile.domain, "disclosurely.com");
     assert.ok(result.siteProfile.pageCount >= 5);
+    assert.ok(result.siteProfile.services.includes("Disclosure Monitoring"));
+    assert.ok(result.siteProfile.services.includes("Entity Intelligence"));
+    assert.ok(result.siteProfile.audiences.includes("Compliance Teams"));
+    assert.ok(result.siteProfile.audiences.includes("Legal Operations"));
+    assert.ok(result.siteProfile.audiences.includes("Governance Teams"));
+    assert.equal(result.siteProfile.ctas[0], "Book A Demo");
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/features/disclosure-monitoring"));
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/services/entity-intelligence"));
     assert.ok(result.pages.every((page) => page.metadata.source === "search_discovery"));
@@ -550,6 +556,30 @@ describe("site knowledge", () => {
     assert.equal((localServiceProfile.metadata as Record<string, unknown>).strategySource, "project_setting");
   });
 
+  it("derives generic services, audiences, and demo CTAs from search discovery pages", () => {
+    const profile = extractProjectSiteProfile({
+      projectId: "search-discovery",
+      sitemapUrl: "https://example.com/sitemap.xml",
+      configuredBusinessType: "saas",
+      pages: [
+        sitePage("https://example.com/features/workflow-automation", "Workflow Automation Software", "Workflow Automation", "Workflow automation software for operations teams and compliance teams.", { source: "search_discovery" }),
+        sitePage("https://example.com/services/document-intelligence", "Document Intelligence Services", "Document Intelligence", "Document intelligence services for legal operations and regulated businesses.", { source: "search_discovery" }),
+        sitePage("https://example.com/book-demo", "Book Demo | Example", "Book Demo", "Book a demo with the Example team.", { source: "search_discovery" }),
+        sitePage("https://example.com/industries/saas", "SaaS Compliance Workflows", "SaaS Compliance", "SaaS teams use Example to manage compliance workflows.", { source: "search_discovery" })
+      ]
+    });
+
+    assert.equal((profile.metadata as Record<string, unknown>).businessType, "service");
+    assert.ok(profile.services.includes("Workflow Automation"));
+    assert.ok(profile.services.includes("Document Intelligence"));
+    assert.ok(profile.audiences.includes("Operations Teams"));
+    assert.ok(profile.audiences.includes("Compliance Teams"));
+    assert.ok(profile.audiences.includes("Legal Operations"));
+    assert.ok(profile.audiences.includes("Regulated Businesses"));
+    assert.ok(profile.audiences.includes("SaaS Teams"));
+    assert.equal(profile.ctas[0], "Book A Demo");
+  });
+
   it("forgets imported site knowledge, pages, and generated profile data", async () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     const responses = new Map<string, string>([
@@ -664,7 +694,13 @@ function createFetchStub(responses: Map<string, string | { status: number; body?
   };
 }
 
-function sitePage(url: string, title: string, h1: string, metaDescription = "Groundworks and excavation services for property developers and main contractors. Request a quote today."): SiteKnowledgePageDocument {
+function sitePage(
+  url: string,
+  title: string,
+  h1: string,
+  metaDescription = "Groundworks and excavation services for property developers and main contractors. Request a quote today.",
+  metadata: Record<string, unknown> = {}
+): SiteKnowledgePageDocument {
   return {
     id: url,
     projectId: "mainline",
@@ -675,7 +711,7 @@ function sitePage(url: string, title: string, h1: string, metaDescription = "Gro
     shortSummary: metaDescription,
     importedAt: "2026-06-24T00:00:00.000Z",
     updatedAt: "2026-06-24T00:00:00.000Z",
-    metadata: {}
+    metadata
   };
 }
 

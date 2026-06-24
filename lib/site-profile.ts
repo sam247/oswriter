@@ -82,10 +82,18 @@ const CTA_TERMS = [
   "get a quote",
   "request a quote",
   "book a consultation",
+  "book a demo",
+  "book demo",
+  "request a demo",
+  "request demo",
   "contact us",
   "call us",
   "enquire today",
   "get in touch",
+  "get started",
+  "start trial",
+  "start free trial",
+  "talk to sales",
   "shop now",
   "browse collection",
   "browse collections",
@@ -129,24 +137,90 @@ const ECOMMERCE_PRODUCT_TYPE_PATTERNS: Array<{ pattern: RegExp; label: string; b
   { pattern: /\bperfumes?\b|\bcologne\b/i, label: "Perfume", broader: "Fragrance" },
   { pattern: /\bcandles?\b/i, label: "Candles", broader: "Fragrance" },
   { pattern: /\bdiffusers?\b/i, label: "Diffusers", broader: "Fragrance" },
+  { pattern: /\bhome\s+fragrance\b/i, label: "Home Fragrance", broader: "Fragrance" },
+  { pattern: /\bgift\s+sets?\b/i, label: "Gift Sets", broader: "Gifts" },
   { pattern: /\bdresses?\b/i, label: "Dresses", broader: "Clothing" },
   { pattern: /\bjackets?\b|\bcoats?\b/i, label: "Jackets", broader: "Clothing" },
   { pattern: /\bknitwear\b/i, label: "Knitwear", broader: "Clothing" },
   { pattern: /\bboots?\b/i, label: "Boots", broader: "Footwear" },
   { pattern: /\btrainers?\b/i, label: "Trainers", broader: "Footwear" },
   { pattern: /\bsandals?\b/i, label: "Sandals", broader: "Footwear" },
+  { pattern: /\bwellies\b|\bwellington\s+boots?\b/i, label: "Wellies", broader: "Footwear" },
+  { pattern: /\bslippers?\b/i, label: "Slippers", broader: "Footwear" },
   { pattern: /\bhandbags?\b|\bbags?\b/i, label: "Handbags", broader: "Accessories" },
+  { pattern: /\bbelts?\b/i, label: "Belts", broader: "Accessories" },
   { pattern: /\bwallets?\b/i, label: "Wallets", broader: "Accessories" },
   { pattern: /\bscarves?\b/i, label: "Scarves", broader: "Accessories" },
+  { pattern: /\bhats?\s*&\s*gloves\b|\bhats?\s+gloves\b/i, label: "Hats & Gloves", broader: "Accessories" },
+  { pattern: /\bsocks?\s*&\s*tights\b|\bsocks?\s+tights\b/i, label: "Socks & Tights", broader: "Accessories" },
+  { pattern: /\beye\s+masks?\b/i, label: "Eye Masks", broader: "Accessories" },
+  { pattern: /\bshirts?\s*&\s*tops\b|\bshirts?\s+tops\b|\btops?\b/i, label: "Tops", broader: "Clothing" },
+  { pattern: /\btrousers?\s*&\s*shorts\b|\btrousers?\s+shorts\b/i, label: "Trousers & Shorts", broader: "Clothing" },
   { pattern: /\bplush\b|\bsoft\s+toys?\b/i, label: "Soft Toys", broader: "Toys" }
+];
+const BRAND_RELATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bfragrance\b|\bperfumes?\b|\bcologne\b|\bscents?\b/i, label: "Fragrance" },
+  { pattern: /\bdiffusers?\b/i, label: "Diffusers" },
+  { pattern: /\bcandles?\b/i, label: "Candles" },
+  { pattern: /\bhome\s+fragrance\b/i, label: "Home Fragrance" },
+  { pattern: /\bgift\s+sets?\b/i, label: "Gift Sets" },
+  { pattern: /\bgifts?\b|\bpresents?\b/i, label: "Gifts" },
+  { pattern: /\bclothing\b|\bapparel\b|\bwomenswear\b|\bmenswear\b/i, label: "Clothing" },
+  { pattern: /\bouterwear\b|\bjackets?\b|\bcoats?\b/i, label: "Outerwear" },
+  { pattern: /\bknitwear\b/i, label: "Knitwear" },
+  { pattern: /\bfootwear\b|\bboots?\b|\btrainers?\b|\bsandals?\b|\bwellies\b|\bslippers?\b/i, label: "Footwear" },
+  { pattern: /\baccessories\b|\bhandbags?\b|\bbelts?\b|\bscarves?\b|\bhats?\b|\bgloves\b|\bwallets?\b|\beye\s+masks?\b/i, label: "Accessories" },
+  { pattern: /\bbeauty\b|\bskincare\b/i, label: "Beauty" },
+  { pattern: /\bhomeware\b|\bhome\s+accessories\b/i, label: "Homeware" }
+];
+const TITLE_TOPIC_PATTERNS: Array<{ pattern: RegExp; topic: string }> = [
+  { pattern: /\bfragrance\b|\bperfumes?\b|\bcologne\b|\bscent\b|\bscents\b/i, topic: "Fragrance" },
+  { pattern: /\bdiffusers?\b/i, topic: "Diffusers" },
+  { pattern: /\bcandles?\b/i, topic: "Candles" },
+  { pattern: /\bhome\s+fragrance\b/i, topic: "Home Fragrance" },
+  { pattern: /\bgift\s+sets?\b/i, topic: "Gift Sets" },
+  { pattern: /\bgifts?\b|\bpresents?\b/i, topic: "Gifts" },
+  { pattern: /\bwear\b|\bstyle\b|\boutfit\b|\bfashion\b|\bclothing\b/i, topic: "Clothing" },
+  { pattern: /\bknitwear\b/i, topic: "Knitwear" },
+  { pattern: /\bfootwear\b|\bboots?\b|\btrainers?\b|\bsandals?\b|\bwellies\b|\bslippers?\b/i, topic: "Footwear" },
+  { pattern: /\baccessories\b|\bhandbags?\b|\bscarves?\b|\bbelts?\b/i, topic: "Accessories" },
+  { pattern: /\bbeauty\b|\bskincare\b/i, topic: "Beauty" },
+  { pattern: /\bhomeware\b|\bhome\b|\binterior\b/i, topic: "Homeware" }
 ];
 const ALL_AUDIENCE_TERMS: Array<{ pattern: RegExp; label: string }> = [
   ...AUDIENCE_TERMS,
+  { pattern: /\bcompliance\s+teams?\b/i, label: "Compliance Teams" },
+  { pattern: /\blegal\s+operations\b/i, label: "Legal Operations" },
+  { pattern: /\blegal\s+teams?\b/i, label: "Legal Teams" },
+  { pattern: /\bgovernance\s+teams?\b/i, label: "Governance Teams" },
+  { pattern: /\boperations\s+teams?\b/i, label: "Operations Teams" },
+  { pattern: /\bfinance\s+teams?\b/i, label: "Finance Teams" },
+  { pattern: /\bsecurity\s+teams?\b/i, label: "Security Teams" },
+  { pattern: /\bit\s+teams?\b/i, label: "IT Teams" },
+  { pattern: /\bhr\s+teams?\b|\bhuman\s+resources\b/i, label: "HR Teams" },
+  { pattern: /\bprocurement\s+teams?\b/i, label: "Procurement Teams" },
+  { pattern: /\bsales\s+teams?\b/i, label: "Sales Teams" },
+  { pattern: /\bmarketing\s+teams?\b/i, label: "Marketing Teams" },
+  { pattern: /\bsupport\s+teams?\b|\bcustomer\s+support\b/i, label: "Support Teams" },
+  { pattern: /\bregulated\s+business(?:es)?\b/i, label: "Regulated Businesses" },
+  { pattern: /\benterprises?\b|\benterprise\s+teams?\b/i, label: "Enterprise Teams" },
+  { pattern: /\bsmall\s+business(?:es)?\b|\bsmbs?\b/i, label: "Small Businesses" },
+  { pattern: /\bstartups?\b/i, label: "Startups" },
+  { pattern: /\bsaas\b/i, label: "SaaS Teams" },
+  { pattern: /\bagencies?\b/i, label: "Agencies" },
+  { pattern: /\bretailers?\b/i, label: "Retailers" },
+  { pattern: /\bmanufacturers?\b/i, label: "Manufacturers" },
   { pattern: /\bgift\s+buyers?\b|\bgift\s+shoppers?\b|\bshopping\s+for\s+gifts?\b/i, label: "Gift Buyers" },
   { pattern: /\bwomen'?s\b|\bfor women\b|\bwomenswear\b/i, label: "Women" },
   { pattern: /\bmen'?s\b|\bfor men\b|\bmenswear\b/i, label: "Men" },
   { pattern: /\blifestyle\b|\blifestyle\s+store\b|\blifestyle\s+brand\b/i, label: "Lifestyle Shoppers" }
 ];
+const DISCOVERY_SERVICE_SECTION_HINT = /\/(?:services?|solutions?|features?|platform|capabilities|use-cases?|workflows?)\//i;
+const DISCOVERY_GENERIC_PAGES = new Set([
+  "about", "about us", "contact", "pricing", "plans", "blog", "resources", "articles", "news", "home", "homepage",
+  "demo", "book demo", "book a demo", "request demo", "request a demo", "contact us", "get started"
+]);
+const DISCOVERY_TRAILING_SERVICE_TERMS = /\b(?:services?|software|platform|solutions?|features?|capabilities|tools?|systems?|apps?)\b/gi;
 
 export function extractProjectSiteProfile({ projectId, organisationId, sitemapUrl, pages, configuredBusinessType = "auto_detect" }: ExtractSiteProfileInput): ProjectSiteProfileDocument {
   const generatedAt = nowIso();
@@ -182,10 +256,13 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
         else if (classified?.rejected && ecommerceRejected.length < 120) ecommerceRejected.push({ term: classified.term, reason: classified.rejected, pageKey });
       }
     }
+    if (isSearchDiscoveryPage(page)) {
+      for (const candidate of discoveryServiceCandidates(page)) addEntity(services, candidate.value, candidate, discoveryServiceBonus(candidate.source));
+    }
     for (const location of candidateLocations(page)) addEntity(locations, location, { value: location, source: "title", pageKey });
     for (const audience of matchedAudiences(text)) addEntity(audiences, audience, { value: audience, source: "summary", pageKey });
     for (const cta of CTA_TERMS) {
-      if (text.includes(cta)) addEntity(ctas, titleCase(cta), { value: cta, source: "summary", pageKey });
+      if (text.includes(cta)) addEntity(ctas, normalizeCtaLabel(cta), { value: cta, source: "summary", pageKey });
     }
     if (/\b(?:colour|favour|labour|specialist|neighbour|mobilisation|programme)\b/i.test(text)) writingSignals.add("UK English");
     if (/\b(?:groundworks|earthworks|excavation|piling|underpinning|foundation|drainage|utilities|demolition|basement)\b/i.test(text)) writingSignals.add("Industry terminology detected");
@@ -198,11 +275,19 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
   const legacyProductLabels = rankedCategories(products, serviceLabels, 10, 8);
   const resolvedEcommerce = runEcommerceExtraction
     ? resolveEcommerceFacets(ecommerceBrands, ecommerceCategories, ecommerceProductTypes)
-    : { brands: [] as string[], categories: [] as string[], productTypes: [] as string[], debug: null as EcommerceDebugSummary | null };
+    : { brands: [] as string[], categories: [] as string[], productTypes: [] as string[], brandRecords: [] as EntityRecord[], debug: null as EcommerceDebugSummary | null };
   const brandLabels = resolvedEcommerce.brands;
   const ecommerceCategoryLabels = resolvedEcommerce.categories;
   const ecommerceProductTypeLabels = resolvedEcommerce.productTypes;
-  const ecommerceDebug = mergeEcommerceDebug(resolvedEcommerce.debug, ecommerceRejected);
+  const brandRelationshipDiagnostics: Record<string, BrandRelationshipDebugEntry> = runEcommerceExtraction
+    ? buildBrandRelationshipDiagnostics(resolvedEcommerce.brandRecords, pages)
+    : {};
+  const ecommerceDebug = mergeEcommerceDebug(resolvedEcommerce.debug, ecommerceRejected, brandRelationshipDiagnostics);
+  const brandRelationships = Object.fromEntries(
+    Object.entries(brandRelationshipDiagnostics)
+      .map(([key, value]) => [key, value.associatedCategories] as const)
+      .filter((entry) => entry[1].length)
+  );
   const productLabels = uniqueLabels(
     detection.businessType === "service"
       ? legacyProductLabels
@@ -227,7 +312,7 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
     generatedAt,
     updatedAt: generatedAt,
     metadata: {
-      extraction: "heuristic_v4",
+      extraction: "heuristic_v5",
       businessType: detection.businessType,
       strategyBusinessType: configuredBusinessType,
       strategyBusinessTypeLabel: businessTypeLabel(configuredBusinessType),
@@ -240,6 +325,7 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
         brands: brandLabels,
         categories: ecommerceCategoryLabels,
         productTypes: ecommerceProductTypeLabels,
+        brandRelationships,
         debug: ecommerceDebug
       },
       confidence: {
@@ -319,7 +405,8 @@ export function siteProfileEcommerceFacets(profile?: ProjectSiteProfileDocument 
   return {
     brands: stringArrayFromUnknown(ecommerce.brands),
     categories: stringArrayFromUnknown(ecommerce.categories),
-    productTypes: stringArrayFromUnknown(ecommerce.productTypes)
+    productTypes: stringArrayFromUnknown(ecommerce.productTypes),
+    brandRelationships: stringRecordArray(ecommerce.brandRelationships)
   };
 }
 
@@ -335,7 +422,7 @@ export function siteProfileEntityRecommendations(profile: ProjectSiteProfileDocu
   const businessType = siteProfileBusinessType(profile);
   const ecommerce = siteProfileEcommerceFacets(profile);
   const titleContext = normalizeRecommendationText(title);
-  const brands = rankedEntitySubset(ecommerce.brands, titleContext, 5, "brand");
+  const brands = rankedEntitySubset(ecommerce.brands, titleContext, 5, "brand", ecommerce.brandRelationships);
   const categories = rankedEntitySubset(ecommerce.categories, titleContext, 3, "category");
   const productTypes = rankedEntitySubset(ecommerce.productTypes, titleContext, 4, "product_type");
   const services = rankedEntitySubset(profile.services, titleContext, 4, "service");
@@ -379,6 +466,10 @@ function pageText(page: SiteKnowledgePageDocument) {
   return `${page.url} ${page.title} ${page.h1} ${page.metaDescription} ${page.shortSummary}`.toLowerCase();
 }
 
+function isSearchDiscoveryPage(page: SiteKnowledgePageDocument) {
+  return metadataRecord(page.metadata).source === "search_discovery";
+}
+
 function candidatePhrases(page: SiteKnowledgePageDocument): PhraseCandidate[] {
   const pageKey = page.url || page.id;
   const candidates: PhraseCandidate[] = [];
@@ -388,6 +479,78 @@ function candidatePhrases(page: SiteKnowledgePageDocument): PhraseCandidate[] {
   for (const value of splitUsefulPhrases(page.metaDescription)) candidates.push({ value, source: "meta", pageKey });
   for (const value of splitUsefulPhrases(page.shortSummary)) candidates.push({ value, source: "summary", pageKey });
   return candidates;
+}
+
+function discoveryServiceCandidates(page: SiteKnowledgePageDocument) {
+  const pageKey = page.url || page.id;
+  const candidates: PhraseCandidate[] = [];
+  const seen = new Set<string>();
+  const pushCandidate = (value: string | null, source: EntitySource) => {
+    if (!value) return;
+    const key = entityKey(value);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    candidates.push({ value, source, pageKey });
+  };
+
+  pushCandidate(discoveryServiceLabelFromUrl(page.url), "url");
+  if (DISCOVERY_SERVICE_SECTION_HINT.test(page.url)) {
+    pushCandidate(normalizeDiscoveryServiceLabel(page.h1), "h1");
+    pushCandidate(normalizeDiscoveryServiceLabel(page.title), "title");
+  }
+  pushCandidate(discoveryServiceLabelFromPhrase(page.title), "title");
+  pushCandidate(discoveryServiceLabelFromPhrase(page.h1), "h1");
+  pushCandidate(discoveryServiceLabelFromPhrase(page.metaDescription), "summary");
+  pushCandidate(discoveryServiceLabelFromPhrase(page.shortSummary), "summary");
+
+  return candidates;
+}
+
+function discoveryServiceLabelFromUrl(url: string) {
+  const segments = urlPathSegments(url);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]?.toLowerCase();
+    if (!segment) continue;
+    if (!["service", "services", "solution", "solutions", "feature", "features", "platform", "capabilities", "use case", "use cases", "workflow", "workflows"].includes(segment)) continue;
+    return normalizeDiscoveryServiceLabel(segments[index + 1] ?? "");
+  }
+  return null;
+}
+
+function discoveryServiceLabelFromPhrase(value: string) {
+  const cleaned = decodeHtml(value).replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  const matched = cleaned.match(/^(.{3,80}?)\s+(?:services?|software|platform|solutions?|features?|capabilities|tools?|systems?|apps?)\b/i);
+  if (!matched) return null;
+  return normalizeDiscoveryServiceLabel(matched[1] ?? "");
+}
+
+function normalizeDiscoveryServiceLabel(value: string) {
+  const cleaned = cleanEntityLabel(value)
+    .replace(DISCOVERY_TRAILING_SERVICE_TERMS, "")
+    .replace(/\b(?:for|with|from|by|and)\b\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!isQualityEntity(cleaned)) return null;
+  if (DISCOVERY_GENERIC_PAGES.has(cleaned.toLowerCase())) return null;
+  if (SERVICE_NOISE.test(cleaned)) return null;
+  return cleaned;
+}
+
+function discoveryServiceBonus(source: EntitySource) {
+  if (source === "url") return 4;
+  if (source === "title" || source === "h1") return 2;
+  return 1;
+}
+
+function normalizeCtaLabel(value: string) {
+  const normalized = value.toLowerCase().replace(/\s+/g, " ").trim();
+  if (normalized === "book demo" || normalized === "book a demo") return "Book A Demo";
+  if (normalized === "request demo" || normalized === "request a demo") return "Request A Demo";
+  if (normalized === "start free trial") return "Start Free Trial";
+  if (normalized === "start trial") return "Start Trial";
+  if (normalized === "talk to sales") return "Talk To Sales";
+  return titleCase(normalized);
 }
 
 function candidateLocations(page: SiteKnowledgePageDocument) {
@@ -664,6 +827,8 @@ interface EcommerceDebugEntry {
   label: string;
   confidence: number;
   pages: number;
+  associatedCategories?: string[];
+  supportingPages?: string[];
 }
 
 interface EcommerceDebugSummary {
@@ -673,7 +838,16 @@ interface EcommerceDebugSummary {
   rejectedTerms: Array<{ term: string; reason: string }>;
 }
 
-function mergeEcommerceDebug(debug: EcommerceDebugSummary | null, rejected: Array<{ term: string; reason: string; pageKey: string }>) {
+interface BrandRelationshipDebugEntry {
+  associatedCategories: string[];
+  supportingPages: string[];
+}
+
+function mergeEcommerceDebug(
+  debug: EcommerceDebugSummary | null,
+  rejected: Array<{ term: string; reason: string; pageKey: string }>,
+  brandRelationshipDiagnostics: Record<string, BrandRelationshipDebugEntry> = {}
+) {
   if (!debug && !rejected.length) return null;
   const base = debug ?? { detectedBrands: [], detectedCategories: [], detectedProductTypes: [], rejectedTerms: [] };
   const combinedRejected = [
@@ -682,6 +856,11 @@ function mergeEcommerceDebug(debug: EcommerceDebugSummary | null, rejected: Arra
   ];
   return {
     ...base,
+    detectedBrands: base.detectedBrands.map((item) => ({
+      ...item,
+      associatedCategories: brandRelationshipDiagnostics[entityKey(item.label)]?.associatedCategories ?? [],
+      supportingPages: brandRelationshipDiagnostics[entityKey(item.label)]?.supportingPages ?? []
+    })),
     rejectedTerms: combinedRejected.slice(0, 80)
   };
 }
@@ -820,6 +999,7 @@ function resolveEcommerceFacets(
     brands: brandsResolved.map((item) => item.record.label),
     categories: categoriesResolved.map((item) => item.record.label),
     productTypes: productTypesResolved.map((item) => item.record.label),
+    brandRecords: brandsResolved.map((item) => item.record),
     debug: {
       detectedBrands: rankedRecords(brands).slice(0, 25).map((record) => ({ label: record.label, confidence: confidence(record), pages: record.pages.size })),
       detectedCategories: rankedRecords(categories).slice(0, 25).map((record) => ({ label: record.label, confidence: confidence(record), pages: record.pages.size })),
@@ -852,8 +1032,46 @@ function isRetailTaxonomyTerm(value: string) {
   if (/\b(?:mens?|women'?s|womens?|ladies|gents)\b/.test(lower)) return true;
   if (/\b(?:activewear|nightwear|underwear|loungewear|swimwear|sleepwear)\b/.test(lower)) return true;
   if (/\b(?:clothing|footwear|accessories|gifts|beauty|homeware|toys)\b/.test(lower)) return true;
+  if (/\b(?:wellies|slippers|belts|eye masks|shirts?\s*(?:&|and)?\s*tops|trousers?\s*(?:&|and)?\s*shorts|hats?\s*(?:&|and)?\s*gloves|socks?\s*(?:&|and)?\s*tights)\b/.test(lower)) return true;
+  if (/\b(?:casual|outdoor|everyday|skiwear|snowboard)\b/.test(lower)) return true;
   if (/\b(?:new in|new arrivals|sale|offers|clearance)\b/.test(lower)) return true;
   return false;
+}
+
+function buildBrandRelationshipDiagnostics(records: EntityRecord[], pages: SiteKnowledgePageDocument[]) {
+  const pageMap = new Map(pages.map((page) => [page.url || page.id, page]));
+  const entries: Array<[string, BrandRelationshipDebugEntry]> = records.map((record) => {
+    const associatedCategories = new Set<string>();
+    const supportingPages = [...record.pages]
+      .map((pageKey) => pageMap.get(pageKey))
+      .filter((page): page is SiteKnowledgePageDocument => Boolean(page))
+      .sort((left, right) => ecommercePageKindPriority(ecommercePageKind(left.url)) - ecommercePageKindPriority(ecommercePageKind(right.url)))
+      .slice(0, 4)
+      .map((page) => page.url || page.id);
+    for (const pageKey of record.pages) {
+      const page = pageMap.get(pageKey);
+      if (!page) continue;
+      const text = `${page.title} ${page.h1} ${page.metaDescription} ${page.shortSummary}`;
+      for (const relation of BRAND_RELATION_PATTERNS) {
+        if (relation.pattern.test(text)) associatedCategories.add(relation.label);
+      }
+    }
+    return [entityKey(record.label), {
+      associatedCategories: [...associatedCategories],
+      supportingPages
+    }];
+  });
+  return Object.fromEntries(entries.filter((entry) => entry[1].associatedCategories.length || entry[1].supportingPages.length));
+}
+
+function ecommercePageKindPriority(kind: ReturnType<typeof ecommercePageKind>) {
+  if (kind === "brand") return 1;
+  if (kind === "about") return 2;
+  if (kind === "homepage") return 3;
+  if (kind === "collection") return 4;
+  if (kind === "product") return 5;
+  if (kind === "other") return 6;
+  return 7;
 }
 
 function detectBusinessType(pages: SiteKnowledgePageDocument[], configuredBusinessType: BusinessTypeKey) {
@@ -943,30 +1161,46 @@ function wordCount(value: string) {
   return value.split(/\s+/).filter(Boolean).length;
 }
 
-function rankedEntitySubset(values: string[], titleContext: string, limit: number, type: "brand" | "category" | "product_type" | "audience" | "service") {
+function rankedEntitySubset(
+  values: string[],
+  titleContext: string,
+  limit: number,
+  type: "brand" | "category" | "product_type" | "audience" | "service",
+  brandRelationships: Record<string, string[]> = {}
+) {
   return values
-    .map((value, index) => ({ value, score: entityRecommendationScore(value, index, titleContext, type) }))
+    .map((value, index) => ({ value, score: entityRecommendationScore(value, index, titleContext, type, brandRelationships) }))
     .sort((left, right) => right.score - left.score)
     .map((item) => item.value)
     .slice(0, limit);
 }
 
-function entityRecommendationScore(value: string, index: number, titleContext: string, type: "brand" | "category" | "product_type" | "audience" | "service") {
+function entityRecommendationScore(
+  value: string,
+  index: number,
+  titleContext: string,
+  type: "brand" | "category" | "product_type" | "audience" | "service",
+  brandRelationships: Record<string, string[]> = {}
+) {
   const normalized = normalizeRecommendationText(value);
   const tokens = normalized.split(" ").filter((token) => token.length > 2);
   const overlap = tokens.reduce((total, token) => total + (titleContext.includes(token) ? 1 : 0), 0);
   const base = Math.max(0, 40 - index * 4);
   const typeBonus = type === "brand" ? 18 : type === "category" ? 16 : type === "product_type" ? 14 : type === "service" ? 14 : 8;
-  const semanticBonus = recommendationSemanticBonus(value, titleContext, type);
+  const semanticBonus = recommendationSemanticBonus(value, titleContext, type, brandRelationships);
   return base + typeBonus + overlap * 12 + semanticBonus;
 }
 
-function recommendationSemanticBonus(value: string, titleContext: string, type: "brand" | "category" | "product_type" | "audience" | "service") {
+function recommendationSemanticBonus(
+  value: string,
+  titleContext: string,
+  type: "brand" | "category" | "product_type" | "audience" | "service",
+  brandRelationships: Record<string, string[]> = {}
+) {
   const normalized = normalizeRecommendationText(value);
   if (!titleContext) return 0;
   if (type === "brand") {
-    if (/\b(?:wear|style|outfit|gift|weekend|holiday|seaside|shop|shopping|fashion)\b/.test(titleContext)) return 10;
-    return 0;
+    return brandRelationshipBonus(value, titleContext, brandRelationships);
   }
   if (type === "category") {
     if (normalized.includes("clothing") && /\b(?:wear|style|outfit|weekend|fashion|seaside|britain|british|holiday)\b/.test(titleContext)) return 14;
@@ -988,6 +1222,30 @@ function recommendationSemanticBonus(value: string, titleContext: string, type: 
     return normalized.split(" ").reduce((score, token) => score + (titleContext.includes(token) ? 10 : 0), 0);
   }
   return 0;
+}
+
+function brandRelationshipBonus(value: string, titleContext: string, brandRelationships: Record<string, string[]>) {
+  const topics = detectTitleTopics(titleContext);
+  const relations = brandRelationships[entityKey(value)] ?? [];
+  let bonus = 0;
+  if (/\b(?:wear|style|outfit|gift|weekend|holiday|seaside|shop|shopping|fashion)\b/.test(titleContext)) bonus += 6;
+  const overlappingTopics = relations.filter((relation) => topics.has(relation));
+  bonus += overlappingTopics.length * 18;
+  if (topics.has("Fragrance") && relations.some((relation) => ["Fragrance", "Diffusers", "Candles", "Home Fragrance", "Gift Sets"].includes(relation))) bonus += 16;
+  if (topics.has("Gifts") && relations.some((relation) => ["Gifts", "Gift Sets", "Fragrance", "Home Fragrance", "Diffusers", "Candles"].includes(relation))) bonus += 12;
+  if (topics.has("Clothing") && relations.some((relation) => ["Clothing", "Outerwear", "Knitwear", "Accessories"].includes(relation))) bonus += 12;
+  if (topics.has("Footwear") && relations.includes("Footwear")) bonus += 12;
+  if (topics.has("Accessories") && relations.includes("Accessories")) bonus += 16;
+  if (topics.size && relations.length && !overlappingTopics.length) bonus -= 12;
+  return bonus;
+}
+
+function detectTitleTopics(titleContext: string) {
+  const found = new Set<string>();
+  for (const topic of TITLE_TOPIC_PATTERNS) {
+    if (topic.pattern.test(titleContext)) found.add(topic.topic);
+  }
+  return found;
 }
 
 function normalizeRecommendationText(value: string) {
@@ -1036,4 +1294,11 @@ function metadataRecord(value: unknown) {
 
 function stringArrayFromUnknown(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function stringRecordArray(value: unknown) {
+  const record = metadataRecord(value);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [key, stringArrayFromUnknown(entry)])
+  );
 }
