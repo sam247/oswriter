@@ -580,6 +580,20 @@ describe("site knowledge", () => {
     assert.equal(profile.ctas[0], "Book A Demo");
   });
 
+  it("uses a demo CTA fallback for SaaS profiles when no explicit CTA is learned", () => {
+    const profile = extractProjectSiteProfile({
+      projectId: "saas-fallback-cta",
+      sitemapUrl: "https://example.com/sitemap.xml",
+      configuredBusinessType: "saas",
+      pages: [
+        sitePage("https://example.com/platform/workflow-automation", "Workflow Automation Platform", "Workflow Automation", "Workflow automation platform for compliance teams.", { source: "search_discovery" }),
+        sitePage("https://example.com/services/document-intelligence", "Document Intelligence Services", "Document Intelligence", "Document intelligence services for legal operations.", { source: "search_discovery" })
+      ]
+    });
+
+    assert.equal(profile.ctas[0], "Book A Demo");
+  });
+
   it("forgets imported site knowledge, pages, and generated profile data", async () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     const responses = new Map<string, string>([

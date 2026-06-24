@@ -268,7 +268,10 @@ export function extractProjectSiteProfile({ projectId, organisationId, sitemapUr
     if (/\b(?:groundworks|earthworks|excavation|piling|underpinning|foundation|drainage|utilities|demolition|basement)\b/i.test(text)) writingSignals.add("Industry terminology detected");
   }
 
-  if (!ctas.size) addEntity(ctas, detection.businessType === "ecommerce" ? "Shop Now" : "Get A Quote", { value: detection.businessType === "ecommerce" ? "Shop Now" : "Get A Quote", source: "summary", pageKey: domain });
+  if (!ctas.size) {
+    const fallbackCta = defaultCtaForSiteProfile(detection.businessType, configuredBusinessType, pages);
+    addEntity(ctas, fallbackCta, { value: fallbackCta, source: "summary", pageKey: domain });
+  }
   if (!writingSignals.size && domain.endsWith(".uk")) writingSignals.add("UK English");
 
   const serviceLabels = rankedLabels(services, 10, 8);
@@ -551,6 +554,18 @@ function normalizeCtaLabel(value: string) {
   if (normalized === "start trial") return "Start Trial";
   if (normalized === "talk to sales") return "Talk To Sales";
   return titleCase(normalized);
+}
+
+function defaultCtaForSiteProfile(
+  businessType: SiteProfileBusinessType,
+  configuredBusinessType: BusinessTypeKey,
+  pages: SiteKnowledgePageDocument[]
+) {
+  if (configuredBusinessType === "ecommerce" || businessType === "ecommerce") return "Shop Now";
+  if (configuredBusinessType === "saas") return "Book A Demo";
+  const combinedText = pages.map((page) => pageText(page)).join(" ");
+  if (/\b(?:software|platform|demo|trial|book a demo|book demo|request a demo|request demo|get started|talk to sales)\b/i.test(combinedText)) return "Book A Demo";
+  return "Get A Quote";
 }
 
 function candidateLocations(page: SiteKnowledgePageDocument) {

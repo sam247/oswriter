@@ -177,6 +177,7 @@
   - inferring offering names from feature/service URL sections and snippet titles such as `Workflow Automation Software`
   - broadening generic audience detection for B2B, SaaS, and team-based sites
   - normalising demo/trial CTAs so discovery-mode imports do not fall back to `Get A Quote` when pages clearly indicate `Book A Demo` or similar
+  - making fallback CTA selection strategy-aware so SaaS sites default to a demo-style CTA instead of `Get A Quote`
 - Added regressions covering:
   - fallback discovery after `429` sitemap failures
   - robots.txt-declared sitemap recovery before homepage fallback
