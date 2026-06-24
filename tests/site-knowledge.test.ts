@@ -31,6 +31,7 @@ describe("site knowledge", () => {
 
   it("prioritizes high-signal pages before low-value location and archive urls", async () => {
     const lowValueUrls = Array.from({ length: 80 }, (_, index) => `https://example.com/piling-contractors/location-${index + 1}`);
+    const productUrls = Array.from({ length: 70 }, (_, index) => `https://example.com/products/alex-clark-product-${index + 1}`);
     const highValueUrls = [
       "https://example.com/blog/market-update",
       "https://example.com/tag/piling",
@@ -39,28 +40,78 @@ describe("site knowledge", () => {
       "https://example.com/contact",
       "https://example.com/services/earthworks",
       "https://example.com/solutions/basement-excavation",
-      "https://example.com/industries/property-developers"
+      "https://example.com/industries/property-developers",
+      "https://example.com/brands/inis",
+      "https://example.com/collections/gifts"
     ];
     const responses = new Map<string, string>([
       ["https://example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-          ${[...lowValueUrls, ...highValueUrls].map((url) => `<url><loc>${url}</loc></url>`).join("\n")}
+          ${[...productUrls, ...lowValueUrls, ...highValueUrls].map((url) => `<url><loc>${url}</loc></url>`).join("\n")}
         </urlset>`],
-      ["https://example.com", `<html><body><header><a href="/services/earthworks">Earthworks</a><a href="/solutions/basement-excavation">Basement Excavation</a></header></body></html>`]
+      ["https://example.com/", `<html><body><header><a href="/services/earthworks">Earthworks</a><a href="/solutions/basement-excavation">Basement Excavation</a><a href="/collections/gifts">Gifts</a></header><nav><a href="/brands/inis">Inis</a></nav><footer><a href="/contact">Contact</a></footer></body></html>`]
     ]);
 
     const urls = await collectSitemapUrls(createFetchStub(responses), "https://example.com/sitemap.xml");
 
     assert.equal(urls.length, SITE_KNOWLEDGE_MAX_URLS);
-    assert.deepEqual(urls.slice(0, 5), [
+    assert.deepEqual(urls.slice(0, 7), [
       "https://example.com/",
-      "https://example.com/about-us",
-      "https://example.com/contact",
       "https://example.com/services/earthworks",
-      "https://example.com/solutions/basement-excavation"
+      "https://example.com/solutions/basement-excavation",
+      "https://example.com/collections/gifts",
+      "https://example.com/brands/inis",
+      "https://example.com/contact",
+      "https://example.com/about-us"
     ]);
     assert.equal(urls.includes("https://example.com/tag/piling"), false);
     assert.equal(urls.includes("https://example.com/blog/market-update"), true);
+    assert.equal(urls.includes("https://example.com/products/alex-clark-product-1"), false);
+    assert.equal(urls.some((url) => url.includes("/products/alex-clark-product-")), true);
+  });
+
+  it("builds the crawl queue from homepage navigation before sitemap order", async () => {
+    const responses = new Map<string, string>([
+      ["https://shop.example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          ${[
+            ...Array.from({ length: 40 }, (_, index) => `https://shop.example.com/products/alex-clark-${index + 1}`),
+            "https://shop.example.com/services/gift-wrapping",
+            "https://shop.example.com/brands/jellycat",
+            "https://shop.example.com/collections/fragrance",
+            "https://shop.example.com/collections/accessories"
+          ].map((url) => `<url><loc>${url}</loc></url>`).join("\n")}
+        </urlset>`],
+      ["https://shop.example.com/", `
+        <html>
+          <body>
+            <header>
+              <a href="/collections/fragrance">Fragrance</a>
+              <a href="/brands/jellycat">Jellycat</a>
+            </header>
+            <nav>
+              <a href="/collections/accessories">Accessories</a>
+              <a href="/services/gift-wrapping">Gift Wrapping</a>
+            </nav>
+            <footer>
+              <a href="/contact">Contact</a>
+            </footer>
+          </body>
+        </html>
+      `]
+    ]);
+
+    const urls = await collectSitemapUrls(createFetchStub(responses), "https://shop.example.com/sitemap.xml", 10);
+
+    assert.deepEqual(urls.slice(0, 6), [
+      "https://shop.example.com/",
+      "https://shop.example.com/collections/fragrance",
+      "https://shop.example.com/brands/jellycat",
+      "https://shop.example.com/collections/accessories",
+      "https://shop.example.com/services/gift-wrapping",
+      "https://shop.example.com/contact"
+    ]);
+    assert.equal(urls[6]?.startsWith("https://shop.example.com/products/"), true);
   });
 
   it("keeps directly navigated pages ahead of ordinary service pages", () => {

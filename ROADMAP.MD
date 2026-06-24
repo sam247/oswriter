@@ -71,6 +71,25 @@
 - Updated the Project Settings Website Intelligence card to show business type plus ecommerce-specific fields when the site is classified as retail.
 - Added regression coverage to preserve Mainline-style service extraction while validating Anna Davies-style ecommerce extraction.
 
+### Website Intelligence Crawl Strategy V2
+
+- Changed the crawl queue builder so Website Intelligence fetches the homepage first and uses homepage navigation as a primary crawl signal instead of relying on raw sitemap order.
+- Added navigation extraction for:
+  - header navigation
+  - menu and mega-menu blocks
+  - primary nav blocks
+  - footer navigation
+- Changed crawl priority to:
+  - homepage
+  - navigation targets
+  - category and service pages
+  - brand pages
+  - collection pages
+  - representative product pages
+  - remaining sitemap URLs
+- Added representative product sampling so the remaining product budget is spread across the catalogue instead of defaulting to the first product URLs in the sitemap.
+- Added regression coverage to prevent sitemap-first crawling from crowding out higher-signal navigation, category, brand, and collection pages.
+
 ## Deferred
 
 ### WordPress Publishing (Phase 2)

@@ -7,6 +7,10 @@ import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnow
 
 export const SITE_KNOWLEDGE_MAX_URLS = 50;
 const SITE_KNOWLEDGE_MAX_CANDIDATE_URLS = 500;
+const SITE_KNOWLEDGE_NAV_TARGET_LIMIT = 12;
+const SITE_KNOWLEDGE_CATEGORY_LIMIT = 18;
+const SITE_KNOWLEDGE_BRAND_LIMIT = 6;
+const SITE_KNOWLEDGE_COLLECTION_LIMIT = 6;
 const SERVICE_PAGE_TERMS = [
   "service",
   "services",
@@ -28,6 +32,9 @@ const SERVICE_PAGE_TERMS = [
   "basement",
   "concrete"
 ];
+const BRAND_PAGE_TERMS = ["brand", "brands", "designer", "designers", "makers", "label", "labels"];
+const COLLECTION_PAGE_TERMS = ["collection", "collections", "range", "ranges", "shop"];
+const PRODUCT_PAGE_TERMS = ["product", "products", "item", "items"];
 
 interface ImportSiteKnowledgeOptions {
   projectId: string;
@@ -180,6 +187,8 @@ export async function importSiteKnowledge({
 }
 
 export async function collectSitemapUrls(fetcher: typeof fetch, sitemapUrl: string, limit = SITE_KNOWLEDGE_MAX_URLS) {
+  const homepage = homepageUrlFromSitemap(sitemapUrl);
+  const navigationUrls = await collectHomepageNavigationUrls(fetcher, sitemapUrl);
   const pending = [normalizeSiteKnowledgeUrl(sitemapUrl)];
   const visited = new Set<string>();
   const urls = new Set<string>();
@@ -200,8 +209,7 @@ export async function collectSitemapUrls(fetcher: typeof fetch, sitemapUrl: stri
     }
   }
 
-  const navigationUrls = await collectHomepageNavigationUrls(fetcher, sitemapUrl);
-  return prioritizeSiteKnowledgeUrls([...urls], sitemapUrl, navigationUrls).slice(0, limit);
+  return buildSiteKnowledgeCrawlQueue([...urls], sitemapUrl, homepage, navigationUrls, limit);
 }
 
 export function prioritizeSiteKnowledgeUrls(urls: string[], sitemapUrl: string, navigationUrls: Set<string> = new Set()) {
@@ -216,6 +224,53 @@ export function prioritizeSiteKnowledgeUrls(urls: string[], sitemapUrl: string, 
     .map((item) => ({ ...item, priority: scoreSiteKnowledgeUrl(item.url, navigationUrls) }))
     .sort((left, right) => right.priority - left.priority || left.index - right.index)
     .map((item) => item.url);
+}
+
+function buildSiteKnowledgeCrawlQueue(
+  urls: string[],
+  sitemapUrl: string,
+  homepageUrl: string,
+  navigationUrls: Set<string>,
+  limit: number
+) {
+  const homepage = normalizeUrlForPriority(homepageUrl);
+  const normalizedNavigation = uniqueSameOriginUrls([...navigationUrls], sitemapUrl);
+  const prioritized = prioritizeSiteKnowledgeUrls(urls, sitemapUrl, navigationUrls);
+  const buckets = {
+    navigation: [] as string[],
+    categories: [] as string[],
+    brands: [] as string[],
+    collections: [] as string[],
+    products: [] as string[],
+    remaining: [] as string[]
+  };
+  const seen = new Set<string>();
+
+  if (homepage && sameOrigin(homepage, sitemapUrl)) seen.add(homepage);
+
+  for (const url of normalizedNavigation) {
+    if (homepage && url === homepage) continue;
+    if (seen.has(url)) continue;
+    buckets.navigation.push(url);
+    seen.add(url);
+  }
+
+  for (const url of prioritized) {
+    if (seen.has(url)) continue;
+    const bucket = classifySiteKnowledgeUrl(url, navigationUrls);
+    buckets[bucket].push(url);
+    seen.add(url);
+  }
+
+  const queue: string[] = [];
+  if (homepage) queue.push(homepage);
+  pushLimited(queue, buckets.navigation, Math.min(limitRemaining(limit, queue), SITE_KNOWLEDGE_NAV_TARGET_LIMIT));
+  pushLimited(queue, buckets.categories, Math.min(limitRemaining(limit, queue), SITE_KNOWLEDGE_CATEGORY_LIMIT));
+  pushLimited(queue, buckets.brands, Math.min(limitRemaining(limit, queue), SITE_KNOWLEDGE_BRAND_LIMIT));
+  pushLimited(queue, buckets.collections, Math.min(limitRemaining(limit, queue), SITE_KNOWLEDGE_COLLECTION_LIMIT));
+  pushAll(queue, sampleRepresentativeUrls(buckets.products, limitRemaining(limit, queue)));
+  pushAll(queue, buckets.remaining.slice(0, limitRemaining(limit, queue)));
+  return queue.slice(0, limit);
 }
 
 export function parseSitemap(xml: string, baseUrl?: string): SitemapParseResult {
@@ -308,7 +363,7 @@ function normalizeRelativeUrl(value: string, baseUrl?: string) {
 
 async function collectHomepageNavigationUrls(fetcher: typeof fetch, sitemapUrl: string) {
   try {
-    const origin = new URL(sitemapUrl).origin;
+    const origin = homepageUrlFromSitemap(sitemapUrl);
     const html = await fetchSiteText(fetcher, origin, "text/html,application/xhtml+xml");
     return extractNavigationUrls(html, origin);
   } catch {
@@ -318,8 +373,10 @@ async function collectHomepageNavigationUrls(fetcher: typeof fetch, sitemapUrl: 
 
 function extractNavigationUrls(html: string, baseUrl: string) {
   const blocks = [
+    ...html.matchAll(/<header\b[\s\S]*?<\/header>/gi),
+    ...html.matchAll(/<(?:div|section|aside|ul)\b[^>]*(?:class|id)\s*=\s*("([^"]*(?:mega|menu)[^"]*)"|'([^']*(?:mega|menu)[^']*)')[^>]*>[\s\S]{0,20000}?<\/(?:div|section|aside|ul)>/gi),
     ...html.matchAll(/<nav\b[\s\S]*?<\/nav>/gi),
-    ...html.matchAll(/<header\b[\s\S]*?<\/header>/gi)
+    ...html.matchAll(/<footer\b[\s\S]*?<\/footer>/gi)
   ].map((match) => match[0]);
   const source = blocks.length ? blocks.join("\n") : html.slice(0, 20000);
   return new Set([...source.matchAll(/<a\b[^>]*\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi)]
@@ -327,7 +384,9 @@ function extractNavigationUrls(html: string, baseUrl: string) {
     .map((href) => normalizeRelativeUrl(decodeEntities(href), baseUrl))
     .filter((url): url is string => Boolean(url))
     .map(normalizeUrlForPriority)
-    .filter((url): url is string => Boolean(url)));
+    .filter((url): url is string => Boolean(url))
+    .filter((url) => sameOrigin(url, baseUrl))
+    .filter((url) => !isLowValueUrl(normalizedPath(url))));
 }
 
 function scoreSiteKnowledgeUrl(url: string, navigationUrls: Set<string>) {
@@ -350,6 +409,9 @@ function siteKnowledgeUrlTier(url: string, navigationUrls: Set<string>) {
   if (isLowValueUrl(path)) return 6;
   if (isDeepLocationVariant(parts)) return 6;
   if (/\b(?:blog|news|insights|guides|articles|resources)\b/.test(path)) return 5;
+  if (looksLikeBrandPage(parts)) return 4;
+  if (looksLikeCollectionPage(parts)) return 4;
+  if (looksLikeProductPage(parts)) return 5;
   if (/\b(?:industries|industry|sectors|audiences|customers|clients|areas|locations|service-areas)\b/.test(path)) return 4;
   if (looksLikeLocationHub(parts)) return 4;
   if (/\b(?:services|service|solutions|solution|categories|category|products|product)\b/.test(path)) return 3;
@@ -380,6 +442,42 @@ function looksLikeLocationSlug(value: string) {
   if (!value || SERVICE_PAGE_TERMS.some((term) => value.includes(term))) return false;
   if (/^(?:services?|solutions?|products?|categories?|about|contact|blog|news|guide|guides)$/.test(value)) return false;
   return /^[a-z0-9]+(?:-[a-z0-9]+){0,3}$/.test(value);
+}
+
+function classifySiteKnowledgeUrl(url: string, navigationUrls: Set<string>) {
+  const normalizedUrl = normalizeUrlForPriority(url);
+  if (normalizedUrl && navigationUrls.has(normalizedUrl)) return "navigation" as const;
+  const parts = pathParts(url);
+  if (looksLikeCategoryOrServicePage(parts)) return "categories" as const;
+  if (looksLikeBrandPage(parts)) return "brands" as const;
+  if (looksLikeCollectionPage(parts)) return "collections" as const;
+  if (looksLikeProductPage(parts)) return "products" as const;
+  return "remaining" as const;
+}
+
+function looksLikeCategoryOrServicePage(parts: string[]) {
+  const path = parts.join("/");
+  if (!parts.length) return true;
+  if (looksLikeBrandPage(parts) || looksLikeCollectionPage(parts) || looksLikeProductPage(parts)) return false;
+  if (/\b(?:industries|industry|sectors|audiences|customers|clients|areas|locations|service-areas)\b/.test(path)) return true;
+  if (/\b(?:services|service|solutions|solution|categories|category)\b/.test(path)) return true;
+  if (SERVICE_PAGE_TERMS.some((term) => path.includes(term))) return true;
+  return parts.length <= 2;
+}
+
+function looksLikeBrandPage(parts: string[]) {
+  return parts.some((part) => BRAND_PAGE_TERMS.includes(part));
+}
+
+function looksLikeCollectionPage(parts: string[]) {
+  return parts.some((part) => COLLECTION_PAGE_TERMS.includes(part));
+}
+
+function looksLikeProductPage(parts: string[]) {
+  if (parts.some((part) => PRODUCT_PAGE_TERMS.includes(part))) return true;
+  if (parts.length < 2) return false;
+  const [first] = parts;
+  return ["shop", "store"].includes(first ?? "") && parts.length >= 2;
 }
 
 function sameOrigin(left: string, right: string) {
@@ -497,4 +595,52 @@ function truncate(value: string, limit: number) {
 
 function uniqueUrls(values: string[]) {
   return [...new Set(values)];
+}
+
+function homepageUrlFromSitemap(sitemapUrl: string) {
+  return new URL("/", sitemapUrl).toString();
+}
+
+function uniqueSameOriginUrls(values: string[], sitemapUrl: string) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeUrlForPriority(value);
+    if (!normalized || seen.has(normalized) || !sameOrigin(normalized, sitemapUrl)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function pushLimited(target: string[], values: string[], count: number) {
+  if (count <= 0) return;
+  target.push(...values.slice(0, count));
+}
+
+function pushAll(target: string[], values: string[]) {
+  target.push(...values);
+}
+
+function limitRemaining(limit: number, values: string[]) {
+  return Math.max(0, limit - values.length);
+}
+
+function sampleRepresentativeUrls(urls: string[], limit: number) {
+  if (limit <= 0) return [];
+  if (urls.length <= limit) return urls.slice(0, limit);
+  const sampled: string[] = [];
+  const seen = new Set<number>();
+  for (let step = 0; step < limit; step += 1) {
+    const index = Math.min(urls.length - 1, Math.floor(((step + 0.5) * urls.length) / limit));
+    if (seen.has(index)) continue;
+    seen.add(index);
+    sampled.push(urls[index]);
+  }
+  if (sampled.length >= limit) return sampled.slice(0, limit);
+  for (let index = 0; index < urls.length && sampled.length < limit; index += 1) {
+    if (seen.has(index)) continue;
+    sampled.push(urls[index]);
+  }
+  return sampled.slice(0, limit);
 }
