@@ -136,16 +136,46 @@ Short section.`,
     const plan = buildArticleGenerationPlan(DEFAULT_CONTROLS, null, siteProfile, "industry_explainer", title);
     const prompt = buildGenerationPrompt({ title, controls: DEFAULT_CONTROLS, research: researchPack(), siteProfile, plan });
 
-    assert.deepEqual(plan.websiteEntityRecommendations?.brands, ["Joules", "White Stuff", "Seasalt", "Barbour"]);
+    assert.deepEqual(plan.websiteEntityRecommendations?.brands, ["Joules", "White Stuff", "Seasalt", "Barbour", "Inis"]);
+    assert.deepEqual(plan.websiteEntityRecommendations?.brandUsageTarget, { min: 2, max: 5 });
     assert.deepEqual(plan.websiteEntityRecommendations?.categories, ["Clothing", "Footwear", "Accessories"]);
     assert.deepEqual(plan.websiteEntityRecommendations?.productTypes, ["Knitwear", "Handbags", "Boots", "Scarves"]);
     assert.ok(plan.planningPriorities.some((value) => value.includes("prefer website-owned brands before external brands")));
+    assert.ok(plan.planningPriorities.some((value) => value.includes("weave 2-5 natural mentions")));
     assert.ok(plan.planningPriorities.some((value) => value.includes("only introduce external brands, retailers, or product examples")));
     assert.ok(plan.knowledgeContext?.some((value) => value.includes("Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour")));
+    assert.ok(plan.knowledgeContext?.some((value) => value.includes("Brand usage target for this article: 2-5 natural mentions")));
     assert.match(prompt, /Website entity recommendations for this article:/);
     assert.match(prompt, /Prefer website-owned entities before external brands, retailers, or generic examples when they are relevant to the title\./);
+    assert.match(prompt, /weave 2-5 brand mentions into examples and recommendations across the article rather than keeping product advice generic\./);
     assert.match(prompt, /Recommended website categories for this article: Clothing, Footwear, Accessories/);
     assert.match(prompt, /Preferred website CTA for this article: Shop Now/);
+  });
+
+  it("surfaces relevant website-owned brands for coastal clothing articles", () => {
+    const title = "What To Wear For A Seaside Weekend In Britain";
+    const prompt = promptForTitle(title);
+
+    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour, Inis/);
+    assert.match(prompt, /a waterproof jacket from brands such as Joules or White Stuff/);
+  });
+
+  it("surfaces relevant website-owned brands for gifting articles", () => {
+    const title = "Best Gift Ideas For A Relaxing Coastal Weekend";
+    const prompt = promptForTitle(title);
+
+    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour, Inis/);
+    assert.match(prompt, /Brand usage target for this article: 2-5 natural mentions when contextually relevant/);
+    assert.match(prompt, /Brand mentions must feel natural inside outfit, gifting, accessories, or product recommendations\./);
+  });
+
+  it("surfaces relevant website-owned brands for accessories articles", () => {
+    const title = "How To Choose Accessories For A British Weekend Away";
+    const prompt = promptForTitle(title);
+
+    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour, Inis/);
+    assert.match(prompt, /Recommended website categories for this article: Accessories, Clothing, Footwear/);
+    assert.match(prompt, /Recommended website product types for this article:/);
   });
 });
 
@@ -208,4 +238,10 @@ function ecommerceSiteProfile(): ProjectSiteProfileDocument {
       }
     }
   };
+}
+
+function promptForTitle(title: string) {
+  const siteProfile = ecommerceSiteProfile();
+  const plan = buildArticleGenerationPlan(DEFAULT_CONTROLS, null, siteProfile, "industry_explainer", title);
+  return buildGenerationPrompt({ title, controls: DEFAULT_CONTROLS, research: researchPack(), siteProfile, plan });
 }

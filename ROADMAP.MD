@@ -134,6 +134,9 @@
 - Injected those recommended entities into both planning context and generation prompts so article drafting now prefers website-owned examples before external brands, retailers, or generic examples.
 - Added an explicit generation rule that external entities should only be used when no relevant website-owned entity exists or the research specifically requires them.
 - Added regression coverage proving retail website entities are preferred during planning and prompting for title-specific ecommerce content.
+- Increased natural brand utilisation guidance so relevant website-owned brands are woven into practical examples and recommendations rather than left implicit.
+- Added a non-promotional brand usage target of `2-5` contextual brand mentions per article when the title naturally supports them.
+- Added regressions for coastal clothing, gifting, and accessories titles to ensure relevant website-owned brands are surfaced in generation context.
 
 ## Deferred
 

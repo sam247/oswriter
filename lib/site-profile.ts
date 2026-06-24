@@ -18,6 +18,7 @@ export interface SiteEntityRecommendations {
   productTypes: string[];
   audiences: string[];
   cta: string | null;
+  brandUsageTarget?: { min: number; max: number };
   priorityLines: string[];
   contextLines: string[];
 }
@@ -334,7 +335,7 @@ export function siteProfileEntityRecommendations(profile: ProjectSiteProfileDocu
   const businessType = siteProfileBusinessType(profile);
   const ecommerce = siteProfileEcommerceFacets(profile);
   const titleContext = normalizeRecommendationText(title);
-  const brands = rankedEntitySubset(ecommerce.brands, titleContext, 4, "brand");
+  const brands = rankedEntitySubset(ecommerce.brands, titleContext, 5, "brand");
   const categories = rankedEntitySubset(ecommerce.categories, titleContext, 3, "category");
   const productTypes = rankedEntitySubset(ecommerce.productTypes, titleContext, 4, "product_type");
   const services = rankedEntitySubset(profile.services, titleContext, 4, "service");
@@ -345,8 +346,12 @@ export function siteProfileEntityRecommendations(profile: ProjectSiteProfileDocu
   const chosenBrands = businessType === "service" ? [] : brands;
   const chosenServices = businessType === "ecommerce" ? [] : services;
   const cta = profile.ctas[0] ?? null;
+  const brandUsageTarget = chosenBrands.length ? { min: 2, max: 5 } : undefined;
   const priorityLines = [
     chosenBrands.length ? `prefer website-owned brands before external brands when relevant: ${chosenBrands.join(", ")}` : "",
+    chosenBrands.length ? `when the topic supports practical product examples, weave ${brandUsageTarget?.min}-${brandUsageTarget?.max} natural mentions of relevant website-owned brands into recommendations instead of keeping them generic` : "",
+    chosenBrands.length ? "use brand references inside advice, outfit suggestions, gifting ideas, or product examples rather than listing brands artificially" : "",
+    chosenBrands.length ? "do not force brand mentions where there is no natural fit, and do not let the article read like promotional copy" : "",
     chosenCategories.length ? `prefer website categories before generic retail examples: ${chosenCategories.join(", ")}` : "",
     chosenProductTypes.length ? `prefer website product types when giving examples or recommendations: ${chosenProductTypes.join(", ")}` : "",
     chosenServices.length ? `prefer the website's own services when giving examples or recommendations: ${chosenServices.join(", ")}` : "",
@@ -358,6 +363,8 @@ export function siteProfileEntityRecommendations(profile: ProjectSiteProfileDocu
   ].filter(Boolean);
   const contextLines = [
     chosenBrands.length ? `Recommended website brands for this article: ${chosenBrands.join(", ")}` : "",
+    chosenBrands.length ? `Brand usage target for this article: ${brandUsageTarget?.min}-${brandUsageTarget?.max} natural mentions when contextually relevant` : "",
+    chosenBrands.length ? `Natural brand-example pattern: weave brands into advice like "a waterproof jacket from brands such as ${chosenBrands.slice(0, 2).join(" or ")}"` : "",
     chosenCategories.length ? `Recommended website categories for this article: ${chosenCategories.join(", ")}` : "",
     chosenProductTypes.length ? `Recommended website product types for this article: ${chosenProductTypes.join(", ")}` : "",
     chosenServices.length ? `Recommended website services for this article: ${chosenServices.join(", ")}` : "",
@@ -365,7 +372,7 @@ export function siteProfileEntityRecommendations(profile: ProjectSiteProfileDocu
     cta ? `Preferred website CTA for this article: ${cta}` : ""
   ].filter(Boolean);
   if (!priorityLines.length && !contextLines.length) return null;
-  return { brands: chosenBrands, categories: chosenCategories, productTypes: chosenProductTypes, audiences, cta, priorityLines, contextLines };
+  return { brands: chosenBrands, categories: chosenCategories, productTypes: chosenProductTypes, audiences, cta, brandUsageTarget, priorityLines, contextLines };
 }
 
 function pageText(page: SiteKnowledgePageDocument) {

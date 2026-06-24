@@ -148,7 +148,7 @@ export function buildGenerationPrompt({ title, research, controls, profileSnapsh
     : "Knowledge Base (use during planning, outline construction, and writing; do not force irrelevant mentions)";
   const knowledgeContextBlock = knowledgeContext.length ? `\n${knowledgeContextLabel}:\n${knowledgeContext.map((line) => `- ${line}`).join("\n")}` : "";
   const websiteEntityBlock = plan.websiteEntityRecommendations
-    ? `\nWebsite entity recommendations for this article:\n${plan.websiteEntityRecommendations.contextLines.map((line) => `- ${line}`).join("\n")}\n- Prefer website-owned entities before external brands, retailers, or generic examples when they are relevant to the title.\n- Use external entities only when no relevant website-owned entity exists or the research specifically requires them.`
+    ? `\nWebsite entity recommendations for this article:\n${plan.websiteEntityRecommendations.contextLines.map((line) => `- ${line}`).join("\n")}\n- Prefer website-owned entities before external brands, retailers, or generic examples when they are relevant to the title.\n- When recommended website-owned brands are a natural fit, weave ${plan.websiteEntityRecommendations.brandUsageTarget?.min ?? 2}-${plan.websiteEntityRecommendations.brandUsageTarget?.max ?? 5} brand mentions into examples and recommendations across the article rather than keeping product advice generic.\n- Brand mentions must feel natural inside outfit, gifting, accessories, or product recommendations. Do not list brands in a block and do not let the article become promotional copy.\n- Use external entities only when no relevant website-owned entity exists or the research specifically requires them.`
     : "";
   return `Write a practical Markdown article.
 
