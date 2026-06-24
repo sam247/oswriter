@@ -32,6 +32,53 @@ describe("SEO decision engine", () => {
     assert.ok(result.recommendations.every((item) => item.currentText && item.proposedText && item.difference));
   });
 
+  it("does not recommend FAQ when a traditional FAQ heading is present", () => {
+    const article = articleFixture();
+    const markdown = `${article.markdown}\n\n## Frequently Asked Questions\n\n### What should readers know first?\nThey should understand the practical context.`;
+    const result = buildSeoDecisionEngine({ article, markdown });
+
+    assert.ok(!result.recommendations.some((item) => item.id === "add-faq"));
+  });
+
+  it("does not recommend FAQ when three question-style H2/H3 headings are present", () => {
+    const article = articleFixture();
+    const markdown = `${article.markdown}\n\n## What should a tender pack include?\nIt needs drawings and risk notes.\n\n## When should surveys be commissioned?\nEarly enough to inform pricing.\n\n### How should bidders price uncertainty?\nThey should separate assumptions from fixed scope.`;
+    const result = buildSeoDecisionEngine({ article, markdown });
+
+    assert.ok(!result.recommendations.some((item) => item.id === "add-faq"));
+  });
+
+  it("treats mixed FAQ structures as complete coverage", () => {
+    const article = articleFixture();
+    const markdown = `${article.markdown}\n\n## Common Questions\n\n### Can work start before final permits?\nOnly when the risk is understood.\n\n## Delivery Risks\n\n### Which constraints affect mobilisation?\nAccess, surveys, and utility approvals.`;
+    const result = buildSeoDecisionEngine({ article, markdown });
+
+    assert.ok(!result.recommendations.some((item) => item.id === "add-faq"));
+  });
+
+  it("shows the missing FAQ recommendation when there is no FAQ content", () => {
+    const article = articleFixture();
+    const result = buildSeoDecisionEngine({ article, markdown: article.markdown });
+    const recommendation = result.recommendations.find((item) => item.id === "add-faq");
+
+    assert.ok(recommendation);
+    assert.equal(recommendation.title, "No FAQ section detected");
+    assert.equal(recommendation.impact, 4);
+  });
+
+  it("shows partial FAQ severity for one or two question-style headings", () => {
+    const article = articleFixture();
+    const oneQuestion = `${article.markdown}\n\n## What should buyers check first?\nThey should check evidence before pricing.`;
+    const twoQuestions = `${oneQuestion}\n\n### How should risks be compared?\nThey should be compared against cost and timing.`;
+
+    for (const markdown of [oneQuestion, twoQuestions]) {
+      const recommendation = buildSeoDecisionEngine({ article, markdown }).recommendations.find((item) => item.id === "add-faq");
+      assert.ok(recommendation);
+      assert.equal(recommendation.title, "FAQ coverage could be expanded");
+      assert.equal(recommendation.impact, 2);
+    }
+  });
+
   it("inserts the most relevant unused statistic into paragraph flow", () => {
     const article = {
       ...articleFixture(),

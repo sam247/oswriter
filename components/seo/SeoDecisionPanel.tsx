@@ -1,7 +1,7 @@
 "use client";
 
-import { Check, CheckCircle2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, CheckCircle2, Circle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { applySeoRecommendations, buildSeoDecisionEngine, type SeoRecommendation, type SeoRecommendationSection } from "@/lib/seo/decision-engine";
 import type { ArticleDocument, ProjectProfile, ResearchPack } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,11 @@ interface PreviewState {
   recommendations: SeoRecommendation[];
 }
 
+interface TrackedRecommendation {
+  id: string;
+  title: string;
+}
+
 const SECTIONS: Array<{ key: SeoRecommendationSection; label: string }> = [
   { key: "fix", label: "Fix" },
   { key: "improve", label: "Improve" },
@@ -30,11 +35,44 @@ const SECTIONS: Array<{ key: SeoRecommendationSection; label: string }> = [
 export function SeoDecisionPanel({ article, markdown, research, profile, onApplyMarkdown, onNotify }: SeoDecisionPanelProps) {
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
+  const [trackedArticleId, setTrackedArticleId] = useState(article.id);
+  const [trackedRecommendations, setTrackedRecommendations] = useState<TrackedRecommendation[]>([]);
   const decision = useMemo(
     () => buildSeoDecisionEngine({ article, markdown, research, profile }),
     [article, markdown, research, profile]
   );
-  const priorityRecommendations = decision.recommendations.slice(0, 3);
+  const priorityRecommendations = useMemo(() => decision.recommendations.slice(0, 3), [decision.recommendations]);
+  const currentRecommendationIds = useMemo(() => new Set(decision.recommendations.map((item) => item.id)), [decision.recommendations]);
+  const trackedProgressItems = trackedRecommendations.map((item) => ({
+    ...item,
+    completed: !currentRecommendationIds.has(item.id)
+  }));
+  const hasProgressItems = trackedProgressItems.length > 0;
+
+  useEffect(() => {
+    setTrackedArticleId(article.id);
+    setTrackedRecommendations(priorityRecommendations.map(toTrackedRecommendation));
+  }, [article.id]);
+
+  useEffect(() => {
+    setTrackedRecommendations((current) => {
+      if (trackedArticleId !== article.id) return priorityRecommendations.map(toTrackedRecommendation);
+
+      const currentIds = new Set(current.map((item) => item.id));
+      const refreshed = current.map((item) => {
+        const latest = decision.recommendations.find((recommendation) => recommendation.id === item.id);
+        return latest ? toTrackedRecommendation(latest) : item;
+      });
+      const additions = priorityRecommendations
+        .filter((item) => !currentIds.has(item.id))
+        .slice(0, Math.max(0, 3 - refreshed.filter((item) => currentRecommendationIds.has(item.id)).length))
+        .map(toTrackedRecommendation);
+      const next = [...refreshed, ...additions];
+
+      if (sameTrackedRecommendations(current, next)) return current;
+      return next;
+    });
+  }, [article.id, currentRecommendationIds, decision.recommendations, priorityRecommendations, trackedArticleId]);
 
   function openPreview(recommendations: SeoRecommendation[], title: string, actionLabel: string) {
     setPreview({ recommendations, title, actionLabel });
@@ -84,18 +122,24 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
           )}
         </div>
 
-        {priorityRecommendations.length > 0 ? (
+        {hasProgressItems ? (
           <div className="mt-3 border-t border-line pt-3">
-            <div className="text-[11.5px] font-medium text-ink">To reach {decision.targetScore}:</div>
+            <div className="text-[11.5px] font-medium text-ink">{priorityRecommendations.length ? `To reach ${decision.targetScore}:` : "Progress:"}</div>
             <div className="mt-2 space-y-1.5">
-              {priorityRecommendations.map((item) => (
-                <div key={item.id} className="flex items-start gap-2 text-[11px] leading-snug text-ink-muted">
-                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-ink-subtle" />
+              {trackedProgressItems.map((item) => (
+                <div key={item.id} className={cn("flex items-start gap-2 text-[11px] leading-snug", item.completed ? "text-success" : "text-ink-muted")}>
+                  {item.completed ? (
+                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                  ) : (
+                    <Circle className="mt-0.5 size-3.5 shrink-0 text-danger" />
+                  )}
                   <span>{item.title}</span>
                 </div>
               ))}
             </div>
-            <div className="mono mt-2 text-[10.5px] text-ink-subtle">Estimated impact: +{decision.estimatedImpact} points</div>
+            <div className="mono mt-2 text-[10.5px] text-ink-subtle">
+              {priorityRecommendations.length ? `Estimated impact: +${decision.estimatedImpact} points` : "All tracked items complete"}
+            </div>
           </div>
         ) : (
           <div className="mt-3 flex items-center gap-2 border-t border-line pt-3 text-[11.5px] text-success">
@@ -163,6 +207,17 @@ export function SeoDecisionPanel({ article, markdown, research, profile, onApply
       )}
     </div>
   );
+}
+
+function toTrackedRecommendation(recommendation: SeoRecommendation): TrackedRecommendation {
+  return {
+    id: recommendation.id,
+    title: recommendation.title
+  };
+}
+
+function sameTrackedRecommendations(left: TrackedRecommendation[], right: TrackedRecommendation[]) {
+  return left.length === right.length && left.every((item, index) => item.id === right[index]?.id && item.title === right[index]?.title);
 }
 
 function isDirectInsertionAction(id: string) {

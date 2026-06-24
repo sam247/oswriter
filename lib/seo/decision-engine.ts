@@ -30,6 +30,10 @@ interface SeoDecisionInput {
   profile?: ProjectProfile | null;
 }
 
+type FaqCoverageStatus = "missing" | "partial" | "complete";
+
+const RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.7;
+
 export function buildSeoDecisionEngine({ article, markdown, research, profile }: SeoDecisionInput): SeoDecisionResult {
   const recommendations = [
     ...buildFixRecommendations(article, markdown, profile),
@@ -54,17 +58,20 @@ export function applySeoRecommendations(markdown: string, recommendations: SeoRe
 function buildFixRecommendations(article: ArticleDocument, markdown: string, profile?: ProjectProfile | null) {
   const recommendations: SeoRecommendation[] = [];
   const topic = article.title.replace(/[?.!]+$/, "");
+  const faqCoverage = classifyFaqCoverage(markdown);
 
-  if (!/^##\s+FAQ\b/im.test(markdown)) {
+  if (faqCoverage.status !== "complete" && faqCoverage.confidence >= RECOMMENDATION_CONFIDENCE_THRESHOLD) {
     const block = `## FAQ\n\n### What should readers know first about ${topic}?\nThe most important starting point is to understand the practical constraints, evidence, and decisions that shape the outcome.\n\n### What commonly causes problems with ${topic}?\nProblems usually arise when assumptions are not checked early, responsibilities are unclear, or evidence is considered too late.\n\n### What should readers do next?\nReview the current requirements, verify the supporting evidence, and turn the findings into a clear next action.`;
     recommendations.push(createAppendRecommendation({
       id: "add-faq",
       section: "fix",
-      title: "No FAQ section detected",
-      reason: "A focused FAQ adds answer-ready coverage for long-tail searches and featured snippets.",
+      title: faqCoverage.status === "partial" ? "FAQ coverage could be expanded" : "No FAQ section detected",
+      reason: faqCoverage.status === "partial"
+        ? `${faqCoverage.questionHeadingCount} question-style heading${faqCoverage.questionHeadingCount === 1 ? " is" : "s are"} present, but the article needs a fuller answer-ready FAQ cluster.`
+        : "A focused FAQ adds answer-ready coverage for long-tail searches and featured snippets.",
       actionLabel: "Apply FAQ",
-      impact: 4,
-      priority: 100,
+      impact: faqCoverage.status === "partial" ? 2 : 4,
+      priority: faqCoverage.status === "partial" ? 88 : 100,
       markdown,
       block
     }));
@@ -717,6 +724,52 @@ function hasPracticalExample(markdown: string) {
 
 function hasReferencesSection(markdown: string) {
   return /^##\s+(?:References|Sources|Bibliography)\b/im.test(markdown);
+}
+
+function classifyFaqCoverage(markdown: string): { status: FaqCoverageStatus; confidence: number; questionHeadingCount: number; hasExplicitFaqHeading: boolean } {
+  const headings = markdownHeadings(markdown).filter((heading) => heading.level === 2 || heading.level === 3);
+  const hasExplicitFaqHeading = headings.some((heading) => isFaqHeading(heading.text));
+  const questionHeadingCount = headings.filter((heading) => isQuestionStyleHeading(heading.text)).length;
+
+  if (hasExplicitFaqHeading || questionHeadingCount >= 3) {
+    return {
+      status: "complete",
+      confidence: hasExplicitFaqHeading ? 0.98 : 0.9,
+      questionHeadingCount,
+      hasExplicitFaqHeading
+    };
+  }
+
+  if (questionHeadingCount > 0) {
+    return {
+      status: "partial",
+      confidence: questionHeadingCount === 2 ? 0.86 : 0.78,
+      questionHeadingCount,
+      hasExplicitFaqHeading
+    };
+  }
+
+  return {
+    status: "missing",
+    confidence: headings.length ? 0.94 : 0.88,
+    questionHeadingCount,
+    hasExplicitFaqHeading
+  };
+}
+
+function markdownHeadings(markdown: string) {
+  return [...markdown.matchAll(/^(#{1,6})\s+(.+)$/gm)].map((match) => ({
+    level: match[1]?.length ?? 1,
+    text: (match[2] ?? "").trim()
+  }));
+}
+
+function isFaqHeading(value: string) {
+  return /\b(?:FAQs?|Frequently Asked Questions|Common Questions)\b/i.test(value);
+}
+
+function isQuestionStyleHeading(value: string) {
+  return /\?\s*$/.test(value) || /^(?:What|How|Why|When|Where|Who|Which|Can|Should|Does|Is|Are)\b/i.test(value.trim());
 }
 
 function containsFact(markdown: string, fact: string) {
