@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { nowIso } from "@/lib/defaults";
 import type { BusinessTypeKey } from "@/lib/project/profile";
+import { ExaSearchAdapter } from "@/lib/research/exa";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import { extractProjectSiteProfile } from "@/lib/site-profile";
 import type { WorkspaceStore } from "@/lib/storage/storage";
-import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
+import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SearchAdapter, SearchResult, SiteKnowledgePageDocument } from "@/lib/types";
 
 export const SITE_KNOWLEDGE_MAX_URLS = 50;
 const SITE_KNOWLEDGE_MAX_CANDIDATE_URLS = 500;
@@ -85,6 +86,11 @@ interface SiteKnowledgeUrlDiscoveryResult {
   failedSitemaps: SitemapFailure[];
 }
 
+interface SearchDiscoveryResult {
+  pages: SiteKnowledgePageDocument[];
+  attemptedQueries: string[];
+}
+
 interface LinkRecord {
   url: string;
   text: string;
@@ -96,6 +102,7 @@ interface ImportSiteKnowledgeOptions {
   configuredBusinessType?: BusinessTypeKey;
   store: WorkspaceStore;
   fetcher?: typeof fetch;
+  searchAdapter?: SearchAdapter | null;
   onProgress?: (siteKnowledge: ProjectSiteKnowledgeDocument) => void | Promise<void>;
 }
 
@@ -135,6 +142,7 @@ export async function importSiteKnowledge({
   configuredBusinessType = "auto_detect",
   store,
   fetcher = fetch,
+  searchAdapter = new ExaSearchAdapter({ providerId: "queuewrite" }),
   onProgress
 }: ImportSiteKnowledgeOptions): Promise<ImportSiteKnowledgeResult> {
   const existing = await store.getProjectSiteKnowledge(projectId);
@@ -157,56 +165,73 @@ export async function importSiteKnowledge({
   await persistSiteKnowledgeStatus(store, baseStatus, onProgress);
 
   try {
-    const discoveredUrls = await discoverSiteKnowledgeUrls(fetcher, normalizedSitemapUrl, SITE_KNOWLEDGE_MAX_URLS);
-    const urls = discoveredUrls.urls;
-    const pages: SiteKnowledgePageDocument[] = [];
-    const failedUrls: string[] = [];
-    let progress = {
+    let discoveredUrls: SiteKnowledgeUrlDiscoveryResult | null = null;
+    let discoveryMetadata: Record<string, unknown> = {};
+    let pages: SiteKnowledgePageDocument[] = [];
+    let progress: ProjectSiteKnowledgeDocument = {
       ...baseStatus,
-      totalDiscoveredUrls: urls.length,
       updatedAt: nowIso()
     };
-    await persistSiteKnowledgeStatus(store, progress, onProgress);
 
-    for (const [index, url] of urls.entries()) {
-      const importedAt = nowIso();
-      progress = {
-        ...progress,
-        currentUrl: url,
-        processedPages: index,
-        updatedAt: importedAt
+    try {
+      discoveredUrls = await discoverSiteKnowledgeUrls(fetcher, normalizedSitemapUrl, SITE_KNOWLEDGE_MAX_URLS);
+      const importOutcome = await importDiscoveredSiteKnowledgePages({
+        projectId,
+        store,
+        fetcher,
+        baseStatus,
+        discovery: discoveredUrls,
+        onProgress
+      });
+      pages = importOutcome.pages;
+      progress = importOutcome.progress;
+      discoveryMetadata = {
+        crawlMode: discoveredUrls.crawlMode,
+        discoveryMode: discoveredUrls.crawlMode === "discovery",
+        sitemapSource: discoveredUrls.sitemapSource,
+        attemptedSitemaps: discoveredUrls.attemptedSitemaps,
+        failedSitemaps: discoveredUrls.failedSitemaps
       };
-      await persistSiteKnowledgeStatus(store, progress, onProgress);
+    } catch (discoveryError) {
+      if (!searchAdapter) throw discoveryError;
+      discoveryMetadata = {
+        crawlMode: "discovery",
+        discoveryMode: true,
+        discoverySource: "search",
+        sitemapDiscoveryError: discoveryError instanceof Error ? discoveryError.message : "Website discovery failed."
+      };
+    }
 
-      try {
-        const html = await fetchSiteText(fetcher, url, "text/html,application/xhtml+xml");
-        const extracted = extractSiteKnowledgePageFields(html);
-        const page: SiteKnowledgePageDocument = {
-          id: siteKnowledgePageId(url),
-          projectId,
-          url,
-          title: extracted.title,
-          h1: extracted.h1,
-          metaDescription: extracted.metaDescription,
-          shortSummary: extracted.shortSummary,
-          importedAt,
-          updatedAt: importedAt,
-          metadata: {}
+    if (pages.length === 0 && searchAdapter) {
+      const searchDiscovery = await discoverSiteKnowledgePagesWithSearch(projectId, normalizedSitemapUrl, searchAdapter, SITE_KNOWLEDGE_MAX_URLS);
+      if (searchDiscovery.pages.length) {
+        pages = searchDiscovery.pages;
+        for (const page of pages) await store.saveProjectSiteKnowledgePage(page);
+        progress = {
+          ...progress,
+          processedPages: pages.length,
+          pagesIndexed: pages.length,
+          totalDiscoveredUrls: pages.length,
+          currentUrl: null,
+          metadata: {
+            failedCount: 0,
+            searchDiscovery: true
+          },
+          updatedAt: nowIso()
         };
-        pages.push(page);
-        await store.saveProjectSiteKnowledgePage(page);
-      } catch {
-        failedUrls.push(url);
+        await persistSiteKnowledgeStatus(store, progress, onProgress);
+        discoveryMetadata = {
+          ...discoveryMetadata,
+          crawlMode: "discovery",
+          discoveryMode: true,
+          discoverySource: "search",
+          attemptedSearchQueries: searchDiscovery.attemptedQueries
+        };
       }
+    }
 
-      progress = {
-        ...progress,
-        processedPages: index + 1,
-        pagesIndexed: pages.length,
-        metadata: failedUrls.length ? { failedCount: failedUrls.length } : {},
-        updatedAt: nowIso()
-      };
-      await persistSiteKnowledgeStatus(store, progress, onProgress);
+    if (pages.length === 0) {
+      throw new Error("Website discovery failed because no crawlable or searchable pages were available.");
     }
 
     const existingPages = await store.listProjectSiteKnowledgePages(projectId);
@@ -219,20 +244,16 @@ export async function importSiteKnowledge({
       ...progress,
       status: "ready",
       pagesIndexed: pages.length,
-      processedPages: urls.length,
-      totalDiscoveredUrls: urls.length,
+      processedPages: Math.max(progress.processedPages, pages.length),
+      totalDiscoveredUrls: Math.max(progress.totalDiscoveredUrls, pages.length),
       completedAt,
       lastImportedAt: completedAt,
       currentUrl: null,
       lastError: null,
       metadata: {
-        failedCount: failedUrls.length,
+        failedCount: Number(progress.metadata?.failedCount ?? 0),
         staleDeletedCount: stalePages.length,
-        crawlMode: discoveredUrls.crawlMode,
-        discoveryMode: discoveredUrls.crawlMode === "discovery",
-        sitemapSource: discoveredUrls.sitemapSource,
-        attemptedSitemaps: discoveredUrls.attemptedSitemaps,
-        failedSitemaps: discoveredUrls.failedSitemaps
+        ...discoveryMetadata
       },
       updatedAt: completedAt
     };
@@ -317,6 +338,103 @@ async function discoverSiteKnowledgeUrls(fetcher: typeof fetch, sitemapUrl: stri
     throw new Error(`Website discovery failed after sitemap access was unavailable (${blockingFailure.url}${blockingFailure.status ? `: ${blockingFailure.status}` : ""}).`);
   }
   throw new Error("Website discovery failed because no sitemap or crawlable homepage links were available.");
+}
+
+async function importDiscoveredSiteKnowledgePages({
+  projectId,
+  store,
+  fetcher,
+  baseStatus,
+  discovery,
+  onProgress
+}: {
+  projectId: string;
+  store: WorkspaceStore;
+  fetcher: typeof fetch;
+  baseStatus: ProjectSiteKnowledgeDocument;
+  discovery: SiteKnowledgeUrlDiscoveryResult;
+  onProgress?: (siteKnowledge: ProjectSiteKnowledgeDocument) => void | Promise<void>;
+}) {
+  const pages: SiteKnowledgePageDocument[] = [];
+  const failedUrls: string[] = [];
+  let progress: ProjectSiteKnowledgeDocument = {
+    ...baseStatus,
+    totalDiscoveredUrls: discovery.urls.length,
+    updatedAt: nowIso()
+  };
+  await persistSiteKnowledgeStatus(store, progress, onProgress);
+
+  for (const [index, url] of discovery.urls.entries()) {
+    const importedAt = nowIso();
+    progress = {
+      ...progress,
+      currentUrl: url,
+      processedPages: index,
+      updatedAt: importedAt
+    };
+    await persistSiteKnowledgeStatus(store, progress, onProgress);
+
+    try {
+      const html = await fetchSiteText(fetcher, url, "text/html,application/xhtml+xml");
+      const extracted = extractSiteKnowledgePageFields(html);
+      const page: SiteKnowledgePageDocument = {
+        id: siteKnowledgePageId(url),
+        projectId,
+        url,
+        title: extracted.title,
+        h1: extracted.h1,
+        metaDescription: extracted.metaDescription,
+        shortSummary: extracted.shortSummary,
+        importedAt,
+        updatedAt: importedAt,
+        metadata: {}
+      };
+      pages.push(page);
+      await store.saveProjectSiteKnowledgePage(page);
+    } catch {
+      failedUrls.push(url);
+    }
+
+    progress = {
+      ...progress,
+      processedPages: index + 1,
+      pagesIndexed: pages.length,
+      metadata: failedUrls.length ? { failedCount: failedUrls.length } : {},
+      updatedAt: nowIso()
+    };
+    await persistSiteKnowledgeStatus(store, progress, onProgress);
+  }
+
+  return { pages, failedUrls, progress };
+}
+
+async function discoverSiteKnowledgePagesWithSearch(
+  projectId: string,
+  sitemapUrl: string,
+  searchAdapter: SearchAdapter,
+  limit: number
+): Promise<SearchDiscoveryResult> {
+  const homepage = homepageUrlFromSitemap(sitemapUrl);
+  const queries = buildSearchDiscoveryQueries(homepage);
+  const responses = await Promise.allSettled(queries.map((query) => searchAdapter.search(query, {
+    numResults: 8,
+    includeDomains: [new URL(homepage).hostname]
+  })));
+  const results: SearchResult[] = [];
+  const seen = new Set<string>();
+
+  for (const response of responses) {
+    if (response.status !== "fulfilled") continue;
+    for (const result of response.value.results) {
+      const normalized = normalizeUrlForPriority(result.url);
+      if (!normalized || seen.has(normalized) || !sameOrigin(normalized, homepage)) continue;
+      seen.add(normalized);
+      results.push({ ...result, url: normalized });
+    }
+  }
+
+  const pages = buildSiteKnowledgePagesFromSearchResults(projectId, homepage, results, limit);
+  return { pages, attemptedQueries: queries };
 }
 
 async function collectUrlsFromSitemap(
@@ -881,6 +999,16 @@ function parseRobotsSitemapDeclarations(text: string, baseUrl: string) {
     .filter((value): value is string => Boolean(value)));
 }
 
+function buildSearchDiscoveryQueries(homepageUrl: string) {
+  const hostname = new URL(homepageUrl).hostname.replace(/^www\./, "");
+  return [
+    `site:${hostname}`,
+    `site:${hostname} about contact pricing`,
+    `site:${hostname} services solutions features`,
+    `site:${hostname} blog resources insights`
+  ];
+}
+
 function uniqueSameOriginUrls(values: string[], sitemapUrl: string) {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -959,6 +1087,60 @@ function uniqueLinkRecords(links: LinkRecord[]) {
     result.push(link);
   }
   return result;
+}
+
+function buildSiteKnowledgePagesFromSearchResults(projectId: string, homepageUrl: string, results: SearchResult[], limit: number) {
+  const records = results
+    .map((result, index) => ({
+      result,
+      url: normalizeUrlForPriority(result.url),
+      index
+    }))
+    .filter((item): item is { result: SearchResult; url: string; index: number } => {
+      if (!item.url) return false;
+      return sameOrigin(item.url, homepageUrl);
+    });
+  const navigationUrls = new Set<string>();
+  const prioritized = records
+    .map((item) => ({ ...item, priority: scoreSiteKnowledgeUrl(item.url, navigationUrls) }))
+    .sort((left, right) => right.priority - left.priority || left.index - right.index)
+    .slice(0, limit);
+
+  return prioritized.map(({ result, url }) => siteKnowledgePageFromSearchResult(projectId, url, result));
+}
+
+function siteKnowledgePageFromSearchResult(projectId: string, url: string, result: SearchResult): SiteKnowledgePageDocument {
+  const importedAt = nowIso();
+  const title = cleanText(result.title || url);
+  const summarySource = cleanText([
+    result.summary,
+    ...(result.highlights ?? []),
+    result.text
+  ].filter(Boolean).join(" "));
+  const metaDescription = truncate(summarySource, 220);
+  const h1 = deriveHeadingFromTitle(title, url);
+  return {
+    id: siteKnowledgePageId(url),
+    projectId,
+    url,
+    title,
+    h1,
+    metaDescription,
+    shortSummary: buildShortSummary(summarySource, metaDescription, title, h1),
+    importedAt,
+    updatedAt: importedAt,
+    metadata: {
+      source: "search_discovery"
+    }
+  };
+}
+
+function deriveHeadingFromTitle(title: string, url: string) {
+  const primary = cleanText(title.split(/\||-|:/)[0] ?? title);
+  if (primary) return primary;
+  const parts = pathParts(url);
+  const last = parts[parts.length - 1] ?? "Homepage";
+  return cleanText(last.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()));
 }
 
 function buildFallbackDiscoveryQueue(homepageUrl: string, targets: FallbackDiscoveryTargets, limit: number) {

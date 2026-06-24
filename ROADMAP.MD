@@ -171,9 +171,11 @@
   - blog pages
 - Stored crawl-mode metadata on Website Intelligence imports so the UI can distinguish sitemap imports from website discovery mode without a schema migration.
 - Updated the Website Intelligence UI to show `Website Intelligence completed using website discovery mode.` instead of treating sitemap failure as an import-ending error.
+- Added a search-backed discovery fallback for crawler-blocked sites so Website Intelligence can still assemble profile pages from indexed search results when homepage, sitemap, and `robots.txt` requests are challenge-blocked.
 - Added regressions covering:
   - fallback discovery after `429` sitemap failures
   - robots.txt-declared sitemap recovery before homepage fallback
+  - search-backed recovery for crawler-blocked sites such as Vercel challenge pages
 
 ## Deferred
 

@@ -141,7 +141,7 @@ describe("site knowledge", () => {
     assert.equal(urls.includes("https://example.com/collections/gifts"), true);
   });
 
-  it("falls back to homepage discovery when sitemap access is unavailable", async () => {
+  it("falls back to homepage discovery when sitemap access is unavailable but the homepage is crawlable", async () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     const responses = new Map<string, string | { status: number; body?: string; contentType?: string }>([
       ["https://disclosurely.com/sitemaps.xml", { status: 429 }],
@@ -196,6 +196,55 @@ describe("site knowledge", () => {
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/contact"));
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/features/disclosure-monitoring"));
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/services/entity-intelligence"));
+  });
+
+  it("falls back to search-backed discovery when crawler access is blocked", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const responses = new Map<string, string | { status: number; body?: string; contentType?: string }>([
+      ["https://disclosurely.com/sitemaps.xml", { status: 429 }],
+      ["https://disclosurely.com/sitemap.xml", { status: 429 }],
+      ["https://disclosurely.com/sitemap_index.xml", { status: 429 }],
+      ["https://disclosurely.com/robots.txt", { status: 429 }],
+      ["https://disclosurely.com/", { status: 429 }]
+    ]);
+    const searchAdapter = createSearchStub(new Map([
+      ["site:disclosurely.com", [
+        searchResult("https://disclosurely.com/about", "About Disclosurely", "Disclosurely helps compliance teams monitor disclosure obligations and entity changes."),
+        searchResult("https://disclosurely.com/contact", "Contact Disclosurely", "Contact the Disclosurely team to discuss your disclosure requirements."),
+        searchResult("https://disclosurely.com/pricing", "Disclosurely Pricing", "Book a demo and explore pricing for entity monitoring and disclosure workflows.")
+      ]],
+      ["site:disclosurely.com about contact pricing", [
+        searchResult("https://disclosurely.com/book-demo", "Book Demo | Disclosurely", "Book a demo with the Disclosurely team."),
+        searchResult("https://disclosurely.com/features/disclosure-monitoring", "Disclosure Monitoring Software", "Disclosure monitoring software for compliance teams and legal operations. Book a demo today.")
+      ]],
+      ["site:disclosurely.com services solutions features", [
+        searchResult("https://disclosurely.com/services/entity-intelligence", "Entity Intelligence Services", "Entity intelligence services for regulated businesses and governance teams.")
+      ]],
+      ["site:disclosurely.com blog resources insights", [
+        searchResult("https://disclosurely.com/blog", "Disclosurely Blog", "Compliance insights and disclosure guidance.")
+      ]]
+    ]));
+
+    const result = await importSiteKnowledge({
+      projectId: "disclosurely-blocked",
+      sitemapUrl: "https://disclosurely.com/sitemaps.xml",
+      store,
+      fetcher: createFetchStub(responses),
+      searchAdapter
+    });
+    const savedStatus = await store.getProjectSiteKnowledge("disclosurely-blocked");
+    const metadata = (savedStatus?.metadata ?? {}) as Record<string, unknown>;
+
+    assert.equal(savedStatus?.status, "ready");
+    assert.equal(metadata.discoveryMode, true);
+    assert.equal(metadata.crawlMode, "discovery");
+    assert.equal(metadata.discoverySource, "search");
+    assert.ok(Array.isArray(metadata.attemptedSearchQueries));
+    assert.equal(result.siteProfile.domain, "disclosurely.com");
+    assert.ok(result.siteProfile.pageCount >= 5);
+    assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/features/disclosure-monitoring"));
+    assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/services/entity-intelligence"));
+    assert.ok(result.pages.every((page) => page.metadata.source === "search_discovery"));
   });
 
   it("uses robots.txt sitemap declarations before homepage-only discovery", async () => {
@@ -592,5 +641,25 @@ function sitePage(url: string, title: string, h1: string, metaDescription = "Gro
     importedAt: "2026-06-24T00:00:00.000Z",
     updatedAt: "2026-06-24T00:00:00.000Z",
     metadata: {}
+  };
+}
+
+function createSearchStub(resultsByQuery: Map<string, Array<{ title: string; url: string; summary?: string; text?: string; highlights?: string[] }>>) {
+  return {
+    async search(query: string) {
+      return {
+        results: resultsByQuery.get(query) ?? []
+      };
+    }
+  };
+}
+
+function searchResult(url: string, title: string, summary: string) {
+  return {
+    url,
+    title,
+    summary,
+    text: summary,
+    highlights: [summary]
   };
 }
