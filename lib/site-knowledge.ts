@@ -69,6 +69,18 @@ interface ExtractedPageFields {
   shortSummary: string;
 }
 
+class SiteKnowledgeFetchError extends Error {
+  url: string;
+  status: number;
+
+  constructor(url: string, status: number) {
+    super(`Failed to fetch ${url}: ${status}`);
+    this.name = "SiteKnowledgeFetchError";
+    this.url = url;
+    this.status = status;
+  }
+}
+
 export async function importSiteKnowledge({
   projectId,
   sitemapUrl,
@@ -199,7 +211,8 @@ export async function collectSitemapUrls(fetcher: typeof fetch, sitemapUrl: stri
   const homepage = homepageUrlFromSitemap(sitemapUrl);
   const navigationTargets = await collectHomepageNavigationUrls(fetcher, sitemapUrl);
   const navigationUrls = navigationTargetSet(navigationTargets);
-  const pending = [normalizeSiteKnowledgeUrl(sitemapUrl)];
+  const rootSitemapUrl = normalizeSiteKnowledgeUrl(sitemapUrl);
+  const pending = [rootSitemapUrl];
   const visited = new Set<string>();
   const urls = new Set<string>();
   const candidateLimit = Math.max(limit, SITE_KNOWLEDGE_MAX_CANDIDATE_URLS);
@@ -208,7 +221,13 @@ export async function collectSitemapUrls(fetcher: typeof fetch, sitemapUrl: stri
     const current = pending.shift();
     if (!current || visited.has(current)) continue;
     visited.add(current);
-    const xml = await fetchSiteText(fetcher, current, "application/xml,text/xml,text/plain");
+    let xml: string;
+    try {
+      xml = await fetchSiteText(fetcher, current, "application/xml,text/xml,text/plain");
+    } catch (error) {
+      if (error instanceof SiteKnowledgeFetchError && error.status === 429 && current !== rootSitemapUrl) continue;
+      throw error;
+    }
     const parsed = parseSitemap(xml, current);
     for (const nested of parsed.sitemapUrls) {
       if (!visited.has(nested) && pending.length + urls.size < candidateLimit * 4) pending.push(nested);
@@ -343,7 +362,7 @@ async function fetchSiteText(fetcher: typeof fetch, url: string, accept: string)
     cache: "no-store",
     redirect: "follow"
   });
-  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status}`);
+  if (!response.ok) throw new SiteKnowledgeFetchError(url, response.status);
   return response.text();
 }
 

@@ -2,16 +2,20 @@
 
 import { ChevronDown, ExternalLink, Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { BUSINESS_TYPE_OPTIONS, type BusinessTypeKey } from "@/lib/project/profile";
 import { siteProfileBusinessType, siteProfileEcommerceDebug, siteProfileEcommerceFacets, siteProfileStrategyLabel } from "@/lib/site-profile";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
 interface KnowledgeBaseSettingsProps {
   projectId: string;
+  businessTypeKey: string;
+  businessTypeLabel: string;
+  onSaveBusinessType: (businessTypeKey: BusinessTypeKey) => Promise<boolean>;
   disabledReason?: string | null;
 }
 
-export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBaseSettingsProps) {
+export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessTypeLabel, onSaveBusinessType, disabledReason }: KnowledgeBaseSettingsProps) {
   const [siteKnowledge, setSiteKnowledge] = useState<ProjectSiteKnowledgeDocument | null>(null);
   const [siteProfile, setSiteProfile] = useState<ProjectSiteProfileDocument | null>(null);
   const [sitemapUrl, setSitemapUrl] = useState("");
@@ -25,6 +29,12 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
   const [pagesLoading, setPagesLoading] = useState(false);
   const [pagesLoaded, setPagesLoaded] = useState(false);
   const [pageQuery, setPageQuery] = useState("");
+  const [selectedBusinessType, setSelectedBusinessType] = useState(businessTypeKey);
+  const [businessTypeBusy, setBusinessTypeBusy] = useState(false);
+
+  useEffect(() => {
+    setSelectedBusinessType(businessTypeKey);
+  }, [businessTypeKey]);
 
   useEffect(() => {
     void refreshSiteKnowledge(projectId, setSiteKnowledge, setSiteProfile, setSitemapUrl, setSiteLoading, setSiteError);
@@ -142,6 +152,14 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
     }
   }
 
+  async function updateBusinessType(nextBusinessTypeKey: string) {
+    setSelectedBusinessType(nextBusinessTypeKey);
+    setBusinessTypeBusy(true);
+    const ok = await onSaveBusinessType(nextBusinessTypeKey as BusinessTypeKey);
+    if (!ok) setSelectedBusinessType(businessTypeKey);
+    setBusinessTypeBusy(false);
+  }
+
   async function forgetSite() {
     setForgetting(true);
     setSiteError(null);
@@ -184,6 +202,20 @@ export function KnowledgeBaseSettings({ projectId, disabledReason }: KnowledgeBa
           <div className="mt-4 rounded-md border border-line bg-surface-2 p-3">
             <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
             <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">This profile becomes the foundation for generation, SEO suggestions, internal links, entity detection, topical authority, and CTA recommendations.</p>
+
+            <label className="mt-3 block text-[12px] text-ink-muted">
+              <span>Website Type</span>
+              <select
+                value={selectedBusinessType}
+                disabled={businessTypeBusy || siteBusy || forgetting || Boolean(disabledReason)}
+                title={disabledReason ?? "Website Intelligence business type"}
+                onChange={(event) => void updateBusinessType(event.currentTarget.value)}
+                className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none focus:border-ink disabled:opacity-50"
+              >
+                {BUSINESS_TYPE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+              </select>
+            </label>
+            <div className="mt-1 text-[10.5px] text-ink-subtle">Current strategy: {businessTypeLabel}</div>
 
             <label className="mt-3 block text-[12px] text-ink-muted">
               <span>Sitemap URL</span>

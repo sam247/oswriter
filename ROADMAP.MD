@@ -122,10 +122,11 @@
 
 ### Explicit Business Type Selection
 
-- Added `Business Type` to project settings with options for `Auto Detect`, `Ecommerce`, `Service Business`, `Local Service`, `Agency`, `SaaS`, and `Charity`.
+- Added `Business Type` to Website Intelligence with options for `Auto Detect`, `Ecommerce`, `Service Business`, `Local Service`, `Agency`, `SaaS`, and `Charity`.
 - Stored the selected business type on `project.profile` so it is available across the application architecture, including Website Intelligence, planning, and future recommendation systems.
 - Updated Website Intelligence import and lazy rebuild paths to use the selected project business type as the primary strategy source, only falling back to auto detection when the setting is `Auto Detect`.
 - Updated the Website Intelligence UI to show the strategy used for the current analysis, including `Auto Detect (DetectedType)` when automatic routing is active.
+- Made sitemap discovery more resilient by skipping rate-limited nested sitemap files (`429`) instead of failing the entire Website Intelligence import when the root sitemap is still accessible.
 
 ## Deferred
 

@@ -9,7 +9,7 @@ import { SourceFavicon } from "@/components/research/SourceFavicon";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
-import { audienceOptionsForIndustry, BUSINESS_TYPE_OPTIONS, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
+import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
@@ -2548,9 +2548,8 @@ function ProjectSettingsPanel({
           <CollapsibleSettingsSection title="Project Settings" defaultOpen>
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
-            <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.businessTypeLabel} · {profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
+              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
             </div>
-            <SettingsSelect label="Business Type" value={profile.businessTypeKey} options={BUSINESS_TYPE_OPTIONS} onChange={(businessTypeKey) => updateProfile({ businessTypeKey })} />
             <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => updateProfile({ regionKey })} />
             <SettingsSelect
               label="Industry"
@@ -2582,6 +2581,13 @@ function ProjectSettingsPanel({
           </CollapsibleSettingsSection>
           <KnowledgeBaseSettings
             projectId={project.id}
+            businessTypeKey={profile.businessTypeKey}
+            businessTypeLabel={profile.businessTypeLabel}
+            onSaveBusinessType={async (businessTypeKey) => {
+              const ok = await onSaveProjectSettings({ businessTypeKey }, contentProfile);
+              if (ok) setProfile((current) => normalizeProjectProfile({ ...current, businessTypeKey }, fallbackTargetWords));
+              return ok;
+            }}
             disabledReason={settingsBlockedReason}
           />
           <CollapsibleSettingsSection title="Publishing">

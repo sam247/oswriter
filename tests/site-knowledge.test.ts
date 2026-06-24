@@ -119,6 +119,28 @@ describe("site knowledge", () => {
     assert.equal(urls[6]?.startsWith("https://shop.example.com/products/"), true);
   });
 
+  it("skips rate-limited nested sitemaps without failing the whole import", async () => {
+    const responses = new Map<string, string | { status: number; body?: string; contentType?: string }>([
+      ["https://example.com/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
+        <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <sitemap><loc>https://example.com/sitemap-pages.xml</loc></sitemap>
+          <sitemap><loc>https://example.com/sitemap_agentic_discovery.xml</loc></sitemap>
+        </sitemapindex>`],
+      ["https://example.com/sitemap-pages.xml", `<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://example.com/about-us</loc></url>
+          <url><loc>https://example.com/collections/gifts</loc></url>
+        </urlset>`],
+      ["https://example.com/sitemap_agentic_discovery.xml", { status: 429 }],
+      ["https://example.com/", `<html><body><footer><a href="/about-us">About Us</a></footer><nav><a href="/collections/gifts">Gifts</a></nav></body></html>`]
+    ]);
+
+    const urls = await collectSitemapUrls(createFetchStub(responses), "https://example.com/sitemap.xml", 10);
+
+    assert.equal(urls.includes("https://example.com/about-us"), true);
+    assert.equal(urls.includes("https://example.com/collections/gifts"), true);
+  });
+
   it("keeps directly navigated pages ahead of ordinary service pages", () => {
     const navigationUrls = new Set(["https://example.com/projects"]);
     const prioritized = prioritizeSiteKnowledgeUrls([
@@ -432,12 +454,16 @@ describe("site knowledge", () => {
   });
 });
 
-function createFetchStub(responses: Map<string, string>): typeof fetch {
+function createFetchStub(responses: Map<string, string | { status: number; body?: string; contentType?: string }>): typeof fetch {
   return async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String(input);
-    const body = responses.get(url);
-    if (body === undefined) return new Response("Not found", { status: 404 });
-    return new Response(body, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+    const response = responses.get(url);
+    if (response === undefined) return new Response("Not found", { status: 404 });
+    if (typeof response === "string") return new Response(response, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+    return new Response(response.body ?? "", {
+      status: response.status,
+      headers: { "Content-Type": response.contentType ?? "text/html; charset=utf-8" }
+    });
   };
 }
 
