@@ -4036,6 +4036,12 @@ function ArticleHeader({
       <div className="mono mt-2.5 space-y-1 text-[11px] text-ink-muted">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span>{profileLabel}</span>
+          <MetadataDot />
+          <ScoreMetricButton score={scores.quality} active={openScore === "quality"} onClick={() => setOpenScore(openScore === "quality" ? null : "quality")} />
+          <MetadataDot />
+          <ScoreMetricButton score={scores.research} active={openScore === "research"} onClick={() => setOpenScore(openScore === "research" ? null : "research")} />
+          <MetadataDot />
+          <ScoreMetricButton score={scores.evidence} active={openScore === "evidence"} onClick={() => setOpenScore(openScore === "evidence" ? null : "evidence")} />
           {article.needsReviewReasons.length > 0 && (
             <>
               <MetadataDot />
@@ -4044,13 +4050,6 @@ function ArticleHeader({
               </button>
             </>
           )}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <ScoreMetricButton score={scores.quality} active={openScore === "quality"} onClick={() => setOpenScore(openScore === "quality" ? null : "quality")} />
-          <MetadataDot />
-          <ScoreMetricButton score={scores.research} active={openScore === "research"} onClick={() => setOpenScore(openScore === "research" ? null : "research")} />
-          <MetadataDot />
-          <ScoreMetricButton score={scores.evidence} active={openScore === "evidence"} onClick={() => setOpenScore(openScore === "evidence" ? null : "evidence")} />
         </div>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span>Sources {article.sources.length}</span>

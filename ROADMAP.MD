@@ -79,6 +79,7 @@
   - tightened the persistent save indicator to a quieter `Saving...` → `✓ Saved` → `Saved` sequence
   - restored the top app header breadcrumb to `QueueWrite > Project > Article` and truncated article titles there to keep the chrome clean
   - removed the extra `GENERATED` line and `Template •` prefix from the in-document article header so the title and core metadata read more cleanly
+  - merged content profile and score metadata onto the same first row so `Industry Explainer • Quality … • Research … • Evidence …` reads as one line
 
 ### Navigation Polish Recovery
 
