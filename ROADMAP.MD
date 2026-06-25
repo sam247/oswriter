@@ -77,6 +77,8 @@
   - reorganised article properties into calmer document metadata rows for template, scores, sources, word count, and reading time
   - reduced toolbar and mode-switch visual weight so controls feel secondary to the document
   - tightened the persistent save indicator to a quieter `Saving...` → `✓ Saved` → `Saved` sequence
+  - restored the top app header breadcrumb to `QueueWrite > Project > Article` and truncated article titles there to keep the chrome clean
+  - removed the extra `GENERATED` line and `Template •` prefix from the in-document article header so the title and core metadata read more cleanly
 
 ### Navigation Polish Recovery
 

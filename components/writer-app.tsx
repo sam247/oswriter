@@ -1608,8 +1608,19 @@ function Workbench() {
             onClick={openProjectBreadcrumb}
             className="truncate text-ink-muted transition-colors hover:text-ink"
           >
-            {breadcrumbArticleTitle ? `← ${state?.project.name ?? "Back to project"}` : state?.project.name ?? "Loading project"}
+            {state?.project.name ?? "Loading project"}
           </button>
+          {breadcrumbArticleTitle ? (
+            <>
+              <ChevronRight className="size-3 text-ink-subtle" />
+              <span
+                title={breadcrumbArticleTitle}
+                className="truncate text-ink transition-colors"
+              >
+                {truncateHeaderBreadcrumb(breadcrumbArticleTitle)}
+              </span>
+            </>
+          ) : null}
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 w-[7.5rem] items-center justify-between gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
@@ -4012,13 +4023,12 @@ function ArticleHeader({
       </button>
       <div className="mt-3 flex gap-4">
         <div className="min-w-0 flex-1">
-          <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(article.status)}</div>
           <textarea
             value={title}
             onChange={(event) => onTitleChange(event.target.value)}
             rows={Math.max(1, Math.ceil(title.length / 72))}
             spellCheck
-            className="mt-1 block min-h-[2.2rem] w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[24px] font-semibold leading-tight tracking-tight text-ink outline-none placeholder:text-ink-subtle"
+            className="block min-h-[2.2rem] w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[24px] font-semibold leading-tight tracking-tight text-ink outline-none placeholder:text-ink-subtle"
             placeholder="Untitled article"
           />
         </div>
@@ -4058,8 +4068,12 @@ function ArticleHeader({
 function contentProfileLabel(value: ContentProfile | "", projectDefault?: ContentProfile) {
   const inheritedProfile = projectDefault ?? "industry_explainer";
   const resolvedProfile = value || inheritedProfile;
-  const label = CONTENT_PROFILES[resolvedProfile].label;
-  return value ? label : `Template • ${label}`;
+  return CONTENT_PROFILES[resolvedProfile].label;
+}
+
+function truncateHeaderBreadcrumb(value: string, maxLength = 35) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength).trimEnd()}...`;
 }
 
 function MetadataDot() {
