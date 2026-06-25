@@ -22,7 +22,6 @@ import { CONTENT_PROFILES, PROJECT_CONTENT_PROFILE_OPTIONS, normalizeContentProf
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
 type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" | "debug";
-type SidebarTab = "queue" | "articles";
 type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
 type InventorySortKey = "quality" | "research" | "evidence" | "updated";
@@ -186,7 +185,6 @@ function Workbench() {
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("queue");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Idle");
@@ -266,11 +264,11 @@ function Workbench() {
     const article = articles.find((item) => item.id === job.articleId);
     return article ? { ...job, status: article.status } : job;
   }), [articles, jobs]);
-  const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter || (filter === "failed" && job.status === "research_failed"));
-  const queueJobs = visibleJobs.filter(isQueueJobVisible);
+  const queueJobs = displayJobs.filter(isQueueJobVisible);
+  const queuedJobs = queueJobs.filter((job) => job.status === "queued" || job.status === "skipped");
+  const runningJobs = queueJobs.filter((job) => job.status === "processing");
+  const failedQueueJobs = queueJobs.filter((job) => job.status === "failed" || job.status === "research_failed");
   const libraryArticles = inventoryArticles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
-  const pinnedLibraryArticles = libraryArticles.filter((article) => pinnedArticleIds.has(article.id));
-  const regularLibraryArticles = libraryArticles.filter((article) => !pinnedArticleIds.has(article.id));
   const localStats = useMemo(() => ({
     queued: displayJobs.filter((job) => job.status === "queued").length,
     processing: displayJobs.filter((job) => job.status === "processing").length,
@@ -570,7 +568,6 @@ function Workbench() {
     const startedAt = performance.now();
     const pendingInput = titles;
     const optimisticJobs = createOptimisticQueuedJobs(state?.project.id, submittedTitles, jobs, postGenerationAction);
-    setSidebarTab("queue");
     setUploadFeedback({
       status: "submitting",
       titleCount: submittedTitles.length,
@@ -625,7 +622,6 @@ function Workbench() {
   async function processNext() {
     const startedAt = performance.now();
     const queuedTitle = resumableQueuedJob?.title ?? displayJobs.find((job) => job.status === "queued")?.title ?? null;
-    setSidebarTab("queue");
     setGenerateFeedback({
       status: "starting",
       title: queuedTitle,
@@ -793,13 +789,11 @@ function Workbench() {
 
   async function retryFailedJobs() {
     await post("/api/queue/retry-failed", "Failed jobs requeued.");
-    setSidebarTab("queue");
     setFilter("all");
   }
 
   async function recoverQueue() {
     await post("/api/queue/recover", "Stale processing jobs recovered.");
-    setSidebarTab("queue");
   }
 
   async function clearQueue() {
@@ -1095,7 +1089,6 @@ function Workbench() {
     if (res.ok) {
       setSelectedArticleId(null);
       setDetails({ research: null, debug: null });
-      setSidebarTab("queue");
       if (data.state) applyServerState(data.state, "project-switch");
       setMessage("Project switched.");
     } else {
@@ -1243,7 +1236,6 @@ function Workbench() {
       return;
     }
     setRegenerateCandidate(null);
-    setSidebarTab("queue");
     setMessage("Original moved to Review; regeneration queued.");
     if (data.state) applyServerState(data.state, "article-regenerate");
     else await refresh();
@@ -1282,7 +1274,6 @@ function Workbench() {
       return;
     }
     setSimilarCandidate(null);
-    setSidebarTab("queue");
     const queuedCount = data.jobs?.length ?? selected.length;
     if (data.jobs) reconcileQueuedJobs(data.jobs, data.queueControl);
     setMessage(queuedCount
@@ -1425,7 +1416,6 @@ function Workbench() {
     }
     if (result.articleId) {
       setSelectedArticleId(result.articleId);
-      setSidebarTab(result.type === "article" ? "articles" : "queue");
     } else {
       setSelectedArticleId(null);
     }
@@ -1450,7 +1440,6 @@ function Workbench() {
     setProjectMenuOpen(false);
     setSettingsOpen(false);
     setProjectSettingsProjectId(null);
-    setSidebarTab(selectedArticle ? "articles" : "queue");
     setTab("project");
   }
 
@@ -1741,7 +1730,7 @@ function Workbench() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
-                    <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{projectSummary?.articleCount ?? articles.length} articles · {stats.queued + stats.processing} active</span>
+                    <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{stats.queued + stats.processing} in queue · {stats.failed} failed</span>
                   </span>
                   <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
                 </button>
@@ -1761,13 +1750,11 @@ function Workbench() {
                   />
                 )}
               </div>
-              <ProjectExportMenu summary={projectSummary} />
             </div>
-            <div className="mono mt-3 grid grid-cols-4 gap-2 text-[10.5px]">
-              <MetricPill label="Articles" value={inventoryArticles.length} active={sidebarTab === "articles" && filter === "all"} onClick={() => { setSidebarTab("articles"); setFilter("all"); }} />
-              <MetricPill label="Queue" value={stats.queued + stats.processing} active={sidebarTab === "queue" && filter === "all"} onClick={() => { setSidebarTab("queue"); setFilter("all"); }} />
-              <MetricPill label="Review" value={inventoryArticles.filter((article) => article.status === "needs_review").length} warn={stats.needs_review > 0} active={sidebarTab === "articles" && filter === "needs_review"} onClick={() => { setSidebarTab("articles"); setFilter("needs_review"); }} />
-              <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} active={sidebarTab === "queue" && filter === "failed"} onClick={() => { setSidebarTab("queue"); setFilter("failed"); }} />
+            <div className="mono mt-3 grid grid-cols-3 gap-2 text-[10.5px]">
+              <MetricPill label="Queue" value={stats.queued} />
+              <MetricPill label="Running" value={stats.processing} warn={stats.processing > 0} />
+              <MetricPill label="Failed" value={stats.failed} danger={stats.failed > 0} />
             </div>
             {(stats.failed > 0 || hasRecoverableQueueWork) && (
               <div className="mt-2 flex items-center gap-1">
@@ -1793,81 +1780,67 @@ function Workbench() {
 
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
             <div className="px-3 pb-1 pt-2">
-              <div className="grid grid-cols-2 rounded-md bg-surface-3 p-0.5">
-                {(["queue", "articles"] as const).map((item) => (
-                  <button
-                    key={item}
-                    onClick={() => {
-                      setSidebarTab(item);
-                      if (item === "articles") setFilter("all");
-                      if (item === "queue") setFilter("all");
-                    }}
-                    className={cn("h-7 rounded text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", sidebarTab === item && "bg-surface-1 text-ink shadow-sm")}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
               <div className="mt-2 flex items-center justify-between">
-                <PanelTitle title={sidebarTab === "queue" ? "Queue" : "Articles"} />
-                <span className="mono text-[10.5px] text-ink-subtle">{sidebarTab === "queue" ? queueJobs.length : libraryArticles.length} shown</span>
+                <PanelTitle title="Queue" />
+                <span className="mono text-[10.5px] text-ink-subtle">{queueJobs.length} active</span>
               </div>
             </div>
-            {sidebarTab === "queue" ? (
-              queueJobs.length ? queueJobs.map((job) => {
-                const article = articles.find((item) => item.id === job.articleId) ?? null;
-                return (
-                  <QueueListItem
-                    key={job.id}
-                    job={job}
-                    article={article}
-                    active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
-                    onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
-                    onRetry={() => retryOne(job.id)}
-                    onAction={(action) => actOnJob(job.id, action)}
-                  />
-                );
-              }) : <Empty text="No active queue work." />
-            ) : (
-              libraryArticles.length ? <>
-                {pinnedLibraryArticles.length > 0 && (
-                  <div className="border-b border-line/70 pb-1">
-                    <div className="mono flex items-center gap-1 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle"><Pin className="size-3" /> Pinned Articles</div>
-                    {pinnedLibraryArticles.map((article) => (
-                      <ArticleLibraryItem
-                        key={article.id}
-                        article={article}
-                        pinned
-                        active={selectedArticleId === article.id}
-                        onOpen={() => setSelectedArticleId(article.id)}
-                        onPin={() => void toggleArticlePin(article)}
-                        onRegenerate={() => setRegenerateCandidate(article)}
-                        onGenerateSimilar={() => void openSimilarTitles(article)}
-                        onDelete={() => deleteArticle(article.id)}
-                      />
-                    ))}
-                  </div>
-                )}
-                {regularLibraryArticles.map((article) => (
-                  <ArticleLibraryItem
-                    key={article.id}
-                    article={article}
-                    pinned={false}
-                    active={selectedArticleId === article.id}
-                    onOpen={() => setSelectedArticleId(article.id)}
-                    onPin={() => void toggleArticlePin(article)}
-                    onRegenerate={() => setRegenerateCandidate(article)}
-                    onGenerateSimilar={() => void openSimilarTitles(article)}
-                    onDelete={() => deleteArticle(article.id)}
-                  />
-                ))}
-              </> : <Empty text="Completed articles will appear here." />
+            {runningJobs.length > 0 && (
+              <QueueSection label="Running" count={runningJobs.length}>
+                {runningJobs.map((job) => {
+                  const article = articles.find((item) => item.id === job.articleId) ?? null;
+                  return (
+                    <QueueListItem
+                      key={job.id}
+                      job={job}
+                      article={article}
+                      active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
+                      onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
+                      onRetry={() => retryOne(job.id)}
+                      onAction={(action) => actOnJob(job.id, action)}
+                    />
+                  );
+                })}
+              </QueueSection>
             )}
+            {queuedJobs.length > 0 && (
+              <QueueSection label="Queued" count={queuedJobs.length}>
+                {queuedJobs.map((job) => {
+                  const article = articles.find((item) => item.id === job.articleId) ?? null;
+                  return (
+                    <QueueListItem
+                      key={job.id}
+                      job={job}
+                      article={article}
+                      active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
+                      onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
+                      onRetry={() => retryOne(job.id)}
+                      onAction={(action) => actOnJob(job.id, action)}
+                    />
+                  );
+                })}
+              </QueueSection>
+            )}
+            {failedQueueJobs.length > 0 && (
+              <QueueSection label="Failed" count={failedQueueJobs.length}>
+                {failedQueueJobs.map((job) => {
+                  const article = articles.find((item) => item.id === job.articleId) ?? null;
+                  return (
+                    <QueueListItem
+                      key={job.id}
+                      job={job}
+                      article={article}
+                      active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
+                      onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
+                      onRetry={() => retryOne(job.id)}
+                      onAction={(action) => actOnJob(job.id, action)}
+                    />
+                  );
+                })}
+              </QueueSection>
+            )}
+            {!queueJobs.length && <Empty text="Queued, running, and failed work appears here." />}
           </div>
-
-          {sidebarTab === "queue" && stats.queued > 0 && queueProjection && (
-            <QueueProjectionSummary projection={queueProjection} />
-          )}
 
           <div className="hairline-t px-3 pb-3 pt-2">
             <div className="mb-1 flex items-center justify-between px-1">
@@ -1983,20 +1956,25 @@ function Workbench() {
           ) : (
             <ProjectDashboard
               state={state}
-              articles={inventoryArticles}
+              articles={libraryArticles}
               jobs={displayJobs}
               summary={projectSummary}
+              activeFilter={filter === "needs_review" ? "needs_review" : "all"}
+              pinnedArticleIds={pinnedArticleIds}
               sourceCounts={articleSourceCounts}
               selectedArticleIds={selectedInventoryArticleIds}
               bulkAction={bulkAction}
               bulkProgress={bulkProgress}
               bulkBusy={busy}
               onSelectArticle={setSelectedArticleId}
+              onFilterChange={setFilter}
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onBulkActionChange={setBulkAction}
               onRunBulkAction={() => void runBulkPublishingAction()}
               onOpenProjectSettings={openCurrentProjectSettings}
+              onPinArticle={(article) => void toggleArticlePin(article)}
+              onDeleteArticle={(article) => void deleteArticle(article.id)}
             />
           )}
         </section>
@@ -2366,33 +2344,43 @@ function ProjectDashboard({
   articles,
   jobs,
   summary,
+  activeFilter,
+  pinnedArticleIds,
   sourceCounts,
   selectedArticleIds,
   bulkAction,
   bulkProgress,
   bulkBusy,
   onSelectArticle,
+  onFilterChange,
   onToggleArticleSelection,
   onToggleSelectAll,
   onBulkActionChange,
   onRunBulkAction,
-  onOpenProjectSettings
+  onOpenProjectSettings,
+  onPinArticle,
+  onDeleteArticle
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
   jobs: QueueJob[];
   summary: ProjectSummary | null;
+  activeFilter: "all" | "needs_review";
+  pinnedArticleIds: Set<string>;
   sourceCounts: Record<string, number>;
   selectedArticleIds: Set<string>;
   bulkAction: BulkPublishingAction;
   bulkProgress: BulkPublishingProgress | null;
   bulkBusy: boolean;
   onSelectArticle: (id: string) => void;
+  onFilterChange: (filter: Filter) => void;
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
   onBulkActionChange: (action: BulkPublishingAction) => void;
   onRunBulkAction: () => void;
   onOpenProjectSettings: () => void;
+  onPinArticle: (article: ArticleSummary) => void;
+  onDeleteArticle: (article: ArticleSummary) => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2406,8 +2394,10 @@ function ProjectDashboard({
   const allInventorySelected = contentInventoryIds.length > 0 && contentInventoryIds.every((articleId) => selectedArticleIds.has(articleId));
   const selectedInventoryCount = selectedArticleIds.size;
   const attentionRows = inventoryRows
-    .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "processing")
+    .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "research_failed")
     .slice(0, 8);
+  const pinnedRows = contentInventory.filter(({ article }) => pinnedArticleIds.has(article.id));
+  const regularRows = contentInventory.filter(({ article }) => !pinnedArticleIds.has(article.id));
   const profile = state?.project.profile;
   function changeSort(nextKey: InventorySortKey) {
     if (nextKey === sortKey) setSortDirection((current) => current === "desc" ? "asc" : "desc");
@@ -2420,7 +2410,7 @@ function ProjectDashboard({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
-        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Project dashboard</div>
+        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Content workspace</div>
         <div className="mt-1 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
@@ -2447,77 +2437,195 @@ function ProjectDashboard({
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8">
         <div className="space-y-5">
-          <ProjectSection title="Needs attention">
-            {attentionRows.length ? (
-              <InventoryTable rows={attentionRows} sourceCounts={sourceCounts} onSelectArticle={onSelectArticle} sortKey={sortKey} sortDirection={sortDirection} onSort={changeSort} compact />
-            ) : (
-              <Empty text="No articles currently need attention." />
-            )}
-          </ProjectSection>
+          {attentionRows.length > 0 && (
+            <ProjectSection title="Needs attention">
+              <ContentAttentionList rows={attentionRows} onSelectArticle={onSelectArticle} />
+            </ProjectSection>
+          )}
 
-          <ProjectSection title="Content inventory">
-            {contentInventory.length ? (
-              <>
-                <div className="mb-3 rounded-lg border border-line bg-surface-1 px-4 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <div className="text-[12px] font-medium text-ink">Bulk publishing</div>
-                      <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
-                      {bulkProgress && (
-                        <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
-                          {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-                          {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
-                      <input
-                        type="checkbox"
-                        checked={allInventorySelected}
-                        onChange={() => onToggleSelectAll(contentInventoryIds)}
-                      />
-                      <span>Select all</span>
-                      </label>
-                      <select
-                        value={bulkAction}
-                        onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
-                        className="h-8 min-w-36 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
-                        aria-label="Bulk publishing action"
-                      >
-                        {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                      <button
-                        onClick={onRunBulkAction}
-                        disabled={!selectedInventoryCount || bulkBusy}
-                        className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-                      >
-                        {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="mt-2 text-[10.5px] text-ink-subtle">
-                    {selectedInventoryCount ? "Publish actions reuse the existing WordPress publish path. Scheduling opens a modal." : "Select one or more articles to publish or schedule."}
-                  </div>
-                </div>
-                <InventoryTable
-                  rows={contentInventory}
-                  sourceCounts={sourceCounts}
-                  selectedArticleIds={selectedArticleIds}
-                  onToggleArticleSelection={onToggleArticleSelection}
-                  onSelectArticle={onSelectArticle}
-                  sortKey={sortKey}
-                  sortDirection={sortDirection}
-                  onSort={changeSort}
-                  selectable
+          <ProjectSection title={activeFilter === "needs_review" ? "Review queue" : "Articles"}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <ContentFilterChip
+                  label="All articles"
+                  value={summary?.articleCount ?? articles.length}
+                  active={activeFilter === "all"}
+                  onClick={() => onFilterChange("all")}
                 />
-              </>
+                <ContentFilterChip
+                  label="Needs review"
+                  value={summary?.reviewCount ?? 0}
+                  active={activeFilter === "needs_review"}
+                  warn={(summary?.reviewCount ?? 0) > 0}
+                  onClick={() => onFilterChange("needs_review")}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
+              </div>
+            </div>
+            {contentInventory.length ? (
+              <div className="space-y-2">
+                {pinnedRows.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="mono px-1 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Pinned</div>
+                    {pinnedRows.map(({ article }) => (
+                      <ArticleLibraryItem
+                        key={article.id}
+                        article={article}
+                        sourceCount={sourceCounts[article.id] ?? 0}
+                        pinned
+                        active={false}
+                        onOpen={() => onSelectArticle(article.id)}
+                        onPin={() => onPinArticle(article)}
+                        onDelete={() => onDeleteArticle(article)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {regularRows.map(({ article }) => (
+                  <ArticleLibraryItem
+                    key={article.id}
+                    article={article}
+                    sourceCount={sourceCounts[article.id] ?? 0}
+                    pinned={false}
+                    active={false}
+                    onOpen={() => onSelectArticle(article.id)}
+                    onPin={() => onPinArticle(article)}
+                    onDelete={() => onDeleteArticle(article)}
+                  />
+                ))}
+              </div>
             ) : (
-              <Empty text="Saved articles will appear here." />
+              <Empty text={activeFilter === "needs_review" ? "Nothing needs review right now." : "Generated articles will appear here."} />
             )}
+            <div className="mt-4 border-t border-line pt-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[12px] font-medium text-ink">Publishing</div>
+                <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
+                  <input
+                    type="checkbox"
+                    checked={allInventorySelected}
+                    onChange={() => onToggleSelectAll(contentInventoryIds)}
+                  />
+                  <span>Select all</span>
+                </label>
+                <select
+                  value={bulkAction}
+                  onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
+                  className="h-8 min-w-36 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
+                  aria-label="Bulk publishing action"
+                >
+                  {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <button
+                  onClick={onRunBulkAction}
+                  disabled={!selectedInventoryCount || bulkBusy}
+                  className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                >
+                  {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
+                </button>
+                {bulkProgress && (
+                  <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
+                    {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                    {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 text-[10.5px] text-ink-subtle">
+                Publishing stays attached to selected content and no longer leads the workspace.
+              </div>
+            </div>
           </ProjectSection>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ContentAttentionList({
+  rows,
+  onSelectArticle
+}: {
+  rows: Array<{ article: ArticleSummary; job: QueueJob | null }>;
+  onSelectArticle: (id: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      {rows.map(({ article, job }) => (
+        <button
+          key={article.id}
+          onClick={() => onSelectArticle(article.id)}
+          className="flex w-full items-center justify-between gap-3 rounded-md border border-line bg-surface-2 px-3 py-2 text-left hover:bg-surface-3"
+        >
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-medium text-ink">{article.title}</span>
+            <span className="mt-1 block text-[11px] text-ink-muted">{job ? attentionSummary(article, job) ?? "Needs review" : "Needs review"}</span>
+          </span>
+          <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[10px]", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ContentFilterChip({
+  label,
+  value,
+  active,
+  onClick,
+  warn = false
+}: {
+  label: string;
+  value: number;
+  active: boolean;
+  onClick: () => void;
+  warn?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11.5px] transition-colors",
+        active ? "border-line-strong bg-surface-2 text-ink" : "border-line bg-background text-ink-muted hover:border-line-strong hover:text-ink"
+      )}
+    >
+      <span>{label}</span>
+      <span className={cn("mono rounded-full px-1.5 py-0.5 text-[10px]", warn ? "bg-warn/10 text-warn" : "bg-surface-3 text-ink-subtle")}>{formatNumber(value)}</span>
+    </button>
+  );
+}
+
+function ContentSortSelect({
+  sortKey,
+  sortDirection,
+  onChangeSort
+}: {
+  sortKey: InventorySortKey;
+  sortDirection: SortDirection;
+  onChangeSort: (key: InventorySortKey) => void;
+}) {
+  const options: Array<{ key: InventorySortKey; label: string }> = [
+    { key: "updated", label: "Updated" },
+    { key: "quality", label: "Quality" },
+    { key: "research", label: "Research" },
+    { key: "evidence", label: "Evidence" }
+  ];
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-line bg-surface-1 px-2 py-1">
+      <span className="text-[11px] text-ink-subtle">Sort</span>
+      <select
+        value={sortKey}
+        onChange={(event) => onChangeSort(event.currentTarget.value as InventorySortKey)}
+        className="bg-transparent text-[11.5px] text-ink outline-none"
+      >
+        {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+      </select>
+      <span className="mono text-[10px] text-ink-subtle">{sortDirection === "desc" ? "Desc" : "Asc"}</span>
     </div>
   );
 }
@@ -3711,6 +3819,18 @@ function ProjectionMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function QueueSection({ label, count, children }: { label: string; count: number; children: React.ReactNode }) {
+  return (
+    <section className="pb-2">
+      <div className="mono flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">
+        <span>{label}</span>
+        <span>{count}</span>
+      </div>
+      <div>{children}</div>
+    </section>
+  );
+}
+
 function QueueListItem({
   job,
   article,
@@ -3810,28 +3930,26 @@ function IconAction({ title, onClick, children, danger = false }: { title: strin
 
 function ArticleLibraryItem({
   article,
+  sourceCount,
   pinned,
   active,
   onOpen,
   onPin,
-  onRegenerate,
-  onGenerateSimilar,
   onDelete
 }: {
   article: ArticleSummary;
+  sourceCount: number;
   pinned: boolean;
   active: boolean;
   onOpen: () => void;
   onPin: () => void;
-  onRegenerate: () => void;
-  onGenerateSimilar: () => void;
   onDelete: () => void;
 }) {
   const metadata = [
     `${formatNumber(article.wordCount)} words`,
+    `${sourceCount} sources`,
     `Q${article.qualityScore}`,
-    `R${article.researchScore}`,
-    `E${article.evidenceScore}`
+    `Updated ${relativeDate(article.updatedAt)}`
   ];
 
   function confirmDelete() {
@@ -3873,8 +3991,6 @@ function ArticleLibraryItem({
       </button>
       <div className="absolute bottom-2 right-2 z-20 flex items-center gap-0.5 rounded bg-surface-1 p-0.5 opacity-0 shadow-sm ring-1 ring-line transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <IconAction title={pinned ? "Unpin article" : "Pin article"} onClick={onPin}><Pin className={cn("size-3", pinned && "fill-current text-ink")} /></IconAction>
-        <IconAction title="Regenerate article" onClick={onRegenerate}><RotateCw className="size-3" /></IconAction>
-        <IconAction title="Generate similar" onClick={onGenerateSimilar}><Sparkles className="size-3" /></IconAction>
         <IconAction title={`Delete ${article.title}`} danger onClick={confirmDelete}><Trash2 className="size-3" /></IconAction>
       </div>
     </div>
@@ -4617,13 +4733,12 @@ function ProjectContextPanel({
 }) {
   const latestRun = history[0] ?? null;
   const averageLength = articles.length && summary ? Math.round(summary.totalWords / articles.length) : null;
-  const queuedCount = jobs.filter((job) => job.status === "queued").length;
   const status = projectStatus(metrics, jobs);
   const profile = state ? normalizeProjectProfile(state.project.profile, state.settings.controls.lengthTargetWords) : null;
   return (
     <div className="space-y-5">
       {state && summary ? (
-        <ProjectSection title="Project overview">
+        <ProjectSection title="Project context">
           <div className="space-y-3">
             <div>
               <div className="truncate text-[13px] font-semibold text-ink">{state.project.name}</div>
@@ -4641,18 +4756,9 @@ function ProjectContextPanel({
                 </div>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-2">
-              <ProjectStatCard label="Articles" value={formatNumber(summary.articleCount)} />
-              <ProjectStatCard label="Generated" value={summary.generatedCount} tone="success" />
-              <ProjectStatCard label="Review" value={summary.reviewCount} tone={summary.reviewCount > 0 ? "warn" : "neutral"} />
-              <ProjectStatCard label="Failed" value={summary.failedCount} tone={summary.failedCount > 0 ? "danger" : "neutral"} />
+            <div className="text-[11px] leading-relaxed text-ink-muted">
+              The left rail manages queued work. The centre holds the article library. This panel stays focused on context, quality, and supporting signals.
             </div>
-            {(queuedCount > 0 || metrics.processingCount > 0) && (
-              <div className="mono flex gap-3 text-[10.5px] text-ink-subtle">
-                <span>Queued {queuedCount}</span>
-                <span>Processing {metrics.processingCount}</span>
-              </div>
-            )}
           </div>
         </ProjectSection>
       ) : null}
@@ -4680,25 +4786,6 @@ function ProjectContextPanel({
           </div>
         </ProjectSection>
       ) : null}
-    </div>
-  );
-}
-
-function ProjectStatCard({ label, value, tone = "neutral" }: { label: string; value: string | number; tone?: "neutral" | "success" | "warn" | "danger" }) {
-  return (
-    <div className={cn(
-      "rounded-md border border-line bg-background p-2.5",
-      tone === "success" && "border-success/30",
-      tone === "warn" && "border-warn/40",
-      tone === "danger" && "border-danger/30"
-    )}>
-      <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
-      <div className={cn(
-        "mono mt-1 text-[22px] font-semibold leading-none text-ink",
-        tone === "success" && "text-success",
-        tone === "warn" && "text-warn",
-        tone === "danger" && "text-danger"
-      )}>{value}</div>
     </div>
   );
 }

@@ -14,6 +14,18 @@
   - trimmed the bulk queue API response so the client confirms jobs and queue control without waiting on a full-state payload
 - Kept the implementation intentionally scoped to Phases 1-3 only, deferring deeper worker/progress infrastructure until the first-pass UX improvements are evaluated.
 
+### Workspace IA Overhaul
+
+- Reframed the product layout around a clearer mental model:
+  - left rail = queue operations and incoming work
+  - centre = article library and content workspace
+  - right rail = project context and supporting metrics
+- Removed the left `Queue / Articles` split so generated content no longer duplicates in the queue manager.
+- Reworked the centre default view from a publishing-first dashboard/table into a calmer article library with document-style rows, review filtering, and publishing controls pushed lower in the hierarchy.
+- Collapsed `Needs attention` completely when no review or failure work exists.
+- Simplified primary article list actions down to the core workflow and removed regenerate/similar-generation controls from the main library surface.
+- Trimmed duplicated summary surfaces by removing the extra left export control, dropping the queue estimate widget from the queue rail, and simplifying the right-side project overview away from repeated article count cards.
+
 ### Navigation Polish Recovery
 
 - Restored the `52cbe6d` menu/header UI state in `writer-app.tsx` after later changes replaced the approved design.
