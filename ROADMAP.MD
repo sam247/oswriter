@@ -59,6 +59,10 @@
   - moved project settings into the title row as a compact inline gear action
   - collapsed project metadata into one calmer line with article count, region, audience, and target words only
   - removed the extra workspace phrasing, industry label, and profile version from the main header
+- Adjusted table selection placement for readability review:
+  - moved bulk-selection checkboxes from the far left into the right-side control lane
+  - let article titles align flush left so the list reads more like a document manager
+  - kept the rest of the table structure unchanged so the visual comparison stays focused on readability
 
 ### Navigation Polish Recovery
 

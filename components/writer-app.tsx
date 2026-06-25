@@ -3424,7 +3424,6 @@ function InventoryTable({
     <div className="overflow-hidden rounded-lg border border-line/80">
       <table className="w-full table-fixed border-collapse">
         <colgroup>
-          <col className="w-[32px]" />
           <col />
           <col className="w-[72px]" />
           <col className="w-[72px]" />
@@ -3432,11 +3431,19 @@ function InventoryTable({
           <col className="w-[78px]" />
           <col className="w-[88px]" />
           <col className="w-[88px]" />
+          <col className="w-[32px]" />
           <col className="w-[54px]" />
         </colgroup>
         <thead>
           <tr className="border-b border-line/70 bg-surface-1/70 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
-            <th className="px-2 py-2 text-left">
+            <th className="px-4 py-2 text-left">Article</th>
+            <th className="px-3 py-2 text-right">Sources</th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Quality" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Research" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Evidence" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right"><InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
+            <th className="px-3 py-2 text-right">Status</th>
+            <th className="px-2 py-2 text-right">
               <label className="flex items-center justify-center">
                 <input
                   ref={selectAllRef}
@@ -3448,13 +3455,6 @@ function InventoryTable({
                 />
               </label>
             </th>
-            <th className="px-3 py-2 text-left">Article</th>
-            <th className="px-3 py-2 text-right">Sources</th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="Quality" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="Research" metric="research" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="Evidence" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-            <th className="px-3 py-2 text-right"><InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
-            <th className="px-3 py-2 text-right">Status</th>
             <th className="px-2 py-2 text-right"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
@@ -3472,18 +3472,7 @@ function InventoryTable({
                   (selected || active) && "bg-ink/[0.04]"
                 )}
               >
-                <td className="px-2 py-3 align-middle" onClick={(event) => event.stopPropagation()}>
-                  <label className="flex items-center justify-center">
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() => onToggleArticleSelection(article.id)}
-                      aria-label={`Select ${article.title}`}
-                      className="size-3.5"
-                    />
-                  </label>
-                </td>
-                <td className="px-3 py-3 align-middle">
+                <td className="px-4 py-3 align-middle">
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className={cn("size-1.5 shrink-0 rounded-full", article.status === "needs_review" ? "bg-warn" : article.status === "failed" || article.status === "research_failed" ? "bg-danger" : "bg-success")} />
@@ -3503,6 +3492,17 @@ function InventoryTable({
                 <td className="mono px-3 py-3 text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</td>
                 <td className="px-3 py-3 text-right align-middle">
                   <span className={cn("inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-medium", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
+                </td>
+                <td className="px-2 py-3 align-middle" onClick={(event) => event.stopPropagation()}>
+                  <label className="flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => onToggleArticleSelection(article.id)}
+                      aria-label={`Select ${article.title}`}
+                      className="size-3.5"
+                    />
+                  </label>
                 </td>
                 <td className="px-2 py-3 align-middle">
                   <div className="flex justify-end opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
