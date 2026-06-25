@@ -562,6 +562,10 @@ function Workbench() {
     });
   }
 
+  function clearInventoryArticleSelections() {
+    setSelectedInventoryArticleIds(new Set());
+  }
+
   async function addTitles() {
     const submittedTitles = parseSubmittedTitles(titles);
     if (!submittedTitles.length) return;
@@ -1696,7 +1700,6 @@ function Workbench() {
               <>
                 <QueueStateBanner
                   state={queueState}
-                  onResume={() => void setQueueControl("resume", "Queue running.")}
                   onRetryFailed={stats.failed > 0 ? retryFailedJobs : undefined}
                   onRecover={hasRecoverableQueueWork ? recoverQueue : undefined}
                 />
@@ -1760,13 +1763,22 @@ function Workbench() {
                   </div>
                 )}
               </div>
-              {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
+              {(state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused" || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
+                <button
+                  onClick={() => void setQueueControl("resume", "Queue running.")}
+                  disabled={busy && !resumableQueuedJob}
+                  className="h-8 rounded-md bg-surface-1 px-2.5 text-[11.5px] font-medium text-ink ring-1 ring-line hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Resume
+                </button>
+              )}
+              {(stats.processing > 0 || state?.queueControl.mode === "running") && (
                 <button
                   onClick={stopRun}
                   disabled={busy && !running}
                   className="h-8 rounded-md bg-surface-1 px-2.5 text-[11.5px] font-medium text-ink ring-1 ring-line hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Stop after current
+                  Pause
                 </button>
               )}
               {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
@@ -1974,6 +1986,7 @@ function Workbench() {
               onFilterChange={setFilter}
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
+              onClearSelection={clearInventoryArticleSelections}
               onBulkActionChange={setBulkAction}
               onRunBulkAction={() => void runBulkPublishingAction()}
               onPinArticle={(article) => void toggleArticlePin(article)}
@@ -2079,7 +2092,7 @@ function QueueStateBanner({
   onRecover
 }: {
   state: QueueStateDescription | null;
-  onResume: () => void;
+  onResume?: () => void;
   onRetryFailed?: () => void;
   onRecover?: () => void;
 }) {
@@ -2092,7 +2105,7 @@ function QueueStateBanner({
           <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">{state.detail}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {(state.mode === "stopped" || state.mode === "paused") && (
+          {onResume && (state.mode === "stopped" || state.mode === "paused") && (
             <button onClick={onResume} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Resume</button>
           )}
           {onRetryFailed && (
@@ -2359,6 +2372,7 @@ function ProjectDashboard({
   onFilterChange,
   onToggleArticleSelection,
   onToggleSelectAll,
+  onClearSelection,
   onBulkActionChange,
   onRunBulkAction,
   onPinArticle,
@@ -2380,6 +2394,7 @@ function ProjectDashboard({
   onFilterChange: (filter: Filter) => void;
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
+  onClearSelection: () => void;
   onBulkActionChange: (action: BulkPublishingAction) => void;
   onRunBulkAction: () => void;
   onPinArticle: (article: ArticleSummary) => void;
@@ -2441,36 +2456,45 @@ function ProjectDashboard({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ProjectExportMenu summary={summary} />
-            <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-ink-subtle">Bulk</span>
-            <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink">
-              <input
-                type="checkbox"
-                checked={allInventorySelected}
-                onChange={() => onToggleSelectAll(contentInventoryIds)}
-              />
-              <span>Select all</span>
-            </label>
-            <select
-              value={bulkAction}
-              onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
-              className="h-8 min-w-36 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
-              aria-label="Bulk action"
-            >
-              {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            <button
-              onClick={onRunBulkAction}
-              disabled={!selectedInventoryCount || bulkBusy}
-              className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-            >
-              {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
-            </button>
-            <span className="mono text-[10.5px] text-ink-subtle">{selectedInventoryCount} selected</span>
-            {bulkProgress && (
-              <span className="mono text-[10.5px] text-ink-subtle">
-                {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-                {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-              </span>
+            {selectedInventoryCount > 0 && (
+              <>
+                <span className="mono text-[10.5px] text-ink-subtle">{selectedInventoryCount} selected</span>
+                <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink">
+                  <input
+                    type="checkbox"
+                    checked={allInventorySelected}
+                    onChange={() => onToggleSelectAll(contentInventoryIds)}
+                  />
+                  <span>Select all</span>
+                </label>
+                <select
+                  value={bulkAction}
+                  onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
+                  className="h-8 min-w-36 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+                  aria-label="Bulk action"
+                >
+                  {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <button
+                  onClick={onRunBulkAction}
+                  disabled={!selectedInventoryCount || bulkBusy}
+                  className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                >
+                  {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
+                </button>
+                <button
+                  onClick={onClearSelection}
+                  className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink hover:bg-surface-2"
+                >
+                  Clear
+                </button>
+                {bulkProgress && (
+                  <span className="mono text-[10.5px] text-ink-subtle">
+                    {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                    {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -2484,7 +2508,8 @@ function ProjectDashboard({
         )}
         {contentInventory.length ? (
           <div className="overflow-hidden border-t border-line/80">
-            <div className="grid grid-cols-[minmax(0,1fr)_72px_148px_88px_92px] gap-3 border-b border-line/70 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+            <div className="grid grid-cols-[28px_minmax(0,1fr)_72px_148px_88px_92px] gap-3 border-b border-line/70 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+              <span />
               <span>Article</span>
               <span className="text-right">Sources</span>
               <span className="text-right">Scores</span>
@@ -2501,7 +2526,9 @@ function ProjectDashboard({
                     sourceCount={sourceCounts[article.id] ?? 0}
                     pinned
                     active={activeArticleId === article.id}
+                    selected={selectedArticleIds.has(article.id)}
                     onOpen={() => onSelectArticle(article.id)}
+                    onToggleSelection={() => onToggleArticleSelection(article.id)}
                     onPin={() => onPinArticle(article)}
                     onDelete={() => onDeleteArticle(article)}
                   />
@@ -2515,7 +2542,9 @@ function ProjectDashboard({
                 sourceCount={sourceCounts[article.id] ?? 0}
                 pinned={false}
                 active={activeArticleId === article.id}
+                selected={selectedArticleIds.has(article.id)}
                 onOpen={() => onSelectArticle(article.id)}
+                onToggleSelection={() => onToggleArticleSelection(article.id)}
                 onPin={() => onPinArticle(article)}
                 onDelete={() => onDeleteArticle(article)}
               />
@@ -3916,7 +3945,9 @@ function ArticleLibraryItem({
   sourceCount,
   pinned,
   active,
+  selected,
   onOpen,
+  onToggleSelection,
   onPin,
   onDelete
 }: {
@@ -3924,7 +3955,9 @@ function ArticleLibraryItem({
   sourceCount: number;
   pinned: boolean;
   active: boolean;
+  selected: boolean;
   onOpen: () => void;
+  onToggleSelection: () => void;
   onPin: () => void;
   onDelete: () => void;
 }) {
@@ -3938,19 +3971,39 @@ function ArticleLibraryItem({
   return (
     <div className="group relative">
       {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-r bg-ink" />}
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onOpen}
         onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpen();
+            return;
+          }
           if (event.key === "Backspace" || event.key === "Delete") {
             event.preventDefault();
             confirmDelete();
           }
         }}
         className={cn(
-          "relative grid w-full grid-cols-[minmax(0,1fr)_72px_148px_88px_92px] items-center gap-3 border-b border-line/70 px-3 py-3 pr-11 text-left transition-colors",
-          active ? "bg-ink/[0.05] shadow-[inset_0_0_0_1px_rgba(15,23,42,0.08)]" : "hover:bg-surface-2"
+          "relative grid w-full grid-cols-[28px_minmax(0,1fr)_72px_148px_88px_92px] items-center gap-3 border-b border-line/70 px-3 py-3 pr-11 text-left transition-colors",
+          active || selected ? "bg-ink/[0.05] shadow-[inset_0_0_0_1px_rgba(15,23,42,0.08)]" : "hover:bg-surface-2"
         )}
       >
+        <span
+          className="flex items-center justify-center"
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelection}
+            aria-label={`Select ${article.title}`}
+            className={cn("size-3.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100", selected && "opacity-100")}
+          />
+        </span>
         <span className="flex min-w-0 items-start gap-2.5">
           <span className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", article.status === "needs_review" ? "bg-warn" : "bg-success")} />
           <span className="min-w-0">
@@ -3964,7 +4017,7 @@ function ArticleLibraryItem({
         <span className="flex justify-end">
           <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[10px]", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
         </span>
-      </button>
+      </div>
       <div className="absolute bottom-2 right-2 z-20 flex items-center gap-0.5 rounded bg-surface-1 p-0.5 opacity-0 shadow-sm ring-1 ring-line transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <IconAction title={pinned ? "Unpin article" : "Pin article"} onClick={onPin}><Pin className={cn("size-3", pinned && "fill-current text-ink")} /></IconAction>
         <IconAction title={`Delete ${article.title}`} danger onClick={confirmDelete}><Trash2 className="size-3" /></IconAction>

@@ -33,6 +33,12 @@
   - grouped centre actions by importance instead of giving every control equal weight
   - made article rows feel more selectable and more like a document list than stacked cards
   - removed the standalone centre `Project Settings` button so the content header stays calmer
+- Consolidated the centre into a single responsive toolbar:
+  - bulk actions now appear only when article rows are selected
+  - row selection is integrated into the list itself rather than living as persistent toolbar chrome
+  - row data aligns directly beneath the list headers with cleaner Finder/Linear-style rhythm
+  - queue actions such as `Generate`, `Pause`, and `Resume` sit back in the left workflow rail
+  - article row actions stay hidden until hover so the content list remains visually primary
 
 ### Navigation Polish Recovery
 
