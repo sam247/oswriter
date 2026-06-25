@@ -298,7 +298,6 @@ function Workbench() {
   const runHistory = useMemo(() => buildRunHistory(displayJobs, inventoryArticles), [inventoryArticles, displayJobs]);
   const projectSummary = useMemo(() => state ? calculateProjectSummary({ ...state, articles: inventoryArticles }, projectAnalytics) : null, [state, inventoryArticles, projectAnalytics]);
   const accountStats = useMemo(() => calculateAccountOutcomeStats(inventoryArticles, projectAnalytics?.source_count ?? 0), [inventoryArticles, projectAnalytics]);
-  const queueState = state ? describeQueueState(state.queueControl.mode, displayJobs) : null;
   const shouldPollQueue = running || busy || generateFeedback.status === "starting" || stats.queued > 0 || stats.processing > 0;
   const queuePollIntervalMs = stats.processing > 0 || running || busy || generateFeedback.status === "starting" ? 1_500 : 4_000;
   const queueMutationBlockedReason = queueMutationBlockReason(state, displayJobs);
@@ -1732,82 +1731,7 @@ function Workbench() {
                 )}
               </div>
             )}
-            {queueState && (
-              <>
-                <QueueStateBanner
-                  state={queueState}
-                  onRetryFailed={stats.failed > 0 ? retryFailedJobs : undefined}
-                  onRecover={hasRecoverableQueueWork ? recoverQueue : undefined}
-                />
-              </>
-            )}
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              <div ref={generateMenuRef} className="relative flex-1 min-w-[180px]">
-                <div className="flex items-center">
-                  <button
-                    onClick={() => void processNext()}
-                    disabled={generateButton.disabled}
-                    title={generateButton.title}
-                    className={cn(
-                      "flex h-8 flex-1 items-center justify-center gap-1.5 rounded-l-md px-2.5 text-[12px] font-medium transition-colors",
-                      generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
-                    )}
-                  >
-                    {generateFeedback.status === "starting" ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5 fill-current" />}
-                    {generateButton.label}
-                  </button>
-                  <button
-                    onClick={() => setGenerateMenuOpen((open) => !open)}
-                    className={cn(
-                      "grid h-8 w-8 place-items-center rounded-r-md border-l text-[12px] transition-colors",
-                      generateButton.disabled
-                        ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
-                        : "border-white/15 bg-ink text-white hover:bg-ink/90"
-                    )}
-                    title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
-                  >
-                    <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
-                  </button>
-                </div>
-                {generateMenuOpen && (
-                  <div className="absolute left-0 top-10 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
-                    <div className="hairline-b px-3 py-2">
-                      <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
-                      <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
-                    </div>
-                    <div className="p-1.5">
-                      {POST_GENERATION_ACTION_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          onClick={() => {
-                            setPostGenerationAction(option.value);
-                            setGenerateMenuOpen(false);
-                          }}
-                          className={cn(
-                            "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
-                            postGenerationAction === option.value && "bg-surface-2"
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[12px] font-medium text-ink">{option.label}</span>
-                            {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
-                          </div>
-                          <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {(state?.queueControl.mode === "stopped" || state?.queueControl.mode === "paused" || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
-                <button
-                  onClick={() => void setQueueControl("resume", "Queue running.")}
-                  disabled={busy && !resumableQueuedJob}
-                  className="h-8 rounded-md bg-surface-1 px-2.5 text-[11.5px] font-medium text-ink ring-1 ring-line hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Resume
-                </button>
-              )}
               {(stats.processing > 0 || state?.queueControl.mode === "running") && (
                 <button
                   onClick={stopRun}
@@ -2023,6 +1947,17 @@ function Workbench() {
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onRunSelectionAction={(action) => void runSelectionAction(action)}
+              generateButton={generateButton}
+              generateMenuOpen={generateMenuOpen}
+              generateMenuRef={generateMenuRef}
+              generateStarting={generateFeedback.status === "starting"}
+              postGenerationAction={postGenerationAction}
+              onRunGenerate={() => void processNext()}
+              onToggleGenerateMenu={() => setGenerateMenuOpen((open) => !open)}
+              onSelectPostGenerationAction={(action) => {
+                setPostGenerationAction(action);
+                setGenerateMenuOpen(false);
+              }}
             />
           )}
         </section>
@@ -2114,41 +2049,6 @@ function Workbench() {
         />
       )}
     </main>
-  );
-}
-
-function QueueStateBanner({
-  state,
-  onResume,
-  onRetryFailed,
-  onRecover
-}: {
-  state: QueueStateDescription | null;
-  onResume?: () => void;
-  onRetryFailed?: () => void;
-  onRecover?: () => void;
-}) {
-  if (!state) return null;
-  return (
-    <div className={cn("mt-3 rounded-md border px-2.5 py-2 text-[11.5px]", queueStateTone(state.mode))}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="font-semibold text-ink">{state.label}</div>
-          <div className="mono mt-0.5 truncate text-[10.5px] text-ink-subtle">{state.detail}</div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {onResume && (state.mode === "stopped" || state.mode === "paused") && (
-            <button onClick={onResume} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Resume</button>
-          )}
-          {onRetryFailed && (
-            <button onClick={onRetryFailed} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink">Retry failed</button>
-          )}
-          {onRecover && (
-            <button onClick={onRecover} className="rounded bg-surface-1 px-2 py-1 text-[10.5px] text-ink-muted ring-1 ring-line hover:text-ink" title="Recover a job that was left processing after a timeout or refresh.">Recover stuck</button>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -2404,7 +2304,15 @@ function ProjectDashboard({
   onOpenProjectSettings,
   onToggleArticleSelection,
   onToggleSelectAll,
-  onRunSelectionAction
+  onRunSelectionAction,
+  generateButton,
+  generateMenuOpen,
+  generateMenuRef,
+  generateStarting,
+  postGenerationAction,
+  onRunGenerate,
+  onToggleGenerateMenu,
+  onSelectPostGenerationAction
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -2423,6 +2331,14 @@ function ProjectDashboard({
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
   onRunSelectionAction: (action: SelectionAction) => void;
+  generateButton: { label: string; disabled: boolean; title: string };
+  generateMenuOpen: boolean;
+  generateMenuRef: RefObject<HTMLDivElement | null>;
+  generateStarting: boolean;
+  postGenerationAction: PostGenerationPublishingAction;
+  onRunGenerate: () => void;
+  onToggleGenerateMenu: () => void;
+  onSelectPostGenerationAction: (action: PostGenerationPublishingAction) => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2459,24 +2375,80 @@ function ProjectDashboard({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
-            {state?.project.id && (
-              <button
-                type="button"
-                onClick={onOpenProjectSettings}
-                className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition hover:bg-surface-2 hover:text-ink"
-                aria-label="Project settings"
-                title="Project settings"
-              >
-                <Settings className="size-3.5" />
-              </button>
-            )}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
+              {state?.project.id && (
+                <button
+                  type="button"
+                  onClick={onOpenProjectSettings}
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition hover:bg-surface-2 hover:text-ink"
+                  aria-label="Project settings"
+                  title="Project settings"
+                >
+                  <Settings className="size-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="mono mt-2 text-[11px] text-ink-muted">
+              {formatNumber(summary?.articleCount ?? articles.length)} articles
+              {profile ? ` • ${profile.regionLabel} • ${profile.audienceLabel} • ${formatNumber(profile.defaultTargetWords)} words` : ""}
+            </div>
           </div>
-          <div className="mono mt-2 text-[11px] text-ink-muted">
-            {formatNumber(summary?.articleCount ?? articles.length)} articles
-            {profile ? ` • ${profile.regionLabel} • ${profile.audienceLabel} • ${formatNumber(profile.defaultTargetWords)} words` : ""}
+          <div ref={generateMenuRef} className="relative shrink-0">
+            <div className="flex items-center">
+              <button
+                onClick={onRunGenerate}
+                disabled={generateButton.disabled}
+                title={generateButton.title}
+                className={cn(
+                  "flex h-8 min-w-[136px] items-center justify-center gap-1.5 rounded-l-md px-3 text-[12px] font-medium transition-colors",
+                  generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+                )}
+              >
+                {generateStarting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5 fill-current" />}
+                {generateButton.label}
+              </button>
+              <button
+                onClick={onToggleGenerateMenu}
+                className={cn(
+                  "grid h-8 w-8 place-items-center rounded-r-md border-l text-[12px] transition-colors",
+                  generateButton.disabled
+                    ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
+                    : "border-white/15 bg-ink text-white hover:bg-ink/90"
+                )}
+                title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
+              >
+                <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
+              </button>
+            </div>
+            {generateMenuOpen && (
+              <div className="absolute right-0 top-10 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
+                <div className="hairline-b px-3 py-2">
+                  <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
+                  <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
+                </div>
+                <div className="p-1.5">
+                  {POST_GENERATION_ACTION_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => onSelectPostGenerationAction(option.value)}
+                      className={cn(
+                        "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
+                        postGenerationAction === option.value && "bg-surface-2"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] font-medium text-ink">{option.label}</span>
+                        {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
+                      </div>
+                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
         <div className="mt-4 overflow-x-auto">
@@ -5682,39 +5654,6 @@ function filterLabel(filter: Filter) {
     failed: "Failed",
     skipped: "Skipped"
   }[filter];
-}
-
-interface QueueStateDescription {
-  mode: QueueControlMode | "completed" | "failed";
-  label: string;
-  detail: string;
-}
-
-function describeQueueState(mode: QueueControlMode, jobs: QueueJob[]): QueueStateDescription {
-  const processing = jobs.find((job) => job.status === "processing");
-  const queued = jobs.filter((job) => job.status === "queued").length;
-  const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
-  if (mode === "stop_after_current") {
-    if (!processing && queued === 0) return { mode: "stopped", label: "Stopped", detail: "No active article is processing." };
-    return {
-      mode,
-      label: "Stop After Current",
-      detail: processing ? `Finishing ${processing.title}, then stopping before the next queued title.` : "Will stop before another article starts."
-    };
-  }
-  if (mode === "paused") return { mode, label: "Paused", detail: "Queue processing is paused. Resume when you want the next queued title to start." };
-  if (mode === "stopped") return { mode, label: "Stopped", detail: queued > 0 ? `Resume to start the next queued title. ${queued} waiting.` : "Add titles or resume when you are ready to run the queue." };
-  if (processing) return { mode: "running", label: "Running", detail: `Current article: ${processing.title}` };
-  if (queued > 0) return { mode: "running", label: "Running", detail: `${queued} queued title${queued === 1 ? "" : "s"} waiting to start.` };
-  if (failed > 0) return { mode: "failed", label: "Failed", detail: `${failed} article${failed === 1 ? "" : "s"} need attention before you continue.` };
-  return { mode: "completed", label: "Completed", detail: "No remaining queue work. Add titles when you are ready for the next run." };
-}
-
-function queueStateTone(mode: QueueStateDescription["mode"]) {
-  if (mode === "stop_after_current" || mode === "paused" || mode === "stopped") return "border-warn/30 bg-warn/5";
-  if (mode === "failed") return "border-danger/30 bg-danger/5";
-  if (mode === "completed") return "border-success/30 bg-success/5";
-  return "border-info/30 bg-info/5";
 }
 
 function queueMutationBlockReason(state: AppState | null, jobs: QueueJob[]) {
