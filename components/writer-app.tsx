@@ -1624,80 +1624,6 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
-          <div ref={generateMenuRef} className="relative">
-            <div className="flex items-center">
-              <button
-                onClick={() => void processNext()}
-                disabled={generateButton.disabled}
-                title={generateButton.title}
-                className={cn(
-                  "flex h-7 items-center gap-1.5 rounded-l-md px-2.5 text-[12px] font-medium transition-colors",
-                  generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
-                )}
-              >
-                {generateFeedback.status === "starting" ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3 fill-current" />} {generateButton.label}
-              </button>
-              <button
-                onClick={() => setGenerateMenuOpen((open) => !open)}
-                className={cn(
-                  "grid h-7 w-7 place-items-center rounded-r-md border-l text-[12px] transition-colors",
-                  generateButton.disabled
-                    ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
-                    : "border-white/15 bg-ink text-white hover:bg-ink/90"
-                )}
-                title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
-              >
-                <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
-              </button>
-            </div>
-            {generateMenuOpen && (
-              <div className="absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
-                <div className="hairline-b px-3 py-2">
-                  <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
-                  <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
-                </div>
-                <div className="p-1.5">
-                  {POST_GENERATION_ACTION_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => {
-                        setPostGenerationAction(option.value);
-                        setGenerateMenuOpen(false);
-                      }}
-                      className={cn(
-                        "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
-                        postGenerationAction === option.value && "bg-surface-2"
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[12px] font-medium text-ink">{option.label}</span>
-                        {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
-                      </div>
-                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
-            <button
-              onClick={stopRun}
-              disabled={busy && !running}
-              className="h-7 rounded-md bg-surface-3 px-2.5 text-[12px] font-medium text-ink shadow-sm hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Stop after current
-            </button>
-          )}
-          {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
-            <button
-              onClick={emergencyStopRun}
-              className="h-7 rounded-md border border-[#d9a79d] bg-[#f6e3df] px-2.5 text-[12px] font-medium text-[#9f2f20] shadow-sm hover:border-[#c8796c] hover:bg-[#edc9c2] hover:text-[#842719]"
-              title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried."
-            >
-              Emergency stop
-            </button>
-          )}
         </div>
       </header>
 
@@ -1776,6 +1702,83 @@ function Workbench() {
                 />
               </>
             )}
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <div ref={generateMenuRef} className="relative flex-1 min-w-[180px]">
+                <div className="flex items-center">
+                  <button
+                    onClick={() => void processNext()}
+                    disabled={generateButton.disabled}
+                    title={generateButton.title}
+                    className={cn(
+                      "flex h-8 flex-1 items-center justify-center gap-1.5 rounded-l-md px-2.5 text-[12px] font-medium transition-colors",
+                      generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+                    )}
+                  >
+                    {generateFeedback.status === "starting" ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5 fill-current" />}
+                    {generateButton.label}
+                  </button>
+                  <button
+                    onClick={() => setGenerateMenuOpen((open) => !open)}
+                    className={cn(
+                      "grid h-8 w-8 place-items-center rounded-r-md border-l text-[12px] transition-colors",
+                      generateButton.disabled
+                        ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
+                        : "border-white/15 bg-ink text-white hover:bg-ink/90"
+                    )}
+                    title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
+                  >
+                    <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
+                  </button>
+                </div>
+                {generateMenuOpen && (
+                  <div className="absolute left-0 top-10 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
+                    <div className="hairline-b px-3 py-2">
+                      <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
+                      <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
+                    </div>
+                    <div className="p-1.5">
+                      {POST_GENERATION_ACTION_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          onClick={() => {
+                            setPostGenerationAction(option.value);
+                            setGenerateMenuOpen(false);
+                          }}
+                          className={cn(
+                            "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
+                            postGenerationAction === option.value && "bg-surface-2"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[12px] font-medium text-ink">{option.label}</span>
+                            {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
+                          </div>
+                          <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
+                <button
+                  onClick={stopRun}
+                  disabled={busy && !running}
+                  className="h-8 rounded-md bg-surface-1 px-2.5 text-[11.5px] font-medium text-ink ring-1 ring-line hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Stop after current
+                </button>
+              )}
+              {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
+                <button
+                  onClick={emergencyStopRun}
+                  className="h-8 rounded-md border border-[#d9a79d] bg-[#f6e3df] px-2.5 text-[11.5px] font-medium text-[#9f2f20] hover:border-[#c8796c] hover:bg-[#edc9c2] hover:text-[#842719]"
+                  title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried."
+                >
+                  Emergency stop
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -1966,18 +1969,13 @@ function Workbench() {
               bulkAction={bulkAction}
               bulkProgress={bulkProgress}
               bulkBusy={busy}
-              generateLabel={generateButton.label}
-              generateDisabled={generateButton.disabled}
-              generateTitle={generateButton.title}
-              generateStarting={generateFeedback.status === "starting"}
+              activeArticleId={selectedArticleId}
               onSelectArticle={setSelectedArticleId}
-              onGenerate={() => void processNext()}
               onFilterChange={setFilter}
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onBulkActionChange={setBulkAction}
               onRunBulkAction={() => void runBulkPublishingAction()}
-              onOpenProjectSettings={openCurrentProjectSettings}
               onPinArticle={(article) => void toggleArticlePin(article)}
               onDeleteArticle={(article) => void deleteArticle(article.id)}
             />
@@ -2356,18 +2354,13 @@ function ProjectDashboard({
   bulkAction,
   bulkProgress,
   bulkBusy,
-  generateLabel,
-  generateDisabled,
-  generateTitle,
-  generateStarting,
+  activeArticleId,
   onSelectArticle,
-  onGenerate,
   onFilterChange,
   onToggleArticleSelection,
   onToggleSelectAll,
   onBulkActionChange,
   onRunBulkAction,
-  onOpenProjectSettings,
   onPinArticle,
   onDeleteArticle
 }: {
@@ -2382,18 +2375,13 @@ function ProjectDashboard({
   bulkAction: BulkPublishingAction;
   bulkProgress: BulkPublishingProgress | null;
   bulkBusy: boolean;
-  generateLabel: string;
-  generateDisabled: boolean;
-  generateTitle: string;
-  generateStarting: boolean;
+  activeArticleId: string | null;
   onSelectArticle: (id: string) => void;
-  onGenerate: () => void;
   onFilterChange: (filter: Filter) => void;
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
   onBulkActionChange: (action: BulkPublishingAction) => void;
   onRunBulkAction: () => void;
-  onOpenProjectSettings: () => void;
   onPinArticle: (article: ArticleSummary) => void;
   onDeleteArticle: (article: ArticleSummary) => void;
 }) {
@@ -2425,87 +2413,66 @@ function ProjectDashboard({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
-            <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? articles.length)} articles in this workspace</div>
-            {profile && (
-              <div className="mono mt-1 text-[11px] text-ink-muted">
-                {profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words · v{profile.profileVersion}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenProjectSettings}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-2 px-3 text-[12px] font-medium text-ink hover:border-line-strong hover:bg-surface-3"
-            >
-              <Settings className="size-3.5 text-ink-subtle" />
-              Project Settings
-            </button>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <button
-            onClick={onGenerate}
-            disabled={generateDisabled}
-            title={generateTitle}
-            className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[12px] font-medium transition-colors",
-              generateDisabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
-            )}
-          >
-            {generateStarting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5 fill-current" />}
-            {generateLabel}
-          </button>
-          <ProjectExportMenu summary={summary} />
-          <div className="mx-1 hidden h-4 w-px bg-line lg:block" />
-          <ContentFilterChip
-            label="All articles"
-            value={summary?.articleCount ?? articles.length}
-            active={activeFilter === "all"}
-            onClick={() => onFilterChange("all")}
-          />
-          <ContentFilterChip
-            label="Needs review"
-            value={summary?.reviewCount ?? 0}
-            active={activeFilter === "needs_review"}
-            warn={(summary?.reviewCount ?? 0) > 0}
-            onClick={() => onFilterChange("needs_review")}
-          />
-          <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
-          <div className="mx-1 hidden h-4 w-px bg-line lg:block" />
-          <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink">
-            <input
-              type="checkbox"
-              checked={allInventorySelected}
-              onChange={() => onToggleSelectAll(contentInventoryIds)}
-            />
-            <span>Select all</span>
-          </label>
-          <select
-            value={bulkAction}
-            onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
-            className="h-8 min-w-36 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
-            aria-label="Bulk action"
-          >
-            {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-          <button
-            onClick={onRunBulkAction}
-            disabled={!selectedInventoryCount || bulkBusy}
-            className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-          >
-            {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
-          </button>
-          <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
-          {bulkProgress && (
-            <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
-              {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-              {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-            </span>
+        <div className="min-w-0">
+          <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
+          <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? articles.length)} articles in this workspace</div>
+          {profile && (
+            <div className="mono mt-1 text-[11px] text-ink-muted">
+              {profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words · v{profile.profileVersion}
+            </div>
           )}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <ContentFilterChip
+              label="All articles"
+              value={summary?.articleCount ?? articles.length}
+              active={activeFilter === "all"}
+              onClick={() => onFilterChange("all")}
+            />
+            <ContentFilterChip
+              label="Needs review"
+              value={summary?.reviewCount ?? 0}
+              active={activeFilter === "needs_review"}
+              warn={(summary?.reviewCount ?? 0) > 0}
+              onClick={() => onFilterChange("needs_review")}
+            />
+            <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ProjectExportMenu summary={summary} />
+            <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-ink-subtle">Bulk</span>
+            <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink">
+              <input
+                type="checkbox"
+                checked={allInventorySelected}
+                onChange={() => onToggleSelectAll(contentInventoryIds)}
+              />
+              <span>Select all</span>
+            </label>
+            <select
+              value={bulkAction}
+              onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
+              className="h-8 min-w-36 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+              aria-label="Bulk action"
+            >
+              {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <button
+              onClick={onRunBulkAction}
+              disabled={!selectedInventoryCount || bulkBusy}
+              className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+            >
+              {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
+            </button>
+            <span className="mono text-[10.5px] text-ink-subtle">{selectedInventoryCount} selected</span>
+            {bulkProgress && (
+              <span className="mono text-[10.5px] text-ink-subtle">
+                {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2517,6 +2484,13 @@ function ProjectDashboard({
         )}
         {contentInventory.length ? (
           <div className="overflow-hidden border-t border-line/80">
+            <div className="grid grid-cols-[minmax(0,1fr)_72px_148px_88px_92px] gap-3 border-b border-line/70 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+              <span>Article</span>
+              <span className="text-right">Sources</span>
+              <span className="text-right">Scores</span>
+              <button onClick={() => changeSort("updated")} className={cn("text-right hover:text-ink", sortKey === "updated" && "text-ink")}>Updated</button>
+              <span className="text-right">Status</span>
+            </div>
             {pinnedRows.length > 0 && (
               <div className="border-b border-line/70">
                 <div className="mono px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Pinned</div>
@@ -2526,7 +2500,7 @@ function ProjectDashboard({
                     article={article}
                     sourceCount={sourceCounts[article.id] ?? 0}
                     pinned
-                    active={false}
+                    active={activeArticleId === article.id}
                     onOpen={() => onSelectArticle(article.id)}
                     onPin={() => onPinArticle(article)}
                     onDelete={() => onDeleteArticle(article)}
@@ -2540,7 +2514,7 @@ function ProjectDashboard({
                 article={article}
                 sourceCount={sourceCounts[article.id] ?? 0}
                 pinned={false}
-                active={false}
+                active={activeArticleId === article.id}
                 onOpen={() => onSelectArticle(article.id)}
                 onPin={() => onPinArticle(article)}
                 onDelete={() => onDeleteArticle(article)}
@@ -3954,12 +3928,7 @@ function ArticleLibraryItem({
   onPin: () => void;
   onDelete: () => void;
 }) {
-  const metadata = [
-    `${formatNumber(article.wordCount)} words`,
-    `${sourceCount} sources`,
-    `Q${article.qualityScore}`,
-    `Updated ${relativeDate(article.updatedAt)}`
-  ];
+  const scoreSummary = `Q${article.qualityScore}  R${article.researchScore}  E${article.evidenceScore}`;
 
   function confirmDelete() {
     if (!window.confirm(`Delete "${article.title}"? This cannot be undone.`)) return;
@@ -3978,24 +3947,22 @@ function ArticleLibraryItem({
           }
         }}
         className={cn(
-          "relative flex w-full items-start gap-2.5 border-b border-line/70 px-3 py-3 pr-9 text-left transition-colors",
-          active ? "bg-ink/[0.04]" : "hover:bg-surface-2"
+          "relative grid w-full grid-cols-[minmax(0,1fr)_72px_148px_88px_92px] items-center gap-3 border-b border-line/70 px-3 py-3 pr-11 text-left transition-colors",
+          active ? "bg-ink/[0.05] shadow-[inset_0_0_0_1px_rgba(15,23,42,0.08)]" : "hover:bg-surface-2"
         )}
       >
-        <span className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", article.status === "needs_review" ? "bg-warn" : "bg-success")} />
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-start gap-2">
-            <span className={cn("min-w-0 flex-1 truncate text-[13px] leading-snug text-ink", active ? "font-semibold" : "font-medium")}>{article.title}</span>
-            <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[10px]", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
+        <span className="flex min-w-0 items-start gap-2.5">
+          <span className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", article.status === "needs_review" ? "bg-warn" : "bg-success")} />
+          <span className="min-w-0">
+            <span className={cn("block truncate text-[13px] leading-snug text-ink", active ? "font-semibold" : "font-medium")}>{article.title}</span>
+            <span className="mono mt-1 block truncate text-[10.5px] text-ink-subtle">{formatNumber(article.wordCount)} words</span>
           </span>
-          <span className="mono mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] text-ink-subtle">
-            {metadata.map((item, index) => (
-              <span key={`${item}-${index}`} className="contents">
-                {index > 0 && <span className="text-line-strong">·</span>}
-                <span>{item}</span>
-              </span>
-            ))}
-          </span>
+        </span>
+        <span className="mono text-right text-[10.5px] text-ink-subtle">{sourceCount}</span>
+        <span className="mono text-right text-[10.5px] text-ink-subtle">{scoreSummary}</span>
+        <span className="mono text-right text-[10.5px] text-ink-subtle">{relativeDate(article.updatedAt)}</span>
+        <span className="flex justify-end">
+          <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[10px]", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
         </span>
       </button>
       <div className="absolute bottom-2 right-2 z-20 flex items-center gap-0.5 rounded bg-surface-1 p-0.5 opacity-0 shadow-sm ring-1 ring-line transition-opacity group-hover:opacity-100 focus-within:opacity-100">

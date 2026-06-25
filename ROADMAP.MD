@@ -27,6 +27,12 @@
 - Trimmed duplicated summary surfaces by removing the extra left export control, dropping the queue estimate widget from the queue rail, and simplifying the right-side project overview away from repeated article count cards.
 - Flattened the centre workspace further so the project header now flows straight into a single control bar and then directly into the content list, with less section framing and fewer nested card treatments.
 - Grouped `Generate`, `Export`, `Filter`, `Sort`, and `Bulk Actions` into one workspace control strip near the project title to make the article list feel like the page rather than a dashboard subsection.
+- Refined the hierarchy again as a polish pass:
+  - moved `Generate` back into the left workflow rail beside queue controls
+  - reintroduced a lightweight list-view column rhythm so sort and status have clearer visual meaning
+  - grouped centre actions by importance instead of giving every control equal weight
+  - made article rows feel more selectable and more like a document list than stacked cards
+  - removed the standalone centre `Project Settings` button so the content header stays calmer
 
 ### Navigation Polish Recovery
 
