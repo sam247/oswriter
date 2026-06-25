@@ -6,6 +6,8 @@ export interface ResearchProviderInput {
   articleId: string;
   profileSnapshot?: ProjectProfileSnapshot | null;
   contentProfile?: ContentProfile;
+  projectWebsite?: string | null;
+  allowProjectSources?: boolean;
 }
 
 export interface SourceDiscoveryProvider extends SearchAdapter {

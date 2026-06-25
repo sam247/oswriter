@@ -849,7 +849,7 @@ export class NeonStorageProvider implements StorageProvider {
     return this.withFailureLogging("listResearchSources", undefined, async () => {
       const tenant = await this.ensureTenant();
       const found = rows(await this.sql`
-        select id, title, url, domain, summary, highlights, authority_score, relevance_score, accepted, rejection_reason
+        select id, title, url, domain, summary, highlights, authority_score, relevance_score, accepted, rejection_reason, metadata
         from research_sources
         where organisation_id = ${tenant.organisationId} and project_id = ${projectId}
         order by last_seen_at desc, first_seen_at desc
@@ -1542,13 +1542,13 @@ export class NeonStorageProvider implements StorageProvider {
       const saved = rows(await this.sql`
         insert into research_sources (
           id, organisation_id, project_id, research_pack_id, article_id, title, url, domain, summary,
-          highlights, authority_score, relevance_score, accepted, rejection_reason, source_key, last_seen_at
+          highlights, authority_score, relevance_score, accepted, rejection_reason, source_key, metadata, last_seen_at
         )
         values (
           ${sourceId}, ${research.organisationId}, ${research.projectId}, ${research.id}, ${research.articleId},
           ${source.title}, ${source.url}, ${source.domain}, ${source.summary ?? null}, ${JSON.stringify(source.highlights)}::jsonb,
           ${source.authorityScore}, ${source.relevanceScore}, ${source.accepted}, ${source.rejectionReason ?? null},
-          ${sourceKey}, now()
+          ${sourceKey}, ${JSON.stringify({ sourceClass: source.sourceClass ?? null, sourceCategory: source.sourceCategory ?? null })}::jsonb, now()
         )
         on conflict (organisation_id, project_id, url) do update set
           research_pack_id = excluded.research_pack_id,
@@ -1562,6 +1562,7 @@ export class NeonStorageProvider implements StorageProvider {
           accepted = excluded.accepted,
           rejection_reason = case when excluded.accepted then null else excluded.rejection_reason end,
           source_key = excluded.source_key,
+          metadata = research_sources.metadata || excluded.metadata,
           last_seen_at = now()
         returning id
       `);
@@ -2595,6 +2596,7 @@ function researchRunFromRow(row: Record<string, unknown>): ResearchRun {
 }
 
 function researchSourceFromRow(row: Record<string, unknown>): ResearchSource {
+  const metadata = isRecord(row.metadata) ? row.metadata : {};
   return {
     id: String(row.id),
     title: String(row.title),
@@ -2605,7 +2607,9 @@ function researchSourceFromRow(row: Record<string, unknown>): ResearchSource {
     authorityScore: Number(row.authority_score),
     relevanceScore: Number(row.relevance_score),
     accepted: Boolean(row.accepted),
-    rejectionReason: nullableString(row.rejection_reason) ?? undefined
+    rejectionReason: nullableString(row.rejection_reason) ?? undefined,
+    sourceClass: (nullableString(metadata.sourceClass) ?? undefined) as ResearchSource["sourceClass"] | undefined,
+    sourceCategory: nullableString(metadata.sourceCategory) ?? undefined
   };
 }
 

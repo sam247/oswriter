@@ -16,7 +16,8 @@ export class SearchBackedResearchProvider implements ResearchProvider {
       this.discovery,
       input.profileSnapshot,
       input.contentProfile,
-      this.id
+      this.id,
+      { projectWebsite: input.projectWebsite, allowProjectSources: input.allowProjectSources }
     );
   }
 }

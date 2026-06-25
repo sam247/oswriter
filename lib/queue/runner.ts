@@ -391,9 +391,11 @@ export class QueueRunner {
         job = { ...job, timings: markTiming(job.timings, "research_started_at"), pipeline: startStage(job.pipeline, "research", "Gathering source evidence."), updatedAt: nowIso() };
         await this.store.saveJob(job);
         log({ stage: "research", level: "info", message: "Research started." });
+        const projectWebsite = siteProfile?.domain || knowledgeBase.website || project.publishing?.wordpress?.siteUrl || "";
+        const allowProjectSources = allowsProjectOwnedResearchSources(job.title);
         const research = isResearchProvider(this.researchProvider)
-          ? await this.researchProvider.research({ title: job.title, articleId: job.articleId, profileSnapshot, contentProfile })
-          : await runResearch(job.title, job.articleId, this.researchProvider, profileSnapshot, contentProfile);
+          ? await this.researchProvider.research({ title: job.title, articleId: job.articleId, profileSnapshot, contentProfile, projectWebsite, allowProjectSources })
+          : await runResearch(job.title, job.articleId, this.researchProvider, profileSnapshot, contentProfile, "queuewrite", { projectWebsite, allowProjectSources });
         await this.store.saveResearch(research, job.projectId);
         const researchTelemetry = {
           requestedResearchProvider: research.requestedResearchProvider ?? research.researchProvider ?? "queuewrite",
@@ -420,7 +422,15 @@ export class QueueRunner {
           confidence: research.confidence
         }), updatedAt: nowIso() };
         await this.store.saveJob(job);
-        log({ stage: "research", level: research.warnings.length ? "warn" : "info", message: "Research completed.", data: research.warnings });
+        log({ stage: "research", level: research.warnings.length ? "warn" : "info", message: "Research completed.", data: {
+          warnings: research.warnings,
+          summary: research.researchSummary ?? {
+            accepted: research.sources.length,
+            rejected: {},
+            sourceClasses: {},
+            sourceCategories: {}
+          }
+        } });
         await this.store.saveDebug(debug, job.projectId);
         return job;
       }
@@ -790,6 +800,14 @@ export class QueueRunner {
 
 function isResearchProvider(provider: SearchAdapter | ResearchProvider): provider is ResearchProvider {
   return "research" in provider && typeof provider.research === "function";
+}
+
+function allowsProjectOwnedResearchSources(title: string) {
+  return [
+    /\b(audit|improve|rewrite|refresh|update|optimise|optimize)\b.*\b(my|our|this|existing)\b.*\b(content|article|page|website|site)\b/i,
+    /\b(audit|improve|rewrite|refresh|update|optimise|optimize)\b.*\b(content|article|page|website|site)\b.*\b(my|our|this|existing)\b/i,
+    /\bcompare\b.*\b(against|with|to)\b.*\b(my|our|this)\b.*\b(website|site|content|article|page)\b/i
+  ].some((pattern) => pattern.test(title));
 }
 
 function reconciledJob(job: QueueJob, article: ArticleDocument): QueueJob {

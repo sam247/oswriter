@@ -118,3 +118,121 @@ test("runResearch preserves accepted and rejected source status while populating
   assert.equal(research.rejectedSources.every((source) => !source.accepted), true);
   assert.ok(research.rejectedSources.length > 0);
 });
+
+test("runResearch excludes project-owned domains and subdomains before scoring", async () => {
+  const excludeDomains: string[][] = [];
+  const search: SearchAdapter = {
+    async search(query, options) {
+      excludeDomains.push(options.excludeDomains ?? []);
+      return {
+        requestId: `req_${query}`,
+        results: [
+          {
+            title: `Mainline utility diversions ${query}`,
+            url: `https://mainlinegroundworks.co.uk/utility-diversions-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks for UK groundworks projects.",
+            highlights: ["Client-owned content should not be used as independent research."]
+          },
+          {
+            title: `Mainline blog utility diversions ${query}`,
+            url: `https://blog.mainlinegroundworks.co.uk/utility-diversions-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks for UK groundworks projects.",
+            highlights: ["Project subdomains should be excluded too."]
+          },
+          ...Array.from({ length: 3 }, (_, index) => ({
+            title: `External utility diversions source ${index} ${query}`,
+            url: `https://external-${index}-${query.length}.example.org/utility-diversions-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks and requirements for UK groundworks projects.",
+            highlights: ["Independent evidence explains utility diversion planning, procurement, standards, and risks."]
+          }))
+        ]
+      };
+    }
+  };
+
+  const research = await runResearch("Utility Diversions Explained", "article_test", search, undefined, "industry_explainer", "queuewrite", {
+    projectWebsite: "https://www.mainlinegroundworks.co.uk"
+  });
+  assert.ok(excludeDomains.every((domains) => domains.includes("mainlinegroundworks.co.uk")));
+  assert.equal(research.sources.some((source) => source.domain.endsWith("mainlinegroundworks.co.uk")), false);
+  assert.ok(research.rejectedSources.some((source) => source.rejectionReason === "Same project domain."));
+  assert.equal(research.researchSummary?.rejected["Same project domain"], 12);
+  assert.equal(research.sources.length, 12);
+});
+
+test("runResearch allows project-owned sources for explicit site audit style requests", async () => {
+  const search: SearchAdapter = {
+    async search(query) {
+      return {
+        requestId: `req_${query}`,
+        results: [
+          {
+            title: `Mainline existing content ${query}`,
+            url: `https://blog.mainlinegroundworks.co.uk/existing-article-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks for UK groundworks projects.",
+            highlights: ["Existing website content can be used when explicitly requested."]
+          },
+          {
+            title: `External utility diversions source ${query}`,
+            url: `https://external-${query.length}.example.org/utility-diversions-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks and requirements for UK groundworks projects.",
+            highlights: ["Independent evidence explains utility diversion planning, procurement, standards, and risks."]
+          }
+        ]
+      };
+    }
+  };
+
+  const research = await runResearch("Rewrite this page about utility diversions", "article_test", search, undefined, "industry_explainer", "queuewrite", {
+    projectWebsite: "mainlinegroundworks.co.uk",
+    allowProjectSources: true
+  });
+
+  assert.ok(research.sources.some((source) => source.domain === "blog.mainlinegroundworks.co.uk"));
+});
+
+test("runResearch records source classes and rejection summary for duplicate and neutral sources", async () => {
+  const search: SearchAdapter = {
+    async search(query) {
+      return {
+        requestId: `req_${query}`,
+        results: [
+          {
+            title: `Government utility diversions ${query}`,
+            url: `https://www.gov.uk/guidance/utility-diversions-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks and requirements for UK groundworks projects.",
+            highlights: ["Government guidance explains utility diversion planning requirements."]
+          },
+          {
+            title: `Government utility diversions duplicate ${query}`,
+            url: `https://www.gov.uk/guidance/utility-diversions-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks and requirements for UK groundworks projects.",
+            highlights: ["Duplicate URL should be counted as rejected."]
+          },
+          {
+            title: `Forum utility diversions ${query}`,
+            url: `https://reddit.com/r/construction/comments/${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks and requirements for UK groundworks projects.",
+            highlights: ["Forum discussion should be classified as neutral."]
+          },
+          {
+            title: `Spam coupon utility diversions ${query}`,
+            url: `https://coupon-spam.example.com/utility-diversions-${encodeURIComponent(query)}`,
+            summary: "Utility diversions costs lead times procurement risks and requirements for UK groundworks projects.",
+            highlights: ["Spam source should be rejected."]
+          }
+        ]
+      };
+    }
+  };
+
+  const research = await runResearch("Utility Diversions Explained", "article_test", search);
+
+  assert.ok(research.sources.some((source) => source.sourceCategory === "government"));
+  assert.ok(research.sources.some((source) => source.sourceClass === "neutral" && source.sourceCategory === "reddit"));
+  assert.ok((research.researchSummary?.rejected["Duplicate URL"] ?? 0) > 0);
+  assert.ok((research.researchSummary?.rejected["Obvious spam"] ?? 0) > 0);
+  assert.ok((research.researchSummary?.sourceClasses.allowed ?? 0) > 0);
+  assert.ok((research.researchSummary?.sourceClasses.neutral ?? 0) > 0);
+  assert.ok((research.researchSummary?.sourceClasses.excluded ?? 0) > 0);
+});

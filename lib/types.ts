@@ -315,6 +315,8 @@ export interface ResearchSource {
   title: string;
   url: string;
   domain: string;
+  sourceClass?: "allowed" | "neutral" | "excluded";
+  sourceCategory?: string;
   text?: string;
   summary?: string;
   highlights: string[];
@@ -353,6 +355,12 @@ export interface ResearchPack {
   costPerAcceptedSource?: number;
   costPerEvidenceItem?: number;
   providerUsage?: Record<string, number | string | boolean | null>;
+  researchSummary?: {
+    accepted: number;
+    rejected: Record<string, number>;
+    sourceClasses: Record<string, number>;
+    sourceCategories: Record<string, number>;
+  };
   queries: string[];
   sources: ResearchSource[];
   rejectedSources: ResearchSource[];

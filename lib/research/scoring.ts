@@ -2,6 +2,7 @@ import { profileSourcePreference } from "@/lib/project/profile";
 import type { ProjectProfileSnapshot, ResearchSource, SearchResult } from "@/lib/types";
 import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
 import { domainFromUrl } from "@/lib/text";
+import { classifyResearchSource, type SourceClassification } from "@/lib/research/source-classification";
 
 const AUTHORITY_DOMAINS = [
   "gov.uk",
@@ -55,26 +56,29 @@ export function buildQueryVariants(title: string, profileSnapshot?: ProjectProfi
   return [...new Set(variants.filter(Boolean))];
 }
 
-export function toResearchSource(result: SearchResult, title: string, index: number, profileSnapshot?: ProjectProfileSnapshot | null): ResearchSource {
+export function toResearchSource(result: SearchResult, title: string, index: number, profileSnapshot?: ProjectProfileSnapshot | null, classification?: SourceClassification): ResearchSource {
   const domain = domainFromUrl(result.url);
   const text = [result.title, result.summary, result.text, ...(result.highlights ?? [])].join(" ").toLowerCase();
   const titleTokens = title.toLowerCase().split(/\W+/).filter((t) => t.length > 3);
   const overlap = titleTokens.filter((token) => text.includes(token)).length;
   const relevanceScore = Math.min(100, Math.round((overlap / Math.max(titleTokens.length, 1)) * 80 + (result.summary || result.text ? 20 : 0)));
   const authorityScore = authorityForDomain(domain);
-  const rejectionReason = rejectionReasonFor(result.url, domain, title);
+  const sourceClassification = classification ?? classifyResearchSource({ ...result, domain });
+  const rejectionReason = sourceClassification.rejectionReason ?? rejectionReasonFor(result.url, domain, title);
   const source: ResearchSource = {
     id: `src_${index}`,
     title: result.title || result.url,
     url: result.url,
     domain,
+    sourceClass: sourceClassification.sourceClass,
+    sourceCategory: sourceClassification.sourceCategory,
     text: result.text,
     summary: result.summary,
     highlights: result.highlights ?? [],
     authorityScore,
     relevanceScore,
-    accepted: !rejectionReason && relevanceScore >= 25,
-    rejectionReason
+    accepted: sourceClassification.sourceClass !== "excluded" && !rejectionReason && relevanceScore >= 25,
+    rejectionReason: rejectionReason ?? (relevanceScore < 25 ? "Low relevance." : undefined)
   };
   const preference = profileSourcePreference(source, profileSnapshot);
   return {

@@ -4,6 +4,8 @@ import { buildQueryVariants, average, toResearchSource } from "@/lib/research/sc
 import { nowIso } from "@/lib/defaults";
 import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateResearchCostUsd } from "@/lib/telemetry/costs";
 import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
+import { domainFromUrl, registeredDomainFromUrl } from "@/lib/text";
+import { classifyResearchSource, duplicateSourceClassification, rejectionSummaryLabel, type SourceClassification } from "@/lib/research/source-classification";
 
 const EXCLUDE_DOMAINS = [
   "dictionary.com",
@@ -32,12 +34,22 @@ const KNOWN_CONCEPT_PATTERNS: Array<[RegExp, string]> = [
   [/\brefresh tokens?\b/i, "Refresh Tokens"]
 ];
 
-export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null, contentProfile: ContentProfile = "industry_explainer", researchProvider: ResearchProviderId = "queuewrite"): Promise<ResearchPack> {
+export interface ResearchRunOptions {
+  projectWebsite?: string | null;
+  allowProjectSources?: boolean;
+}
+
+export async function runResearch(title: string, articleId: string, search: SearchAdapter, profileSnapshot?: ProjectProfileSnapshot | null, contentProfile: ContentProfile = "industry_explainer", researchProvider: ResearchProviderId = "queuewrite", options: ResearchRunOptions = {}): Promise<ResearchPack> {
   const started = Date.now();
   const definition = CONTENT_PROFILES[contentProfile];
   const queries = buildQueryVariants(title, profileSnapshot, contentProfile);
+  const projectRegisteredDomain = options.allowProjectSources ? "" : registeredDomainFromUrl(options.projectWebsite ?? "");
+  const excludeDomains = projectRegisteredDomain
+    ? [...EXCLUDE_DOMAINS, projectRegisteredDomain]
+    : EXCLUDE_DOMAINS;
   const seen = new Set<string>();
-  const raw: SearchResult[] = [];
+  const raw: Array<{ result: SearchResult; classification: SourceClassification }> = [];
+  const diagnosticRejected: Array<{ result: SearchResult; classification: SourceClassification }> = [];
   const requestIds: string[] = [];
   let exaSearchRequests = queries.length;
   let exaContentPages = 0;
@@ -52,7 +64,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
 
   const responses = await Promise.allSettled(queries.map((query) => search.search(query, {
       numResults: definition.research.depth === "very_high" ? 8 : definition.research.depth === "high" ? 6 : 5,
-      excludeDomains: EXCLUDE_DOMAINS
+      excludeDomains
     })));
 
   const failures = responses.filter((response) => response.status === "rejected");
@@ -74,9 +86,16 @@ export async function runResearch(title: string, articleId: string, search: Sear
     }
     if (requestId) requestIds.push(requestId);
     for (const result of results) {
-      if (!seen.has(result.url)) {
+      const classification = classifyResearchSource({ ...result, domain: domainFromUrl(result.url), projectRegisteredDomain });
+      if (classification.sourceClass === "excluded") {
+        diagnosticRejected.push({ result, classification });
+        continue;
+      }
+      if (seen.has(result.url)) {
+        diagnosticRejected.push({ result, classification: duplicateSourceClassification() });
+      } else {
         seen.add(result.url);
-        raw.push(result);
+        raw.push({ result, classification });
       }
     }
     if (raw.length >= 30) break;
@@ -88,7 +107,9 @@ export async function runResearch(title: string, articleId: string, search: Sear
     throw new Error(`Research/search completely unavailable: ${message}`);
   }
 
-  const scored = raw.slice(0, 30).map((result, index) => toResearchSource(result, title, index + 1, profileSnapshot));
+  const scored = raw.slice(0, 30).map(({ result, classification }, index) => toResearchSource(result, title, index + 1, profileSnapshot, classification));
+  const diagnosticSources = diagnosticRejected
+    .map(({ result, classification }, index) => toResearchSource(result, title, scored.length + index + 1, profileSnapshot, classification));
   const accepted = scored
     .filter((source) => source.accepted)
     .sort((a, b) => (b.authorityScore + b.relevanceScore) - (a.authorityScore + a.relevanceScore))
@@ -97,6 +118,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
   const acceptedUrls = new Set(accepted.map((source) => source.url));
   const rejected = scored
     .filter((source) => !acceptedUrls.has(source.url))
+    .concat(diagnosticSources)
     .map((source) => ({
       ...source,
       accepted: false,
@@ -119,6 +141,9 @@ export async function runResearch(title: string, articleId: string, search: Sear
   if (usefulFacts.length < definition.research.minimumEvidenceItems) warnings.push(`${definition.label} research has ${usefulFacts.length} of ${definition.research.minimumEvidenceItems} recommended evidence items.`);
   if (confidence < 60) warnings.push("Research confidence is low.");
   if (failures.length) warnings.push(`${failures.length} research query variants failed, but generation continued.`);
+  const rejectionSummary = summarizeRejectedSources(rejected);
+  const sourceClassSummary = summarizeSourceField([...accepted, ...rejected], "sourceClass");
+  const sourceCategorySummary = summarizeSourceField([...accepted, ...rejected], "sourceCategory");
 
   const sourcesFound = scored.length;
   const evidenceItemsExtracted = usefulFacts.length;
@@ -157,6 +182,12 @@ export async function runResearch(title: string, articleId: string, search: Sear
       ...(providerCostPricingSource ? { providerCostPricingSource } : {}),
       ...(reportedManagedCostIsComplete ? { reportedResearchCostUsd: managedResearchCostUsd } : {})
     },
+    researchSummary: {
+      accepted: accepted.length,
+      rejected: rejectionSummary,
+      sourceClasses: sourceClassSummary,
+      sourceCategories: sourceCategorySummary
+    },
     queries,
     sources: accepted,
     rejectedSources: rejected,
@@ -184,6 +215,22 @@ export async function runResearch(title: string, articleId: string, search: Sear
     profileRelevanceScore,
     createdAt: nowIso()
   };
+}
+
+export function summarizeRejectedSources(sources: ResearchPack["rejectedSources"]) {
+  return sources.reduce<Record<string, number>>((summary, source) => {
+    const label = rejectionSummaryLabel(source.rejectionReason);
+    summary[label] = (summary[label] ?? 0) + 1;
+    return summary;
+  }, {});
+}
+
+export function summarizeSourceField(sources: ResearchPack["sources"], field: "sourceClass" | "sourceCategory") {
+  return sources.reduce<Record<string, number>>((summary, source) => {
+    const label = source[field] ?? "unknown";
+    summary[label] = (summary[label] ?? 0) + 1;
+    return summary;
+  }, {});
 }
 
 export function extractResearchConcepts(title: string, sources: ResearchPack["sources"], usefulFacts: string[] = []) {
