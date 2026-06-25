@@ -1663,6 +1663,81 @@ function Workbench() {
           <button onClick={() => setShowRightPane((visible) => !visible)} className={cn("mr-2 grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink", showRightPane && "bg-surface-3 text-ink")} title={showRightPane ? "Hide inspector" : "Show inspector"}>
             <PanelRight className="size-3.5" />
           </button>
+          <div ref={generateMenuRef} className="relative">
+            <div className="flex items-center">
+              <button
+                onClick={() => void processNext()}
+                disabled={generateButton.disabled}
+                title={generateButton.title}
+                className={cn(
+                  "flex h-7 items-center gap-1.5 rounded-l-md px-2.5 text-[12px] font-medium transition-colors",
+                  generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+                )}
+              >
+                {generateFeedback.status === "starting" ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3 fill-current" />}
+                {generateButton.label}
+              </button>
+              <button
+                onClick={() => setGenerateMenuOpen((open) => !open)}
+                className={cn(
+                  "grid h-7 w-7 place-items-center rounded-r-md border-l text-[12px] transition-colors",
+                  generateButton.disabled
+                    ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
+                    : "border-white/15 bg-ink text-white hover:bg-ink/90"
+                )}
+                title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
+              >
+                <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
+              </button>
+            </div>
+            {generateMenuOpen && (
+              <div className="absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
+                <div className="hairline-b px-3 py-2">
+                  <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
+                  <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
+                </div>
+                <div className="p-1.5">
+                  {POST_GENERATION_ACTION_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setPostGenerationAction(option.value);
+                        setGenerateMenuOpen(false);
+                      }}
+                      className={cn(
+                        "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
+                        postGenerationAction === option.value && "bg-surface-2"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] font-medium text-ink">{option.label}</span>
+                        {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
+                      </div>
+                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current") && (
+            <button
+              onClick={stopRun}
+              disabled={busy && !running}
+              className="h-7 rounded-md bg-surface-3 px-2.5 text-[12px] font-medium text-ink shadow-sm hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Stop after current
+            </button>
+          )}
+          {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
+            <button
+              onClick={emergencyStopRun}
+              className="h-7 rounded-md border border-[#d9a79d] bg-[#f6e3df] px-2.5 text-[12px] font-medium text-[#9f2f20] shadow-sm hover:border-[#c8796c] hover:bg-[#edc9c2] hover:text-[#842719]"
+              title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried."
+            >
+              Emergency stop
+            </button>
+          )}
         </div>
       </header>
 
@@ -1731,26 +1806,6 @@ function Workbench() {
                 )}
               </div>
             )}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              {(stats.processing > 0 || state?.queueControl.mode === "running") && (
-                <button
-                  onClick={stopRun}
-                  disabled={busy && !running}
-                  className="h-8 rounded-md bg-surface-1 px-2.5 text-[11.5px] font-medium text-ink ring-1 ring-line hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Pause
-                </button>
-              )}
-              {(stats.processing > 0 || state?.queueControl.mode === "stop_after_current" || resumableQueuedJob) && (
-                <button
-                  onClick={emergencyStopRun}
-                  className="h-8 rounded-md border border-[#d9a79d] bg-[#f6e3df] px-2.5 text-[11.5px] font-medium text-[#9f2f20] hover:border-[#c8796c] hover:bg-[#edc9c2] hover:text-[#842719]"
-                  title="Immediately stop queue processing and mark the current in-flight article as failed so it can be retried."
-                >
-                  Emergency stop
-                </button>
-              )}
-            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -1947,17 +2002,6 @@ function Workbench() {
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onRunSelectionAction={(action) => void runSelectionAction(action)}
-              generateButton={generateButton}
-              generateMenuOpen={generateMenuOpen}
-              generateMenuRef={generateMenuRef}
-              generateStarting={generateFeedback.status === "starting"}
-              postGenerationAction={postGenerationAction}
-              onRunGenerate={() => void processNext()}
-              onToggleGenerateMenu={() => setGenerateMenuOpen((open) => !open)}
-              onSelectPostGenerationAction={(action) => {
-                setPostGenerationAction(action);
-                setGenerateMenuOpen(false);
-              }}
             />
           )}
         </section>
@@ -2304,15 +2348,7 @@ function ProjectDashboard({
   onOpenProjectSettings,
   onToggleArticleSelection,
   onToggleSelectAll,
-  onRunSelectionAction,
-  generateButton,
-  generateMenuOpen,
-  generateMenuRef,
-  generateStarting,
-  postGenerationAction,
-  onRunGenerate,
-  onToggleGenerateMenu,
-  onSelectPostGenerationAction
+  onRunSelectionAction
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -2331,14 +2367,6 @@ function ProjectDashboard({
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
   onRunSelectionAction: (action: SelectionAction) => void;
-  generateButton: { label: string; disabled: boolean; title: string };
-  generateMenuOpen: boolean;
-  generateMenuRef: RefObject<HTMLDivElement | null>;
-  generateStarting: boolean;
-  postGenerationAction: PostGenerationPublishingAction;
-  onRunGenerate: () => void;
-  onToggleGenerateMenu: () => void;
-  onSelectPostGenerationAction: (action: PostGenerationPublishingAction) => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2375,80 +2403,24 @@ function ProjectDashboard({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
-              {state?.project.id && (
-                <button
-                  type="button"
-                  onClick={onOpenProjectSettings}
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition hover:bg-surface-2 hover:text-ink"
-                  aria-label="Project settings"
-                  title="Project settings"
-                >
-                  <Settings className="size-3.5" />
-                </button>
-              )}
-            </div>
-            <div className="mono mt-2 text-[11px] text-ink-muted">
-              {formatNumber(summary?.articleCount ?? articles.length)} articles
-              {profile ? ` • ${profile.regionLabel} • ${profile.audienceLabel} • ${formatNumber(profile.defaultTargetWords)} words` : ""}
-            </div>
-          </div>
-          <div ref={generateMenuRef} className="relative shrink-0">
-            <div className="flex items-center">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
+            {state?.project.id && (
               <button
-                onClick={onRunGenerate}
-                disabled={generateButton.disabled}
-                title={generateButton.title}
-                className={cn(
-                  "flex h-8 min-w-[136px] items-center justify-center gap-1.5 rounded-l-md px-3 text-[12px] font-medium transition-colors",
-                  generateButton.disabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
-                )}
+                type="button"
+                onClick={onOpenProjectSettings}
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition hover:bg-surface-2 hover:text-ink"
+                aria-label="Project settings"
+                title="Project settings"
               >
-                {generateStarting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5 fill-current" />}
-                {generateButton.label}
+                <Settings className="size-3.5" />
               </button>
-              <button
-                onClick={onToggleGenerateMenu}
-                className={cn(
-                  "grid h-8 w-8 place-items-center rounded-r-md border-l text-[12px] transition-colors",
-                  generateButton.disabled
-                    ? "border-line bg-surface-3 text-ink-subtle hover:bg-surface-3"
-                    : "border-white/15 bg-ink text-white hover:bg-ink/90"
-                )}
-                title={`Post-generation action: ${describePostGenerationAction(postGenerationAction)}`}
-              >
-                <ChevronDown className={cn("size-3.5 transition-transform", generateMenuOpen && "rotate-180")} />
-              </button>
-            </div>
-            {generateMenuOpen && (
-              <div className="absolute right-0 top-10 z-30 w-72 overflow-hidden rounded-md border border-line bg-surface-1 shadow-2xl">
-                <div className="hairline-b px-3 py-2">
-                  <div className="text-[12px] font-semibold text-ink">Post-generation workflow</div>
-                  <div className="mt-1 text-[11px] text-ink-muted">Choose what newly generated articles do after queue completion.</div>
-                </div>
-                <div className="p-1.5">
-                  {POST_GENERATION_ACTION_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => onSelectPostGenerationAction(option.value)}
-                      className={cn(
-                        "w-full rounded-md px-2.5 py-2 text-left hover:bg-surface-2",
-                        postGenerationAction === option.value && "bg-surface-2"
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[12px] font-medium text-ink">{option.label}</span>
-                        {postGenerationAction === option.value && <CheckCircle2 className="size-3.5 text-success" />}
-                      </div>
-                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{option.description}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
             )}
+          </div>
+          <div className="mono mt-2 text-[11px] text-ink-muted">
+            {formatNumber(summary?.articleCount ?? articles.length)} articles
+            {profile ? ` • ${profile.regionLabel} • ${profile.audienceLabel} • ${formatNumber(profile.defaultTargetWords)} words` : ""}
           </div>
         </div>
         <div className="mt-4 overflow-x-auto">

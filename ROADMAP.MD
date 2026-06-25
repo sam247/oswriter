@@ -68,9 +68,9 @@
   - removed the hover pin/delete row controls now that those actions live in the shared `Actions` menu
   - collapsed the far-right edge into a single roomier selection column so the article data has more breathing room
 - Rebalanced queue start controls after live review:
-  - moved the split `Generate` control back into the workspace header at the top right
-  - removed the redundant left-rail `Stopped` status card and duplicate resume/start messaging
-  - kept the queue rail focused on actual operational controls rather than repeating status copy already visible elsewhere
+  - restored the split `Generate` control to the global app header at the far right after checking the earlier approved header pattern
+  - restored `Stop after current` and `Emergency stop` beside `Generate` in that same header area while generation is active
+  - removed the mistaken duplicate generate/start placement from the project workspace header and kept the left rail free of repeated start controls
 
 ### Navigation Polish Recovery
 
