@@ -39,6 +39,12 @@
   - row data aligns directly beneath the list headers with cleaner Finder/Linear-style rhythm
   - queue actions such as `Generate`, `Pause`, and `Resume` sit back in the left workflow rail
   - article row actions stay hidden until hover so the content list remains visually primary
+- Refined the centre again as a calmer content database:
+  - restored explicit `Sources`, `Quality`, `Research`, and `Evidence` columns so the workspace reads like a real table
+  - changed selection into a true mode switch where the normal toolbar is replaced by `selected`, `Select all`, `Actions`, and `Cancel`
+  - reduced duplicated publish controls by routing selection actions through a single dropdown
+  - kept the command bar to one horizontal row with more whitespace and less competing chrome
+  - tightened table alignment, status badge weight, and hover states so the centre panel feels more like a premium document manager than a dashboard
 
 ### Navigation Polish Recovery
 
