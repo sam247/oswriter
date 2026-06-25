@@ -1265,45 +1265,6 @@ function Workbench() {
     }
   }
 
-  async function deleteArticle(articleId: string) {
-    const article = articles.find((item) => item.id === articleId);
-    if (!article) return;
-    if (!window.confirm(`Delete article "${article.title}" from this project? Queue and research records are kept.`)) return;
-    const res = await fetch(`/api/articles/${articleId}`, { method: "DELETE" });
-    if (res.ok) {
-      if (selectedArticleId === articleId) {
-        setSelectedArticleId(null);
-        setDetails({ research: null, debug: null });
-      }
-      setMessage("Article deleted.");
-    } else {
-      setMessage("Article delete failed.");
-    }
-    await refresh();
-  }
-
-  async function toggleArticlePin(article: ArticleSummary) {
-    const nextPinned = !pinnedArticleIds.has(article.id);
-    const res = await fetch(`/api/articles/${article.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isPinned: nextPinned })
-    });
-    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; error?: string };
-    if (!res.ok || !data.article) {
-      setMessage(data.error ?? "Could not update pinned state.");
-      return;
-    }
-    if (selectedArticle?.id === data.article.id) setSelectedArticle(data.article);
-    setPinnedArticleIds((current) => {
-      const next = new Set(current);
-      if (data.article!.isPinned) next.add(data.article!.id);
-      else next.delete(data.article!.id);
-      return next;
-    });
-    setMessage(data.article.isPinned ? "Article pinned." : "Article unpinned.");
-  }
-
   async function confirmRegenerateArticle() {
     if (!regenerateCandidate) return;
     setBusy(true);
@@ -2062,8 +2023,6 @@ function Workbench() {
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onRunSelectionAction={(action) => void runSelectionAction(action)}
-              onPinArticle={(article) => void toggleArticlePin(article)}
-              onDeleteArticle={(article) => void deleteArticle(article.id)}
             />
           )}
         </section>
@@ -2445,9 +2404,7 @@ function ProjectDashboard({
   onOpenProjectSettings,
   onToggleArticleSelection,
   onToggleSelectAll,
-  onRunSelectionAction,
-  onPinArticle,
-  onDeleteArticle
+  onRunSelectionAction
 }: {
   state: AppState | null;
   articles: ArticleSummary[];
@@ -2466,8 +2423,6 @@ function ProjectDashboard({
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
   onRunSelectionAction: (action: SelectionAction) => void;
-  onPinArticle: (article: ArticleSummary) => void;
-  onDeleteArticle: (article: ArticleSummary) => void;
 }) {
   const [sortKey, setSortKey] = useState<InventorySortKey>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2482,9 +2437,6 @@ function ProjectDashboard({
   const allInventorySelected = contentInventoryIds.length > 0 && contentInventoryIds.every((articleId) => selectedArticleIds.has(articleId));
   const selectedInventoryCount = selectedArticleIds.size;
   const someInventorySelected = selectedInventoryCount > 0 && !allInventorySelected;
-  const attentionRows = inventoryRows
-    .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "research_failed")
-    .slice(0, 8);
   const orderedRows = [
     ...contentInventory.filter(({ article }) => pinnedArticleIds.has(article.id)),
     ...contentInventory.filter(({ article }) => !pinnedArticleIds.has(article.id))
@@ -2575,11 +2527,6 @@ function ProjectDashboard({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8">
-        {attentionRows.length > 0 && (
-          <div className="mb-4">
-            <ContentAttentionList rows={attentionRows} onSelectArticle={onSelectArticle} />
-          </div>
-        )}
         {orderedRows.length ? (
           <div className="pt-2">
             <InventoryTable
@@ -2593,8 +2540,6 @@ function ProjectDashboard({
               onToggleArticleSelection={onToggleArticleSelection}
               onToggleSelectAll={() => onToggleSelectAll(contentInventoryIds)}
               onSelectArticle={onSelectArticle}
-              onPinArticle={onPinArticle}
-              onDeleteArticle={onDeleteArticle}
               sortKey={sortKey}
               sortDirection={sortDirection}
               onSort={changeSort}
@@ -2604,32 +2549,6 @@ function ProjectDashboard({
           <Empty text={activeFilter === "needs_review" ? "Nothing needs review right now." : "Generated articles will appear here."} />
         )}
       </div>
-    </div>
-  );
-}
-
-function ContentAttentionList({
-  rows,
-  onSelectArticle
-}: {
-  rows: Array<{ article: ArticleSummary; job: QueueJob | null }>;
-  onSelectArticle: (id: string) => void;
-}) {
-  return (
-    <div className="space-y-1.5">
-      {rows.map(({ article, job }) => (
-        <button
-          key={article.id}
-          onClick={() => onSelectArticle(article.id)}
-          className="flex w-full items-center justify-between gap-3 border-b border-line/70 px-1 py-2 text-left hover:bg-surface-2"
-        >
-          <span className="min-w-0">
-            <span className="block truncate text-[13px] font-medium text-ink">{article.title}</span>
-            <span className="mt-1 block text-[11px] text-ink-muted">{job ? attentionSummary(article, job) ?? "Needs review" : "Needs review"}</span>
-          </span>
-          <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[10px]", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
-        </button>
-      ))}
     </div>
   );
 }
@@ -3392,8 +3311,6 @@ function InventoryTable({
   onToggleArticleSelection,
   onToggleSelectAll,
   onSelectArticle,
-  onPinArticle,
-  onDeleteArticle,
   sortKey,
   sortDirection,
   onSort
@@ -3408,8 +3325,6 @@ function InventoryTable({
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: () => void;
   onSelectArticle: (id: string) => void;
-  onPinArticle: (article: ArticleSummary) => void;
-  onDeleteArticle: (article: ArticleSummary) => void;
   sortKey: InventorySortKey;
   sortDirection: SortDirection;
   onSort: (key: InventorySortKey) => void;
@@ -3431,8 +3346,7 @@ function InventoryTable({
           <col className="w-[78px]" />
           <col className="w-[88px]" />
           <col className="w-[88px]" />
-          <col className="w-[32px]" />
-          <col className="w-[54px]" />
+          <col className="w-[68px]" />
         </colgroup>
         <thead>
           <tr className="border-b border-line/70 bg-surface-1/70 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
@@ -3443,7 +3357,7 @@ function InventoryTable({
             <th className="px-3 py-2 text-right"><InventorySortHeader label="Evidence" metric="evidence" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
             <th className="px-3 py-2 text-right"><InventorySortHeader label="Updated" metric="updated" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
             <th className="px-3 py-2 text-right">Status</th>
-            <th className="px-2 py-2 text-right">
+            <th className="px-4 py-2 text-right">
               <label className="flex items-center justify-center">
                 <input
                   ref={selectAllRef}
@@ -3455,7 +3369,6 @@ function InventoryTable({
                 />
               </label>
             </th>
-            <th className="px-2 py-2 text-right"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
@@ -3493,7 +3406,7 @@ function InventoryTable({
                 <td className="px-3 py-3 text-right align-middle">
                   <span className={cn("inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-medium", statusBadgeTone(article.status))}>{statusLabel(article.status)}</span>
                 </td>
-                <td className="px-2 py-3 align-middle" onClick={(event) => event.stopPropagation()}>
+                <td className="px-4 py-3 align-middle" onClick={(event) => event.stopPropagation()}>
                   <label className="flex items-center justify-center">
                     <input
                       type="checkbox"
@@ -3503,14 +3416,6 @@ function InventoryTable({
                       className="size-3.5"
                     />
                   </label>
-                </td>
-                <td className="px-2 py-3 align-middle">
-                  <div className="flex justify-end opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
-                    <div className="flex items-center gap-0.5 rounded bg-surface-1 p-0.5 shadow-sm ring-1 ring-line">
-                      <IconAction title={pinned ? "Unpin article" : "Pin article"} onClick={() => onPinArticle(article)}><Pin className={cn("size-3", pinned && "fill-current text-ink")} /></IconAction>
-                      <IconAction title={`Delete ${article.title}`} danger onClick={() => onDeleteArticle(article)}><Trash2 className="size-3" /></IconAction>
-                    </div>
-                  </div>
                 </td>
               </tr>
             );

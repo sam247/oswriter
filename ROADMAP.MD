@@ -63,6 +63,10 @@
   - moved bulk-selection checkboxes from the far left into the right-side control lane
   - let article titles align flush left so the list reads more like a document manager
   - kept the rest of the table structure unchanged so the visual comparison stays focused on readability
+- Completed the follow-up table calm-down pass:
+  - removed the redundant `Needs review` spotlight above the table because row statuses already carry that signal
+  - removed the hover pin/delete row controls now that those actions live in the shared `Actions` menu
+  - collapsed the far-right edge into a single roomier selection column so the article data has more breathing room
 
 ### Navigation Polish Recovery
 
