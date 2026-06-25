@@ -50,6 +50,11 @@
   - removed the temporary selection toolbar pattern and replaced it with a persistent `Actions` control plus an `Apply` button that simply enables when selection exists
   - moved bulk selection fully into the table with a header checkbox for visible rows, removing the extra toolbar `Select all` control
   - preserved the desktop-app mental model by enabling capability progressively instead of rebuilding the interface around selection
+- Refined the command hierarchy without redesigning the workspace:
+  - separated the command bar into viewing controls on the left and document actions on the right
+  - moved `Export` out of the permanent toolbar and into the `Actions` dropdown so rarely used actions no longer occupy constant space
+  - right-aligned `Actions` and `Apply` so the workflow reads left-to-right as view first, action second
+  - kept row selection on the left after evaluation because the header checkbox pattern remains the clearest desktop-style bulk-selection affordance
 
 ### Navigation Polish Recovery
 

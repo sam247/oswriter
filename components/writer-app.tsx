@@ -41,7 +41,7 @@ type WordPressConnectionDraft = {
   defaultCategory: string;
 };
 type BulkPublishingAction = "publish_draft" | "publish_now" | "schedule";
-type SelectionAction = BulkPublishingAction | "pin" | "unpin" | "delete";
+type SelectionAction = BulkPublishingAction | "pin" | "unpin" | "delete" | "export_package";
 type BulkPublishingProgress = {
   action: SelectionAction;
   completed: number;
@@ -82,6 +82,7 @@ const BULK_PUBLISHING_ACTION_OPTIONS: Array<{ value: BulkPublishingAction; label
   { value: "schedule", label: "Schedule" }
 ];
 const SELECTION_ACTION_OPTIONS: Array<{ value: SelectionAction; label: string }> = [
+  { value: "export_package", label: "Export" },
   { value: "publish_draft", label: "Publish Draft" },
   { value: "publish_now", label: "Publish Now" },
   { value: "schedule", label: "Schedule" },
@@ -940,6 +941,10 @@ function Workbench() {
 
   async function runSelectionAction(action: SelectionAction) {
     const articleIds = [...selectedInventoryArticleIds];
+    if (action === "export_package") {
+      window.location.assign("/api/export/project/package");
+      return true;
+    }
     if (!articleIds.length) {
       setMessage("Select at least one article.");
       return false;
@@ -2494,6 +2499,8 @@ function ProjectDashboard({
     await onRunSelectionAction(selectionActionValue);
   }
 
+  const applyDisabled = bulkBusy || !selectionActionValue || (selectionActionValue !== "export_package" && !selectedInventoryCount);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
@@ -2507,46 +2514,48 @@ function ProjectDashboard({
           )}
         </div>
         <div className="mt-4 overflow-x-auto">
-          <div className="flex min-w-max items-center gap-2 whitespace-nowrap">
-            <ContentFilterChip
-              label="All articles"
-              value={summary?.articleCount ?? articles.length}
-              active={activeFilter === "all"}
-              onClick={() => onFilterChange("all")}
-            />
-            <ContentFilterChip
-              label="Needs review"
-              value={summary?.reviewCount ?? 0}
-              active={activeFilter === "needs_review"}
-              warn={(summary?.reviewCount ?? 0) > 0}
-              onClick={() => onFilterChange("needs_review")}
-            />
-            <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
-            <ProjectExportMenu summary={summary} />
-            <div className="w-3" />
-            <select
-              value={selectionActionValue}
-              onChange={(event) => setSelectionActionValue(event.currentTarget.value as SelectionAction | "")}
-              disabled={bulkBusy}
-              className="h-8 min-w-40 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none disabled:opacity-50"
-              aria-label="Selection actions"
-            >
-              <option value="">Actions</option>
-              {SELECTION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            <button
-              onClick={() => void handleSelectionAction()}
-              disabled={!selectionActionValue || !selectedInventoryCount || bulkBusy}
-              className="inline-flex h-8 items-center rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:bg-surface-3 disabled:text-ink-subtle"
-            >
-              {selectionActionValue ? bulkActionLabel(selectionActionValue) : "Apply"}
-            </button>
-            {bulkProgress && (
-              <span className="mono text-[10.5px] text-ink-subtle">
-                {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-                {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-              </span>
-            )}
+          <div className="flex min-w-max items-center whitespace-nowrap">
+            <div className="flex items-center gap-2">
+              <ContentFilterChip
+                label="All articles"
+                value={summary?.articleCount ?? articles.length}
+                active={activeFilter === "all"}
+                onClick={() => onFilterChange("all")}
+              />
+              <ContentFilterChip
+                label="Needs review"
+                value={summary?.reviewCount ?? 0}
+                active={activeFilter === "needs_review"}
+                warn={(summary?.reviewCount ?? 0) > 0}
+                onClick={() => onFilterChange("needs_review")}
+              />
+              <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <select
+                value={selectionActionValue}
+                onChange={(event) => setSelectionActionValue(event.currentTarget.value as SelectionAction | "")}
+                disabled={bulkBusy}
+                className="h-8 min-w-40 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none disabled:opacity-50"
+                aria-label="Selection actions"
+              >
+                <option value="">Actions</option>
+                {SELECTION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+              <button
+                onClick={() => void handleSelectionAction()}
+                disabled={applyDisabled}
+                className="inline-flex h-8 items-center rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:bg-surface-3 disabled:text-ink-subtle"
+              >
+                {selectionActionValue ? bulkActionLabel(selectionActionValue) : "Apply"}
+              </button>
+              {bulkProgress && (
+                <span className="mono text-[10.5px] text-ink-subtle">
+                  {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                  {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -3826,17 +3835,6 @@ function ProgressBar({ value }: { value: number }) {
     <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
       <div className="h-full rounded-full bg-ink" style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} />
     </div>
-  );
-}
-
-function ProjectExportMenu({ summary }: { summary: ProjectSummary | null }) {
-  return (
-    <ExportLink
-      href="/api/export/project/package"
-      label="Export All"
-      icon={<Download className="size-3.5" />}
-      disabled={!summary?.articleCount}
-    />
   );
 }
 
