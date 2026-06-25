@@ -136,7 +136,7 @@ Short section.`,
     const plan = buildArticleGenerationPlan(DEFAULT_CONTROLS, null, siteProfile, "industry_explainer", title);
     const prompt = buildGenerationPrompt({ title, controls: DEFAULT_CONTROLS, research: researchPack(), siteProfile, plan });
 
-    assert.deepEqual(plan.websiteEntityRecommendations?.brands, ["Joules", "White Stuff", "Seasalt", "Barbour", "Inis"]);
+    assert.deepEqual(plan.websiteEntityRecommendations?.brands, ["Joules", "White Stuff", "Seasalt", "Barbour", "Elizabeth Scarlett"]);
     assert.deepEqual(plan.websiteEntityRecommendations?.brandUsageTarget, { min: 2, max: 5 });
     assert.deepEqual(plan.websiteEntityRecommendations?.categories, ["Clothing", "Footwear", "Accessories"]);
     assert.deepEqual(plan.websiteEntityRecommendations?.productTypes, ["Knitwear", "Handbags", "Boots", "Scarves"]);
@@ -156,7 +156,7 @@ Short section.`,
     const title = "What To Wear For A Seaside Weekend In Britain";
     const prompt = promptForTitle(title);
 
-    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour, Inis/);
+    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour, Elizabeth Scarlett/);
     assert.match(prompt, /a waterproof jacket from brands such as Joules or White Stuff/);
   });
 
@@ -164,7 +164,7 @@ Short section.`,
     const title = "Best Gift Ideas For A Relaxing Coastal Weekend";
     const prompt = promptForTitle(title);
 
-    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour, Inis/);
+    assert.match(prompt, /Recommended website brands for this article: Inis, Elizabeth Scarlett, Joules, White Stuff, Seasalt/);
     assert.match(prompt, /Brand usage target for this article: 2-5 natural mentions when contextually relevant/);
     assert.match(prompt, /Brand mentions must feel natural inside outfit, gifting, accessories, or product recommendations\./);
   });
@@ -173,9 +173,20 @@ Short section.`,
     const title = "How To Choose Accessories For A British Weekend Away";
     const prompt = promptForTitle(title);
 
-    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Barbour, Inis/);
+    assert.match(prompt, /Recommended website brands for this article: Joules, White Stuff, Seasalt, Elizabeth Scarlett, Barbour/);
     assert.match(prompt, /Recommended website categories for this article: Accessories, Clothing, Footwear/);
     assert.match(prompt, /Recommended website product types for this article:/);
+  });
+
+  it("prioritises fragrance-related website brands for fragrance gift articles", () => {
+    const title = "How To Choose A Thoughtful Fragrance Gift";
+    const siteProfile = ecommerceSiteProfile();
+    const plan = buildArticleGenerationPlan(DEFAULT_CONTROLS, null, siteProfile, "industry_explainer", title);
+    const prompt = buildGenerationPrompt({ title, controls: DEFAULT_CONTROLS, research: researchPack(), siteProfile, plan });
+
+    assert.deepEqual(plan.websiteEntityRecommendations?.brands.slice(0, 3), ["Inis", "Elizabeth Scarlett", "Joules"]);
+    assert.ok(plan.knowledgeContext?.some((value) => value.includes("Recommended website brands for this article: Inis")));
+    assert.match(prompt, /Recommended website brands for this article: Inis, Elizabeth Scarlett/);
   });
 });
 
@@ -232,9 +243,17 @@ function ecommerceSiteProfile(): ProjectSiteProfileDocument {
       businessType: "ecommerce",
       strategyBusinessType: "ecommerce",
       ecommerce: {
-        brands: ["Joules", "White Stuff", "Seasalt", "Barbour", "Inis"],
+        brands: ["Joules", "White Stuff", "Seasalt", "Barbour", "Inis", "Elizabeth Scarlett"],
         categories: ["Clothing", "Footwear", "Accessories", "Gifts"],
-        productTypes: ["Knitwear", "Handbags", "Boots", "Scarves", "Dresses"]
+        productTypes: ["Knitwear", "Handbags", "Boots", "Scarves", "Dresses", "Diffusers", "Home Fragrance", "Gift Sets"],
+        brandRelationships: {
+          joules: ["Clothing", "Accessories", "Footwear"],
+          "white stuff": ["Clothing", "Accessories", "Knitwear"],
+          seasalt: ["Clothing", "Accessories", "Knitwear"],
+          barbour: ["Outerwear", "Clothing", "Footwear"],
+          inis: ["Fragrance", "Diffusers", "Home Fragrance", "Gift Sets", "Gifts"],
+          "elizabeth scarlett": ["Accessories", "Gifts"]
+        }
       }
     }
   };
