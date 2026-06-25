@@ -313,7 +313,16 @@ export class QueueRunner {
         ...job,
         status: "queued",
         updatedAt: nowIso(),
-        pipeline: job.pipeline.map((step) => step.status === "running" ? { ...step, status: "idle", message: "Recovered after stale processing timeout." } : step)
+        pipeline: job.pipeline.map((step) => step.status === "running" ? { ...step, status: "idle", message: "Recovered after stale processing timeout." } : step),
+        timings: {
+          ...job.timings,
+          execution_owner: "worker",
+          request_state: "finished",
+          request_finished_at: nowIso(),
+          recoverable: true,
+          recoverable_at: nowIso(),
+          stale_recovery_count: (job.timings?.stale_recovery_count ?? 0) + 1
+        }
       });
     }));
     return stale.length;
@@ -332,11 +341,16 @@ export class QueueRunner {
   async processNext(projectId?: string, context: { source?: "manual" | "worker" } = {}) {
     const resolvedProjectId = projectId ?? await this.store.getActiveProjectId();
     await this.reclaimStale(resolvedProjectId);
+    const activeWorkerLease = await this.store.getWorkerLease(resolvedProjectId);
+    const workerLeaseActive = hasActiveWorkerLease(activeWorkerLease);
     const processing = await this.store.getActiveProcessingJob(resolvedProjectId);
-    if (processing && !canContinueProcessing(processing, context.source)) {
-      return { processed: false, job: processing };
+    if (processing && !canContinueProcessing(processing, context.source, workerLeaseActive)) {
+      return { processed: false, job: await this.recordBlockedContinuationIfNeeded(processing, context.source) };
     }
     const control = await this.store.getQueueControl(resolvedProjectId);
+    if (!processing && context.source !== "worker" && workerLeaseActive) {
+      return { processed: false, job: null };
+    }
     const resumableCurrent = processing ? null : await this.store.getResumableQueuedJob(resolvedProjectId);
     if (!processing && control.mode === "stop_after_current" && !resumableCurrent) {
       return { processed: false, job: null };
@@ -354,6 +368,8 @@ export class QueueRunner {
 
   private async processJobStep(initial: QueueJob, context: { source?: "manual" | "worker" }) {
     const startedAt = nowIso();
+    const source = context.source ?? "unknown";
+    const workerTakingOver = source === "worker" && shouldRecordWorkerTakeover(initial);
     let job: QueueJob = {
       ...initial,
       status: "processing",
@@ -365,7 +381,13 @@ export class QueueRunner {
         queued_at: initial.timings?.queued_at ?? initial.createdAt,
         started_at: initial.timings?.started_at ?? startedAt,
         processing_at: initial.timings?.processing_at ?? startedAt,
-        started_by: initial.timings?.started_by ?? context.source ?? "unknown"
+        started_by: initial.timings?.started_by ?? source,
+        execution_owner: source,
+        request_state: "running",
+        request_finished_at: undefined,
+        recoverable: false,
+        worker_takeover_at: workerTakingOver ? startedAt : initial.timings?.worker_takeover_at,
+        worker_takeover_count: (initial.timings?.worker_takeover_count ?? 0) + (workerTakingOver ? 1 : 0)
       }
     };
     let debug: DebugDocument = {
@@ -409,7 +431,11 @@ export class QueueRunner {
           fallbackUsed: research.fallbackUsed ?? false,
           fallbackReason: research.fallbackReason ?? null
         };
-        job = { ...job, researchTelemetry, timings: markTiming(job.timings, "research_completed_at"), pipeline: completeStage(job.pipeline, "research", {
+        job = markDurableContinuation({
+          ...job,
+          researchTelemetry,
+          timings: markTiming(job.timings, "research_completed_at"),
+          pipeline: completeStage(job.pipeline, "research", {
           provider: research.researchProvider ?? "queuewrite",
           providerName: research.providerUsage?.providerName ?? null,
           providerType: research.providerUsage?.providerType ?? null,
@@ -426,7 +452,9 @@ export class QueueRunner {
           costPerAcceptedSource: research.costPerAcceptedSource ?? 0,
           costPerEvidenceItem: research.costPerEvidenceItem ?? 0,
           confidence: research.confidence
-        }), updatedAt: nowIso() };
+        }),
+          updatedAt: nowIso()
+        }, context.source, "research");
         await this.store.saveJob(job);
         log({ stage: "research", level: research.warnings.length ? "warn" : "info", message: "Research completed.", data: {
           warnings: research.warnings,
@@ -444,7 +472,7 @@ export class QueueRunner {
       if (!stageDone(job, "outline")) {
         await this.throwIfEmergencyStopped(job.projectId);
         job = { ...job, timings: markTiming(job.timings, "outline_started_at"), pipeline: startStage(job.pipeline, "outline", "Using generation prompt structure."), updatedAt: nowIso() };
-        job = {
+        job = markDurableContinuation({
           ...job,
           timings: markTiming(job.timings, "outline_completed_at"),
           pipeline: completeStage(job.pipeline, "outline", {
@@ -457,7 +485,7 @@ export class QueueRunner {
             wordsPerSection: plan.wordsPerSection
           }),
           updatedAt: nowIso()
-        };
+        }, context.source, "outline");
         await this.store.saveJob(job);
         log({ stage: "outline", level: "info", message: "Outline stage prepared." });
         await this.store.saveDebug(debug, job.projectId);
@@ -508,7 +536,7 @@ export class QueueRunner {
         planningDiagnostics
       });
       const completedAt = nowIso();
-      job = {
+      job = markRequestFinished({
         ...job,
         status: finalStatus,
         needsReviewReasons: uniqueReasons,
@@ -519,13 +547,13 @@ export class QueueRunner {
           completed_at: completedAt
         },
         updatedAt: completedAt
-      };
+      }, context.source, "completed");
 
       const costTelemetry = buildArticleCostTelemetry(job, markdown, research, generation, plan, planningDiagnostics);
       let article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics, costTelemetry, contentProfile);
       await this.store.saveArticle(article);
       article = await this.applyPostGenerationWorkflow(job, article, log);
-      job = { ...job, status: article.status, updatedAt: article.updatedAt };
+      job = markRequestFinished({ ...job, status: article.status, updatedAt: article.updatedAt }, context.source, "completed");
       await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
       log({ stage: "queue", level: article.status === "needs_review" ? "warn" : "info", message: `Job completed as ${article.status}.`, data: uniqueReasons });
       await this.store.saveJob(job);
@@ -541,7 +569,7 @@ export class QueueRunner {
           fallbackUsed: false,
           fallbackReason: error.reason
         };
-        const researchFailed: QueueJob = {
+        const researchFailed = markRequestFinished({
           ...job,
           status: "research_failed",
           statusReason: error.message,
@@ -550,7 +578,7 @@ export class QueueRunner {
           updatedAt: nowIso(),
           timings: { ...job.timings, completed_at: nowIso() },
           pipeline: failRunningStage(job.pipeline, error.message)
-        };
+        }, context.source, job.timings?.last_durable_stage ?? null);
         log({ stage: "research", level: "error", message: "Research provider failed; generation was not started.", data: researchTelemetry });
         await this.store.saveJob(researchFailed);
         await this.store.saveDebug(debug, job.projectId);
@@ -559,13 +587,13 @@ export class QueueRunner {
         return researchFailed;
       }
       const message = error instanceof Error ? error.message : String(error);
-      const failed: QueueJob = {
+      const failed = markRequestFinished({
         ...job,
         status: "failed",
         fatalError: message,
         updatedAt: nowIso(),
         pipeline: failRunningStage(job.pipeline, message)
-      };
+      }, context.source, job.timings?.last_durable_stage ?? null);
       log({ stage: "queue", level: "error", message: "Technical failure stopped the job.", data: message });
       await this.store.saveJob(failed);
       await this.store.saveDebug(debug, job.projectId);
@@ -803,6 +831,19 @@ export class QueueRunner {
       throw new Error(EMERGENCY_STOP_REASON);
     }
   }
+
+  private async recordBlockedContinuationIfNeeded(job: QueueJob, source: "manual" | "worker" | undefined) {
+    if (source !== "worker" || job.status !== "processing" || isDurablyRecoverable(job)) return job;
+    const blocked: QueueJob = {
+      ...job,
+      timings: {
+        ...job.timings,
+        blocked_continuation_count: (job.timings?.blocked_continuation_count ?? 0) + 1
+      }
+    };
+    await this.store.saveJob(blocked);
+    return blocked;
+  }
 }
 
 function isResearchProvider(provider: SearchAdapter | ResearchProvider): provider is ResearchProvider {
@@ -935,11 +976,14 @@ function stageDone(job: QueueJob, stage: QueueJob["pipeline"][number]["stage"]) 
   return job.pipeline.find((step) => step.stage === stage)?.status === "done";
 }
 
-function canContinueProcessing(job: QueueJob, source: "manual" | "worker" | undefined) {
+function canContinueProcessing(job: QueueJob, source: "manual" | "worker" | undefined, workerLeaseActive = false) {
   if (job.status !== "processing") return true;
-  const owner = job.timings?.started_by;
+  const owner = job.timings?.execution_owner ?? job.timings?.started_by ?? "unknown";
+  const requestRunning = job.timings?.request_state === "running" && !job.timings?.request_finished_at;
+  if (source !== "worker" && workerLeaseActive) return false;
+  if (requestRunning) return owner === source;
+  if (isDurablyRecoverable(job)) return true;
   if (!owner || owner === "unknown" || !source) return true;
-  if (source === "worker" && owner === "manual" && isBetweenCompletedStages(job)) return true;
   return owner === source;
 }
 
@@ -953,6 +997,66 @@ function isResumableQueuedJob(job: QueueJob) {
 function isBetweenCompletedStages(job: QueueJob) {
   return job.pipeline.some((step) => step.status === "done")
     && !job.pipeline.some((step) => step.status === "running");
+}
+
+function isDurablyRecoverable(job: QueueJob) {
+  return job.status === "processing" && Boolean(
+    job.timings?.recoverable
+    || (job.timings?.request_state === "finished" && job.timings?.last_durable_stage)
+    || isBetweenCompletedStages(job)
+  );
+}
+
+function shouldRecordWorkerTakeover(job: QueueJob) {
+  return job.timings?.started_by === "manual"
+    && isDurablyRecoverable(job)
+    && !job.timings?.worker_takeover_at;
+}
+
+function hasActiveWorkerLease(lease: Awaited<ReturnType<WorkspaceStore["getWorkerLease"]>>) {
+  return Boolean(lease && new Date(lease.expiresAt).getTime() > Date.now());
+}
+
+function markDurableContinuation(
+  job: QueueJob,
+  source: "manual" | "worker" | undefined,
+  stage: QueueJob["pipeline"][number]["stage"]
+) {
+  const finishedAt = nowIso();
+  const nextOwner = source === "manual" ? "worker" : source ?? job.timings?.execution_owner ?? job.timings?.started_by ?? "unknown";
+  return {
+    ...job,
+    updatedAt: finishedAt,
+    timings: {
+      ...job.timings,
+      execution_owner: nextOwner,
+      request_state: "finished" as const,
+      request_finished_at: finishedAt,
+      recoverable: true,
+      recoverable_at: finishedAt,
+      last_durable_stage: stage,
+      manual_handoff_count: (job.timings?.manual_handoff_count ?? 0) + (source === "manual" ? 1 : 0)
+    }
+  };
+}
+
+function markRequestFinished(
+  job: QueueJob,
+  source: "manual" | "worker" | undefined,
+  stage: QueueJob["timings"] extends infer T ? T extends { last_durable_stage?: infer S } ? S | null : null : null
+) {
+  const finishedAt = job.updatedAt || nowIso();
+  return {
+    ...job,
+    timings: {
+      ...job.timings,
+      execution_owner: source ?? job.timings?.execution_owner ?? job.timings?.started_by ?? "unknown",
+      request_state: "finished" as const,
+      request_finished_at: finishedAt,
+      recoverable: false,
+      ...(stage ? { last_durable_stage: stage } : {})
+    }
+  };
 }
 
 function normalizeTitle(value: string) {

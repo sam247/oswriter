@@ -256,10 +256,21 @@ export interface ArticleTiming {
   started_at?: string;
   processing_at?: string;
   started_by?: "manual" | "worker" | "unknown";
+  execution_owner?: "manual" | "worker" | "unknown";
+  request_state?: "running" | "finished";
+  request_finished_at?: string;
+  recoverable?: boolean;
+  recoverable_at?: string;
+  last_durable_stage?: PipelineStageName | "completed";
   worker_first_seen_at?: string;
   worker_lease_requested_at?: string;
   worker_lease_acquired_at?: string;
   worker_lease_blocked_at?: string;
+  worker_takeover_at?: string;
+  worker_takeover_count?: number;
+  manual_handoff_count?: number;
+  blocked_continuation_count?: number;
+  stale_recovery_count?: number;
   research_started_at?: string;
   research_completed_at?: string;
   outline_started_at?: string;
@@ -725,6 +736,53 @@ export interface QueueStatus {
     timings?: ArticleTiming;
     updatedAt?: string;
   };
+}
+
+export type WorkerHealthState = "ready" | "busy" | "offline" | "recovering" | "blocked";
+
+export interface WorkerStatusDiagnostics {
+  workerTakeovers: number;
+  manualHandoffs: number;
+  blockedContinuations: number;
+  staleRecoveries: number;
+}
+
+export interface WorkerStatusSnapshot {
+  serverTime: string;
+  configured: boolean;
+  health: WorkerHealthState;
+  detail: string;
+  counts: {
+    queued: number;
+    processing: number;
+    generated: number;
+    needsReview: number;
+    failed: number;
+  };
+  remaining: number;
+  nextJob: {
+    id: string;
+    articleId: string;
+    title: string;
+    status: JobStatus;
+    attempts: number;
+    updatedAt: string;
+    nextStage: PipelineStageName | null;
+    heavy: boolean;
+    executionOwner: "manual" | "worker" | "unknown";
+    requestState: "running" | "finished";
+    recoverable: boolean;
+    lastDurableStage: PipelineStageName | "completed" | null;
+  } | null;
+  lease: {
+    owner: string;
+    acquiredAt: string;
+    expiresAt: string;
+    expired: boolean;
+  } | null;
+  diagnostics: WorkerStatusDiagnostics;
+  lastWorkerSeenAt: string | null;
+  lastWorkerTakeoverAt: string | null;
 }
 
 export type GlobalSearchResultType = "project" | "article" | "research_run" | "research_finding" | "research_source";

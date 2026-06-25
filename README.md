@@ -26,6 +26,7 @@ AI_GENERATION_MODEL="deepseek-v4-flash"
 AI_EDITOR_MODEL="deepseek-v4-flash"
 AI_VALIDATION_MODEL="deepseek-v4-flash"
 OSW_SECRETS_KEY="replace-with-a-long-random-secret"
+CRON_SECRET="replace-with-a-worker-secret"
 ```
 
 ### Internal research benchmark
@@ -53,6 +54,16 @@ npm run dev
 npm run test
 npm run build
 ```
+
+## Background Queue Execution
+
+QueueWrite requires the background worker path to be configured in production:
+
+- `CRON_SECRET`
+- the worker drain endpoint at `/api/worker/drain`
+- scheduled cron execution from `vercel.json`
+
+The browser launches work and observes queue state. Background completion depends on the worker, not browser polling. Once generation has been started successfully, browser refreshes, tab closure, laptop sleep, or delayed return visits should not be required to keep the queue alive.
 
 The queue contract is deliberately simple: article-quality concerns become `needs_review`; only technical failures become `failed`.
 

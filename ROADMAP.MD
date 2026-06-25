@@ -2,6 +2,26 @@
 
 ## Completed
 
+### Durable Queue Ownership
+
+- Refined queue ownership so the browser launches work but the persisted job state now records a worker-recoverable handoff after each durably completed stage.
+- Kept the existing queue, worker, and lease architecture intact while reducing reliance on stale recovery as the normal browser-close continuation path.
+- Added persisted execution metadata on queue jobs for:
+  - execution owner
+  - request finished state
+  - recoverable handoff state
+  - last durable stage
+  - worker takeover timestamps and counts
+  - blocked continuation and stale recovery diagnostics
+- Reduced default stale recovery from `15m` to `3m` so genuine abandoned work recovers faster while still remaining an emergency path rather than the standard handoff flow.
+- Exposed lightweight worker health in the queue pane using the existing worker status endpoint with `Ready`, `Busy`, `Offline`, `Recovering`, and `Blocked` states.
+- Added reliability coverage for:
+  - durable manual-to-worker handoff
+  - blocked worker continuation during an active manual request
+  - stale recovery metadata
+  - worker health snapshot classification
+- Updated `README.md` to document `CRON_SECRET`, the worker drain endpoint, scheduled cron execution, and the fact that browser polling is observational only.
+
 ### Queue Responsiveness UX (Phases 1-3)
 
 - Audited the primary sluggish flows around `Upload (titles to queue)` and `Generate` and tightened the app around those interaction bottlenecks rather than expanding the broader activity system.

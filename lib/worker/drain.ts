@@ -15,6 +15,7 @@ export interface WorkerDrainResult {
   skippedReason?: string;
   nextJob?: WorkerQueueSnapshot["nextJob"];
   lease?: WorkerQueueSnapshot["lease"];
+  diagnostics?: WorkerQueueSnapshot["diagnostics"];
 }
 
 export interface WorkerProjectDrainResult extends WorkerDrainResult {
@@ -72,7 +73,8 @@ export async function drainQueueWithLease({
       leaseAcquired: false,
       skippedReason: "worker lease already held",
       nextJob: snapshot.nextJob,
-      lease: snapshot.lease
+      lease: snapshot.lease,
+      diagnostics: snapshot.diagnostics
     };
   }
 
@@ -97,7 +99,8 @@ export async function drainQueueWithLease({
       durationMs: now() - startedAt,
       leaseAcquired: true,
       nextJob: snapshot.nextJob,
-      lease: snapshot.lease
+      lease: snapshot.lease,
+      diagnostics: snapshot.diagnostics
     };
   } finally {
     await releaseWorkerLease(store, lease, resolvedProjectId);
@@ -181,7 +184,28 @@ export async function getWorkerQueueSnapshot(store: WorkspaceStore, projectId?: 
   ]);
   const nextStage = job?.pipeline.find((step) => step.status !== "done" && step.status !== "skipped")?.stage ?? null;
   const leaseExpiresAtMs = lease ? new Date(lease.expiresAt).getTime() : null;
+  const timings = job?.timings;
+  const configured = Boolean(process.env.CRON_SECRET);
+  const lastWorkerSeenAt = timings?.worker_lease_requested_at ?? timings?.worker_first_seen_at ?? null;
+  const lastWorkerTakeoverAt = timings?.worker_takeover_at ?? null;
+  const diagnostics = {
+    workerTakeovers: timings?.worker_takeover_count ?? 0,
+    manualHandoffs: timings?.manual_handoff_count ?? 0,
+    blockedContinuations: timings?.blocked_continuation_count ?? 0,
+    staleRecoveries: timings?.stale_recovery_count ?? 0
+  };
+  const { health, detail } = classifyWorkerHealth({
+    configured,
+    remaining: counts.queued + counts.processing,
+    leaseExpiresAtMs,
+    job,
+    lastWorkerSeenAt,
+    now
+  });
   return {
+    configured,
+    health,
+    detail,
     counts: {
       queued: counts.queued,
       processing: counts.processing,
@@ -198,15 +222,65 @@ export async function getWorkerQueueSnapshot(store: WorkspaceStore, projectId?: 
       attempts: job.attempts,
       updatedAt: job.updatedAt,
       nextStage,
-      heavy: nextStage === "generation" || nextStage === "save" || nextStage === "validation"
+      heavy: nextStage === "generation" || nextStage === "save" || nextStage === "validation",
+      executionOwner: timings?.execution_owner ?? timings?.started_by ?? "unknown",
+      requestState: timings?.request_state ?? "finished",
+      recoverable: Boolean(timings?.recoverable),
+      lastDurableStage: timings?.last_durable_stage ?? null
     } : null,
     lease: lease ? {
       owner: lease.owner,
       acquiredAt: lease.acquiredAt,
       expiresAt: lease.expiresAt,
       expired: leaseExpiresAtMs !== null ? leaseExpiresAtMs <= now() : true
-    } : null
+    } : null,
+    diagnostics,
+    lastWorkerSeenAt,
+    lastWorkerTakeoverAt
   };
 }
 
 export type WorkerQueueSnapshot = Awaited<ReturnType<typeof getWorkerQueueSnapshot>>;
+
+function classifyWorkerHealth({
+  configured,
+  remaining,
+  leaseExpiresAtMs,
+  job,
+  lastWorkerSeenAt,
+  now
+}: {
+  configured: boolean;
+  remaining: number;
+  leaseExpiresAtMs: number | null;
+  job: Awaited<ReturnType<WorkspaceStore["getQueueCandidate"]>>;
+  lastWorkerSeenAt: string | null;
+  now: () => number;
+}) {
+  if (!configured) {
+    return { health: "offline" as const, detail: "CRON_SECRET is missing. Background drain cannot authenticate." };
+  }
+  if (remaining === 0) {
+    return { health: "ready" as const, detail: "No queued background work." };
+  }
+  if (leaseExpiresAtMs !== null && leaseExpiresAtMs > now()) {
+    return { health: "busy" as const, detail: job?.title ? `Worker is actively draining "${job.title}".` : "Worker lease is active." };
+  }
+  if (job?.status === "processing" && job.timings?.request_state === "running") {
+    if ((job.timings?.execution_owner ?? job.timings?.started_by) === "manual") {
+      return { health: "blocked" as const, detail: "Waiting for the browser-started request to finish or time out." };
+    }
+    return { health: "busy" as const, detail: "Worker-owned work is still processing." };
+  }
+  if (job?.status === "processing" && job.timings?.recoverable) {
+    return { health: "recovering" as const, detail: "A durable stage is ready for worker continuation." };
+  }
+  if (!lastWorkerSeenAt) {
+    return { health: "offline" as const, detail: "Background worker has not observed this queue yet." };
+  }
+  const lastSeenAgeMs = now() - new Date(lastWorkerSeenAt).getTime();
+  if (lastSeenAgeMs > Math.max(WORKER_LEASE_TTL_MS * 2, 5 * 60_000)) {
+    return { health: "offline" as const, detail: "Worker has not polled recently." };
+  }
+  return { health: "ready" as const, detail: "Queued work is waiting for the next worker poll." };
+}

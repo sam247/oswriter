@@ -213,7 +213,9 @@ describe("QueueRunner", () => {
         ...job.timings,
         started_at: startedAt,
         processing_at: startedAt,
-        started_by: "manual"
+        started_by: "manual",
+        execution_owner: "manual",
+        request_state: "running"
       }
     });
 
@@ -236,11 +238,18 @@ describe("QueueRunner", () => {
     const researched = await runner.processNext(undefined, { source: "manual" });
     assert.equal(researched.job?.status, "processing");
     assert.equal(researched.job?.timings?.started_by, "manual");
+    assert.equal(researched.job?.timings?.execution_owner, "worker");
+    assert.equal(researched.job?.timings?.request_state, "finished");
+    assert.equal(researched.job?.timings?.recoverable, true);
+    assert.equal(researched.job?.timings?.last_durable_stage, "research");
+    assert.equal(researched.job?.timings?.manual_handoff_count, 1);
     assert.equal(researched.job?.pipeline.find((step) => step.stage === "research")?.status, "done");
 
     const workerOutline = await runner.processNext(undefined, { source: "worker" });
     assert.equal(workerOutline.processed, true);
     assert.equal(workerOutline.job?.pipeline.find((step) => step.stage === "outline")?.status, "done");
+    assert.equal(workerOutline.job?.timings?.worker_takeover_count, 1);
+    assert.ok(workerOutline.job?.timings?.worker_takeover_at);
 
     await drainQueue(runner);
     const state = await store.getFullState();
@@ -289,6 +298,31 @@ describe("QueueRunner", () => {
     assert.ok(["generated", "needs_review"].includes(state.jobs.find((job) => job.id === first.id)?.status ?? ""));
     assert.equal(state.jobs.find((job) => job.id === second.id)?.status, "queued");
     assert.equal(state.articles.length, 1);
+  });
+
+  it("records stale recovery as an emergency continuation path", async () => {
+    const { store, runner } = setup();
+    const [job] = await runner.addTitles(["Recovered after stale timeout"]);
+    await store.saveJob({
+      ...job,
+      status: "processing",
+      updatedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      timings: {
+        ...job.timings,
+        started_by: "manual",
+        execution_owner: "manual",
+        request_state: "running"
+      }
+    });
+
+    const recovered = await runner.reclaimStale();
+    const refreshed = await store.getJob(job.id);
+
+    assert.equal(recovered, 1);
+    assert.equal(refreshed?.status, "queued");
+    assert.equal(refreshed?.timings?.execution_owner, "worker");
+    assert.equal(refreshed?.timings?.recoverable, true);
+    assert.equal(refreshed?.timings?.stale_recovery_count, 1);
   });
 
   it("emergency stop fails the current resumable job and stops the queue", async () => {

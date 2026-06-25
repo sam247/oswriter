@@ -34,7 +34,7 @@ export function createDefaultSettings(): SettingsDocument {
   return {
     projectId: DEFAULT_PROJECT_ID,
     controls: DEFAULT_CONTROLS,
-    staleProcessingMinutes: 15
+    staleProcessingMinutes: 3
   };
 }
 

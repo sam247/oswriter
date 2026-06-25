@@ -4,7 +4,7 @@ import { QueueRunner } from "@/lib/queue/runner";
 import { createDefaultProject } from "@/lib/defaults";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
-import { acquireWorkerLease, drainActiveProjectsWithLeases, drainQueueWithLease, isWorkerRequestAuthorized } from "@/lib/worker/drain";
+import { acquireWorkerLease, drainActiveProjectsWithLeases, drainQueueWithLease, getWorkerQueueSnapshot, isWorkerRequestAuthorized } from "@/lib/worker/drain";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, SearchAdapter, ValidationInput, ValidationResult } from "@/lib/types";
 
 class FakeSearch implements SearchAdapter {
@@ -184,5 +184,45 @@ describe("autonomous worker drain", () => {
     assert.equal(result.remaining, 1);
     assert.equal(state.articles.length, 0);
     assert.equal(state.jobs[0].status, "processing");
+  });
+
+  it("reports recovering worker health after a durable manual handoff", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Recovering worker health"]);
+    await runner.resumeQueue();
+    await runner.processNext(undefined, { source: "manual" });
+
+    process.env.CRON_SECRET = "worker-secret";
+    const snapshot = await getWorkerQueueSnapshot(store);
+
+    assert.equal(snapshot.health, "recovering");
+    assert.equal(snapshot.nextJob?.executionOwner, "worker");
+    assert.equal(snapshot.nextJob?.recoverable, true);
+    assert.equal(snapshot.diagnostics.manualHandoffs, 1);
+  });
+
+  it("reports blocked worker health for an active manual request", async () => {
+    const { store, runner } = setup();
+    const [job] = await runner.addTitles(["Blocked worker health"]);
+    const startedAt = new Date().toISOString();
+    await store.saveJob({
+      ...job,
+      status: "processing",
+      updatedAt: startedAt,
+      timings: {
+        ...job.timings,
+        started_at: startedAt,
+        processing_at: startedAt,
+        started_by: "manual",
+        execution_owner: "manual",
+        request_state: "running"
+      }
+    });
+
+    process.env.CRON_SECRET = "worker-secret";
+    const snapshot = await getWorkerQueueSnapshot(store);
+
+    assert.equal(snapshot.health, "blocked");
+    assert.match(snapshot.detail, /browser-started request/i);
   });
 });
