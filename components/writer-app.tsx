@@ -261,7 +261,6 @@ function Workbench() {
     () => jobs.find((job) => job.articleId === selectedArticleId || job.id === selectedArticle?.jobId) ?? null,
     [jobs, selectedArticle?.jobId, selectedArticleId]
   );
-  const breadcrumbArticleId = selectedArticle?.id ?? selectedJob?.articleId ?? null;
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
   const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? null;
@@ -862,23 +861,6 @@ function Workbench() {
     return true;
   }
 
-  async function updateSelectedContentProfile(value: string) {
-    const contentProfile = normalizeContentProfile(value) ?? null;
-    if (selectedArticle) {
-      const res = await fetch(`/api/articles/${selectedArticle.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contentProfile }) });
-      const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; error?: string };
-      if (res.ok && data.article) setSelectedArticle(data.article);
-      setMessage(res.ok ? "Article content profile updated for its next regeneration." : data.error ?? "Content profile update failed.");
-      return;
-    }
-    if (selectedJob) {
-      const res = await fetch(`/api/jobs/${selectedJob.id}/action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_content_profile", contentProfile }) });
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      if (res.ok) await refresh();
-      setMessage(res.ok ? "Queued article content profile updated." : data.error ?? "Content profile update failed.");
-    }
-  }
-
   async function testProjectWordPressConnection(connection: WordPressConnectionDraft, projectId = state?.project.id) {
     if (!state) return false;
     const targetProjectId = projectId ?? state.project.id;
@@ -1472,16 +1454,6 @@ function Workbench() {
     setTab("project");
   }
 
-  function openArticleBreadcrumb() {
-    if (!breadcrumbArticleId) return;
-    setSelectedArticleId(breadcrumbArticleId);
-    setGlobalMenuOpen(false);
-    setProjectMenuOpen(false);
-    setSettingsOpen(false);
-    setProjectSettingsProjectId(null);
-    setTab("project");
-  }
-
   function openWorkspaceSettings() {
     setSelectedArticleId(null);
     setGlobalMenuOpen(false);
@@ -1636,20 +1608,8 @@ function Workbench() {
             onClick={openProjectBreadcrumb}
             className="truncate text-ink-muted transition-colors hover:text-ink"
           >
-            {state?.project.name ?? "Loading project"}
+            {breadcrumbArticleTitle ? `← ${state?.project.name ?? "Back to project"}` : state?.project.name ?? "Loading project"}
           </button>
-          {breadcrumbArticleTitle ? (
-            <>
-              <ChevronRight className="size-3 text-ink-subtle" />
-              <button
-                type="button"
-                onClick={openArticleBreadcrumb}
-                className="truncate text-ink transition-colors hover:text-ink-muted"
-              >
-                {breadcrumbArticleTitle}
-              </button>
-            </>
-          ) : null}
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setGlobalSearchOpen(true)} className="hidden h-7 w-[7.5rem] items-center justify-between gap-1.5 rounded-md border border-line bg-surface-1 px-2 text-[12px] text-ink-muted hover:text-ink lg:flex" title="Global search">
@@ -1948,9 +1908,10 @@ function Workbench() {
                 job={selectedJob}
                 research={details.research}
                 title={selectedTitle}
+                backLabel={state?.project.name ?? "Back to project"}
+                onBack={openProjectBreadcrumb}
                 onTitleChange={(title) => selectedArticle && updateArticleDraft(selectedArticle.id, { title })}
                 projectDefaultContentProfile={state?.project.defaultContentProfile}
-                onContentProfileChange={updateSelectedContentProfile}
                 onReviewClick={() => {
                   setTab("validation");
                   setHighlightWarnings(true);
@@ -3910,8 +3871,16 @@ function ArticleToolbar({
         ? "This article is already published."
         : "Publish to WordPress";
   return (
-    <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-5 py-1.5 lg:px-7">
+    <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-1 gap-y-1 px-5 py-1.5 lg:px-7">
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
+      <button
+        onClick={onCopyAll}
+        disabled={!article}
+        className="flex h-7 items-center rounded px-2 text-[11.5px] font-medium text-ink-muted hover:bg-surface-3 hover:text-ink disabled:opacity-40"
+        title="Copy full article"
+      >
+        Copy
+      </button>
       <div className="relative">
         <button
           onClick={() => {
@@ -3924,10 +3893,10 @@ function ArticleToolbar({
           disabled={!article || busy || publishStatus === "published"}
           title={publishTitle}
           className={cn(
-            "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-medium transition-colors",
+            "flex h-7 items-center gap-1 rounded px-2 text-[11.5px] font-medium transition-colors",
             publishDisabled
-              ? "cursor-not-allowed border-line bg-surface-3 text-ink-subtle"
-              : "border-line bg-surface-1 text-ink hover:bg-surface-3"
+              ? "cursor-not-allowed text-ink-subtle"
+              : "text-ink-muted hover:bg-surface-3 hover:text-ink"
           )}
         >
           Publish
@@ -3956,29 +3925,23 @@ function ArticleToolbar({
           </div>
         )}
       </div>
-      <button
-        onClick={onCopyAll}
-        disabled={!article}
-        className="flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-40"
-        title="Copy full article"
-      >
-        <Copy className="size-3.5" />
-        Copy All
-      </button>
       <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
       <div className="flex shrink-0 items-center gap-0.5">
         {formatting.map(({ command, icon: Icon, title }) => (
-          <button key={command} onClick={() => onFormat(command)} disabled={!article} className="grid size-7 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink disabled:opacity-40" title={title}>
-            <Icon className="size-3.5" />
+          <button key={command} onClick={() => onFormat(command)} disabled={!article} className="grid size-6.5 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink disabled:opacity-40" title={title}>
+            <Icon className="size-3.25" />
           </button>
         ))}
       </div>
-      <div className="ml-auto flex shrink-0 items-center rounded-md bg-surface-3 p-0.5">
+      <div className="ml-auto flex shrink-0 items-center rounded-md border border-line/80 bg-background/70 p-0.5">
         {(["rich", "md", "split"] as const).map((mode) => (
           <button
             key={mode}
             onClick={() => onViewModeChange(mode)}
-            className={cn("h-7 rounded px-2 text-[11.5px] font-medium capitalize text-ink-muted hover:text-ink", viewMode === mode && "bg-surface-1 text-ink shadow-sm")}
+            className={cn(
+              "h-6 rounded px-2 text-[10.5px] font-medium capitalize text-ink-subtle hover:text-ink",
+              viewMode === mode && "bg-surface-1 text-ink"
+            )}
           >
             {mode === "md" ? "MD" : mode}
           </button>
@@ -3993,29 +3956,41 @@ function ArticleHeader({
   job,
   research,
   title,
+  backLabel,
+  onBack,
   onTitleChange,
   projectDefaultContentProfile,
-  onContentProfileChange,
   onReviewClick
 }: {
   article: ArticleDocument | null;
   job: QueueJob | null;
   research: ResearchPack | null;
   title: string;
+  backLabel: string;
+  onBack: () => void;
   onTitleChange: (title: string) => void;
   projectDefaultContentProfile?: ContentProfile;
-  onContentProfileChange: (profile: string) => void;
   onReviewClick: () => void;
 }) {
   const [openScore, setOpenScore] = useState<keyof ArticleScores | null>(null);
   if (!article && job) {
+    const profileLabel = contentProfileLabel(job.contentProfile ?? "", projectDefaultContentProfile);
     return (
       <div className="px-6 pb-3 pt-5 lg:px-8">
+        <button
+          type="button"
+          onClick={onBack}
+          className="mono inline-flex items-center gap-1 text-[11px] text-ink-muted transition-colors hover:text-ink"
+        >
+          <span>←</span>
+          <span>{backLabel}</span>
+        </button>
         <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{displayStatusLabel(job)}</div>
         <h1 className="mt-1 text-[24px] font-semibold leading-tight tracking-tight text-ink">{job.title}</h1>
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mono mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-muted">
           <div className="mono text-[11px] text-ink-muted">Attempt {job.attempts}</div>
-          <ContentProfileSelect value={job.contentProfile ?? ""} projectDefault={projectDefaultContentProfile} onChange={onContentProfileChange} disabled={job.status !== "queued"} />
+          <MetadataDot />
+          <span>{profileLabel}</span>
         </div>
       </div>
     );
@@ -4024,9 +3999,18 @@ function ArticleHeader({
   const readingTime = Math.max(1, Math.round(article.wordCount / 230));
   const scores = calculateArticleScores(article, research);
   const selectedScore = openScore ? scores[openScore] : null;
+  const profileLabel = contentProfileLabel(article.contentProfile ?? "", projectDefaultContentProfile);
   return (
     <div className="relative px-6 pb-3 pt-5 lg:px-8">
-      <div className="flex gap-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="mono inline-flex items-center gap-1 text-[11px] text-ink-muted transition-colors hover:text-ink"
+      >
+        <span>←</span>
+        <span>{backLabel}</span>
+      </button>
+      <div className="mt-3 flex gap-4">
         <div className="min-w-0 flex-1">
           <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">{statusLabel(article.status)}</div>
           <textarea
@@ -4039,34 +4023,47 @@ function ArticleHeader({
           />
         </div>
       </div>
-      <div className="mono mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-muted">
-        <ContentProfileSelect value={article.contentProfile ?? ""} projectDefault={projectDefaultContentProfile} onChange={onContentProfileChange} />
-        <ScoreMetricButton score={scores.quality} active={openScore === "quality"} onClick={() => setOpenScore(openScore === "quality" ? null : "quality")} />
-        <ScoreMetricButton score={scores.research} active={openScore === "research"} onClick={() => setOpenScore(openScore === "research" ? null : "research")} />
-        <ScoreMetricButton score={scores.evidence} active={openScore === "evidence"} onClick={() => setOpenScore(openScore === "evidence" ? null : "evidence")} />
-        <span className="h-3 w-px bg-line" />
-        <span><span className="text-ink-subtle">Sources</span> <span className="text-ink">{article.sources.length}</span></span>
-        <span><span className="text-ink-subtle">Words</span> <span className="text-ink">{formatNumber(article.wordCount)}</span></span>
-        <span><span className="text-ink-subtle">Read</span> <span className="text-ink">{readingTime}m</span></span>
-        {article.needsReviewReasons.length > 0 && (
-          <button onClick={onReviewClick} className="text-warn hover:underline">
-            {article.needsReviewReasons.length} review reasons
-          </button>
-        )}
+      <div className="mono mt-2.5 space-y-1 text-[11px] text-ink-muted">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>{profileLabel}</span>
+          {article.needsReviewReasons.length > 0 && (
+            <>
+              <MetadataDot />
+              <button onClick={onReviewClick} className="text-warn hover:underline">
+                {article.needsReviewReasons.length} review reasons
+              </button>
+            </>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <ScoreMetricButton score={scores.quality} active={openScore === "quality"} onClick={() => setOpenScore(openScore === "quality" ? null : "quality")} />
+          <MetadataDot />
+          <ScoreMetricButton score={scores.research} active={openScore === "research"} onClick={() => setOpenScore(openScore === "research" ? null : "research")} />
+          <MetadataDot />
+          <ScoreMetricButton score={scores.evidence} active={openScore === "evidence"} onClick={() => setOpenScore(openScore === "evidence" ? null : "evidence")} />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>Sources {article.sources.length}</span>
+          <MetadataDot />
+          <span>{formatNumber(article.wordCount)} words</span>
+          <MetadataDot />
+          <span>{readingTime} min read</span>
+        </div>
       </div>
       {selectedScore && <ScoreDetailPanel score={selectedScore} />}
     </div>
   );
 }
 
-function ContentProfileSelect({ value, projectDefault, onChange, disabled = false }: { value: ContentProfile | ""; projectDefault?: ContentProfile; onChange: (value: string) => void; disabled?: boolean }) {
+function contentProfileLabel(value: ContentProfile | "", projectDefault?: ContentProfile) {
   const inheritedProfile = projectDefault ?? "industry_explainer";
-  return (
-    <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="h-7 rounded border border-line bg-surface-1 px-2 text-[11px] text-ink outline-none disabled:opacity-60" aria-label="Article content profile">
-      <option value="">Inherit: {CONTENT_PROFILES[inheritedProfile].label}</option>
-      {PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-    </select>
-  );
+  const resolvedProfile = value || inheritedProfile;
+  const label = CONTENT_PROFILES[resolvedProfile].label;
+  return value ? label : `Template • ${label}`;
+}
+
+function MetadataDot() {
+  return <span className="text-ink-subtle">•</span>;
 }
 
 function ArticleMetricsRail({ saveState, lastSavedAt }: { saveState: "saved" | "saving" | "error"; lastSavedAt: string | null }) {
@@ -4086,12 +4083,12 @@ function ScoreMetricButton({ score, active, onClick }: { score: ArticleScore; ac
       onClick={onClick}
       title={score.tooltip}
       className={cn(
-        "inline-flex items-baseline gap-1 rounded px-1 py-0.5 text-left hover:bg-surface-3",
-        active && "bg-surface-3"
+        "inline-flex items-baseline gap-1 text-left transition-colors hover:text-ink",
+        active && "text-ink"
       )}
     >
       <span className="text-ink-subtle">{score.label}</span>
-      <span className={cn("text-[15px] font-semibold leading-none", tone)}>{score.score}</span>
+      <span className={cn("font-semibold text-[11px] leading-none", tone)}>{score.score}</span>
     </button>
   );
 }
@@ -4158,9 +4155,8 @@ function ArticleExportActions({ articleId }: { articleId: string }) {
     <div ref={menuRef} className="relative shrink-0">
       <button
         onClick={() => setOpen((current) => !current)}
-        className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 text-[12px] font-medium text-ink hover:bg-surface-3"
+        className="flex h-7 cursor-pointer list-none items-center gap-1 rounded px-2 text-[11.5px] font-medium text-ink-muted hover:bg-surface-3 hover:text-ink"
       >
-        <Download className="size-3.5" />
         Export
         <ChevronDown className={cn("size-3 text-ink-subtle transition-transform", open && "rotate-180")} />
       </button>
@@ -6143,8 +6139,8 @@ function formatSaveState(saveState: "saved" | "saving" | "error", savedAt: strin
   if (saveState === "error") return "Save failed";
   if (!savedAt) return "Saved";
   const diffSeconds = Math.floor((Date.now() - new Date(savedAt).getTime()) / 1000);
-  if (diffSeconds < 60) return `Saved just now · ${formatTime(savedAt).slice(0, 5)}`;
-  return `Saved ${formatTime(savedAt).slice(0, 5)}`;
+  if (diffSeconds < 4) return "✓ Saved";
+  return "Saved";
 }
 
 function formatTime(value?: string | null) {

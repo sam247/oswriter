@@ -71,6 +71,12 @@
   - restored the split `Generate` control to the global app header at the far right after checking the earlier approved header pattern
   - restored `Stop after current` and `Emergency stop` beside `Generate` in that same header area while generation is active
   - removed the mistaken duplicate generate/start placement from the project workspace header and kept the left rail free of repeated start controls
+- Refined the article editor without changing its structure:
+  - replaced breadcrumb-style article navigation with a clearer back-to-project affordance so opening an article feels more like opening a document
+  - converted the article template/type display from a dropdown into lightweight inline metadata
+  - reorganised article properties into calmer document metadata rows for template, scores, sources, word count, and reading time
+  - reduced toolbar and mode-switch visual weight so controls feel secondary to the document
+  - tightened the persistent save indicator to a quieter `Saving...` → `✓ Saved` → `Saved` sequence
 
 ### Navigation Polish Recovery
 
