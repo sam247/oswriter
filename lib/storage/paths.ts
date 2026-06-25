@@ -22,4 +22,8 @@ export const generationTelemetryPath = (articleId: string, projectId = DEFAULT_P
 export const generationTelemetryPrefix = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/telemetry/generations/`;
 export const telemetryExportStatusPath = (id: string) => `workspace/telemetry/export-status/${encodeURIComponent(id)}.json`;
 export const telemetryExportStatusPrefix = () => "workspace/telemetry/export-status/";
+export const operationalTelemetryPath = (id: string) => `workspace/telemetry/operations/${encodeURIComponent(id)}.json`;
+export const operationalTelemetryPrefix = () => "workspace/telemetry/operations/";
+export const neonUsageSnapshotPath = (id: string) => `workspace/telemetry/neon-usage/${encodeURIComponent(id)}.json`;
+export const neonUsageSnapshotPrefix = () => "workspace/telemetry/neon-usage/";
 export const workerLeasePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/worker/lease.json`;

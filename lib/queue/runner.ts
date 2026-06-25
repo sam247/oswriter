@@ -9,6 +9,7 @@ import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateGenerati
 import { pricingForModel } from "@/lib/telemetry/pricing";
 import { benchmarkPairId, benchmarkRunLabel, exportArticleTelemetry } from "@/lib/telemetry/sheets-export";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
+import { recordArticleGenerationOperation, recordBatchGenerationRun, recordResearchFailureOperation, recordResearchOperation } from "@/lib/telemetry/operations";
 import {
   markArticleAsNotPublished,
   markArticlePublishingFailed,
@@ -45,6 +46,7 @@ export class QueueRunner {
     const existingJobs = await this.store.listJobs(resolvedProjectId);
     const processing = existingJobs.some((job) => job.status === "processing");
     const queuedAt = Date.now();
+    const batchRunId = slugId("batch");
     const jobs: QueueJob[] = clean.map((title, index) => {
       const createdAt = new Date(queuedAt + index).toISOString();
       const articleId = slugId("article");
@@ -52,6 +54,7 @@ export class QueueRunner {
         id: slugId("job"),
         projectId: resolvedProjectId,
         articleId,
+        batchRunId,
         title,
         ...(contentProfile ? { contentProfile } : {}),
         postGenerationAction,
@@ -76,6 +79,15 @@ export class QueueRunner {
         stoppedAt: now,
         reason: "Queued titles waiting for generation start.",
         updatedAt: now
+      });
+    }
+    if (jobs.length) {
+      await recordBatchGenerationRun(this.store, {
+        projectId: resolvedProjectId,
+        batchRunId,
+        articleCount: jobs.length,
+        contentProfile,
+        postGenerationAction
       });
     }
     return jobs;
@@ -465,6 +477,14 @@ export class QueueRunner {
             sourceCategories: {}
           }
         } });
+        await recordResearchOperation(this.store, {
+          projectId: job.projectId,
+          articleId: job.articleId,
+          jobId: job.id,
+          batchRunId: job.batchRunId,
+          title: job.title,
+          research
+        });
         await this.store.saveDebug(debug, job.projectId);
         return job;
       }
@@ -555,6 +575,14 @@ export class QueueRunner {
       article = await this.applyPostGenerationWorkflow(job, article, log);
       job = markRequestFinished({ ...job, status: article.status, updatedAt: article.updatedAt }, context.source, "completed");
       await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
+      await recordArticleGenerationOperation(this.store, {
+        projectId: job.projectId,
+        articleId: job.articleId,
+        jobId: job.id,
+        batchRunId: job.batchRunId,
+        article,
+        title: job.title
+      });
       log({ stage: "queue", level: article.status === "needs_review" ? "warn" : "info", message: `Job completed as ${article.status}.`, data: uniqueReasons });
       await this.store.saveJob(job);
       await this.store.saveDebug(debug, job.projectId);
@@ -580,6 +608,15 @@ export class QueueRunner {
           pipeline: failRunningStage(job.pipeline, error.message)
         }, context.source, job.timings?.last_durable_stage ?? null);
         log({ stage: "research", level: "error", message: "Research provider failed; generation was not started.", data: researchTelemetry });
+        await recordResearchFailureOperation(this.store, {
+          projectId: job.projectId,
+          articleId: job.articleId,
+          jobId: job.id,
+          batchRunId: job.batchRunId,
+          title: job.title,
+          provider: error.provider,
+          reason: error.message
+        });
         await this.store.saveJob(researchFailed);
         await this.store.saveDebug(debug, job.projectId);
         await this.markStoppedIfRequested(job.projectId);

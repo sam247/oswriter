@@ -2,6 +2,36 @@
 
 ## Completed
 
+### Neon Cost Visibility Telemetry
+
+- Assessed the available Neon integration surface and confirmed:
+  - Neon MCP is available in this workspace for project discovery and docs lookup
+  - the MCP toolset exposes project metadata such as `active_time`, `cpu_used_sec`, and `synthetic_storage_size`
+  - invoice-aligned daily usage history and cost estimation still need the Neon consumption API rather than the current MCP tools alone
+- Added production-safe infrastructure telemetry with two additive layers:
+  - `neon_usage_snapshots` for daily Neon usage and estimated cost
+  - `operational_telemetry` for business operations such as article generation, research, batch queue runs, and Website Intelligence imports
+- Added low-overhead operational instrumentation at business boundaries instead of low-level database events:
+  - batch queue creation
+  - research completion and research failure
+  - article generation completion
+  - Website Intelligence import completion and failure
+- Extended the existing Google Sheets telemetry workflow with new founder-facing tabs:
+  - `Neon Usage`
+  - `Operational Telemetry`
+  - `Operation Cost Attribution`
+- Added a daily Neon usage collector that stores:
+  - compute usage
+  - storage usage
+  - transfer usage
+  - extra branch usage
+  - estimated daily Neon cost
+- Added derived cost attribution so daily Neon cost is apportioned across eligible business operations, enabling practical answers for:
+  - cost per Website Intelligence import
+  - cost per article
+  - observed cost for a queue run grouped by `batchRunId`
+- Added focused regression coverage for the new migration and the Sheets export / attribution flow.
+
 ### Durable Queue Ownership
 
 - Refined queue ownership so the browser launches work but the persisted job state now records a worker-recoverable handoff after each durably completed stage.

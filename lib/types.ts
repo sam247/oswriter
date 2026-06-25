@@ -293,6 +293,7 @@ export interface QueueJob {
   organisationId?: string;
   projectId: string;
   articleId: string;
+  batchRunId?: string | null;
   title: string;
   contentProfile?: ContentProfile;
   postGenerationAction?: PostGenerationPublishingAction;
@@ -653,6 +654,95 @@ export interface GenerationTelemetryDocument {
   costPerResearchConcept?: number;
   costPerSource?: number;
   generationDurationMs?: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type OperationalTelemetryType =
+  | "website_intelligence_import"
+  | "research_operation"
+  | "article_generation"
+  | "batch_generation_run";
+
+export type OperationalTelemetryStatus = "queued" | "completed" | "failed";
+
+export interface OperationalTelemetryDocument {
+  id: string;
+  organisationId?: string;
+  projectId: string;
+  articleId?: string | null;
+  jobId?: string | null;
+  batchRunId?: string | null;
+  type: OperationalTelemetryType;
+  status: OperationalTelemetryStatus;
+  title?: string | null;
+  contentProfile?: ContentProfile | null;
+  provider?: string | null;
+  attributionDate: string;
+  attributionEligible: boolean;
+  attributionUnits: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  occurredAt: string;
+  metrics: {
+    articleCount?: number;
+    pagesIndexed?: number;
+    processedPages?: number;
+    totalDiscoveredUrls?: number;
+    sourcesFound?: number;
+    sourcesAccepted?: number;
+    evidenceItemsUsed?: number;
+    durationMs?: number;
+    researchDurationMs?: number;
+    generationDurationMs?: number;
+    totalDurationMs?: number;
+  };
+  costs: {
+    researchCostUsd?: number;
+    generationCostUsd?: number;
+    totalCostUsd?: number;
+  };
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NeonUsageSnapshotDocument {
+  id: string;
+  organisationId?: string;
+  neonOrgId: string;
+  neonProjectId: string;
+  neonProjectName?: string | null;
+  granularity: "hourly" | "daily" | "monthly";
+  timeframeStart: string;
+  timeframeEnd: string;
+  periodPlan?: string | null;
+  source: "neon_api_v2";
+  capturedAt: string;
+  computeUnitSeconds: number;
+  computeCuHours: number;
+  rootBranchByteHours: number;
+  rootStorageGbMonths: number;
+  childBranchByteHours: number;
+  childStorageGbMonths: number;
+  instantRestoreByteHours: number;
+  instantRestoreGbMonths: number;
+  publicNetworkTransferBytes: number;
+  publicTransferGb: number;
+  privateNetworkTransferBytes: number;
+  privateTransferGb: number;
+  extraBranchesHours: number;
+  extraBranchesMonths: number;
+  estimatedComputeCostUsd: number;
+  estimatedStorageCostUsd: number;
+  estimatedInstantRestoreCostUsd: number;
+  estimatedPublicTransferCostUsd: number;
+  estimatedPrivateTransferCostUsd: number;
+  estimatedExtraBranchesCostUsd: number;
+  estimatedTotalCostUsd: number;
+  pricingSource: string;
+  notes?: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;

@@ -8,6 +8,7 @@ const profileMigration = readFileSync("db/migrations/0006_project_identity_profi
 const planningMigration = readFileSync("db/migrations/0007_planning_diagnostics.sql", "utf8");
 const breadthMigration = readFileSync("db/migrations/0008_topic_breadth_diagnostics.sql", "utf8");
 const costMigration = readFileSync("db/migrations/0009_article_cost_telemetry.sql", "utf8");
+const infrastructureTelemetryMigration = readFileSync("db/migrations/0018_infrastructure_telemetry.sql", "utf8");
 
 test("generation telemetry migration creates article-level cost table", () => {
   const body = tableBody("generation_telemetry");
@@ -187,6 +188,40 @@ test("benchmark telemetry migration persists provider and grouping identifiers",
   }
   assert.match(sql, /generation_telemetry_benchmark_idx/);
   assert.match(sql, /generation_telemetry_provider_idx/);
+});
+
+test("infrastructure telemetry migration creates operational and neon usage tables", () => {
+  const operational = tableBodyFrom(infrastructureTelemetryMigration, "operational_telemetry");
+  const snapshots = tableBodyFrom(infrastructureTelemetryMigration, "neon_usage_snapshots");
+
+  for (const column of [
+    "organisation_id text not null references organisations(id) on delete cascade",
+    "project_id text not null references projects(id) on delete cascade",
+    "operation_type text not null",
+    "attribution_date date not null",
+    "attribution_eligible boolean not null default false",
+    "attribution_units numeric(12,4) not null default 0",
+    "metrics jsonb not null default '{}'::jsonb",
+    "costs jsonb not null default '{}'::jsonb"
+  ]) {
+    assert.match(operational, new RegExp(escapeRegExp(column)));
+  }
+
+  for (const column of [
+    "organisation_id text not null references organisations(id) on delete cascade",
+    "neon_org_id text not null",
+    "neon_project_id text not null",
+    "granularity text not null",
+    "timeframe_start timestamptz not null",
+    "compute_unit_seconds numeric(20,6) not null default 0",
+    "estimated_total_cost_usd numeric(20,6) not null default 0",
+    "pricing_source text not null"
+  ]) {
+    assert.match(snapshots, new RegExp(escapeRegExp(column)));
+  }
+
+  assert.match(infrastructureTelemetryMigration, /idx_operational_telemetry_org_project_date/);
+  assert.match(infrastructureTelemetryMigration, /idx_neon_usage_snapshots_org_project_day/);
 });
 
 function tableBody(table: string) {

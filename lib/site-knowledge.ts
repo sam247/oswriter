@@ -5,6 +5,7 @@ import { ExaSearchAdapter } from "@/lib/research/exa";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import { extractProjectSiteProfile } from "@/lib/site-profile";
 import type { WorkspaceStore } from "@/lib/storage/storage";
+import { recordWebsiteImportOperation } from "@/lib/telemetry/operations";
 import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SearchAdapter, SearchResult, SiteKnowledgePageDocument } from "@/lib/types";
 
 export const SITE_KNOWLEDGE_MAX_URLS = 50;
@@ -266,6 +267,17 @@ export async function importSiteKnowledge({
     });
     await store.saveProjectSiteProfile(siteProfile);
     await persistSiteKnowledgeStatus(store, siteKnowledge, onProgress);
+    await recordWebsiteImportOperation(store, {
+      projectId,
+      sitemapUrl: normalizedSitemapUrl,
+      status: "completed",
+      startedAt: siteKnowledge.startedAt,
+      completedAt: siteKnowledge.completedAt,
+      pagesIndexed: siteKnowledge.pagesIndexed,
+      processedPages: siteKnowledge.processedPages,
+      totalDiscoveredUrls: siteKnowledge.totalDiscoveredUrls,
+      metadata: siteKnowledge.metadata ?? {}
+    });
     return { siteKnowledge, siteProfile, pages };
   } catch (error) {
     const failedAt = nowIso();
@@ -278,6 +290,20 @@ export async function importSiteKnowledge({
       updatedAt: failedAt
     };
     await persistSiteKnowledgeStatus(store, failedStatus, onProgress);
+    await recordWebsiteImportOperation(store, {
+      projectId,
+      sitemapUrl: normalizedSitemapUrl,
+      status: "failed",
+      startedAt: failedStatus.startedAt,
+      completedAt: failedStatus.completedAt,
+      pagesIndexed: failedStatus.pagesIndexed,
+      processedPages: failedStatus.processedPages,
+      totalDiscoveredUrls: failedStatus.totalDiscoveredUrls,
+      metadata: {
+        ...(failedStatus.metadata ?? {}),
+        lastError: failedStatus.lastError
+      }
+    });
     throw error;
   }
 }

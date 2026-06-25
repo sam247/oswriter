@@ -4,8 +4,8 @@ import { createDefaultProject } from "@/lib/defaults";
 import { MemoryStorageAdapter } from "@/lib/storage/memory";
 import { WorkspaceStore } from "@/lib/storage/storage";
 import { buildDailySummaryRows, DAILY_SUMMARY_HEADERS } from "@/lib/telemetry/daily-summary";
-import { buildDailySummaryRow, evaluateAnomalies, exportArticleTelemetry, TELEMETRY_SHEETS, type SheetsAppendClient, type TelemetryCell } from "@/lib/telemetry/sheets-export";
-import type { ArticleDocument, GenerationTelemetryDocument } from "@/lib/types";
+import { buildDailySummaryRow, evaluateAnomalies, exportArticleTelemetry, exportDailyTelemetrySummary, TELEMETRY_SHEETS, type SheetsAppendClient, type TelemetryCell } from "@/lib/telemetry/sheets-export";
+import type { ArticleDocument, GenerationTelemetryDocument, NeonUsageSnapshotDocument, OperationalTelemetryDocument } from "@/lib/types";
 
 class FakeSheetsClient implements SheetsAppendClient {
   rows: Array<{ sheetName: string; row: TelemetryCell[] }> = [];
@@ -160,6 +160,34 @@ describe("telemetry Google Sheets export", () => {
       "Excessive Duration"
     ]);
   });
+
+  it("exports neon usage and operation cost attribution tabs", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const project = createDefaultProject();
+    await store.saveProject(project);
+    await store.saveGenerationTelemetry(sampleTelemetry({ articleId: "daily-row", updatedAt: "2026-06-17T12:00:00.000Z" }));
+    await store.saveNeonUsageSnapshot(sampleSnapshot());
+    await store.saveOperationalTelemetry(sampleOperation());
+    await store.saveOperationalTelemetry(sampleBatchRun());
+
+    const client = new FakeSheetsClient();
+    await exportDailyTelemetrySummary(store, "2026-06-17", client);
+
+    const usageSheet = client.replacements.find((sheet) => sheet.sheetName === TELEMETRY_SHEETS.neonUsage);
+    const operationsSheet = client.replacements.find((sheet) => sheet.sheetName === TELEMETRY_SHEETS.operationalTelemetry);
+    const attributionSheet = client.replacements.find((sheet) => sheet.sheetName === TELEMETRY_SHEETS.operationCostAttribution);
+    assert.ok(usageSheet);
+    assert.ok(operationsSheet);
+    assert.ok(attributionSheet);
+    assert.equal(usageSheet.rows[1][2], "purple-fire-64344998");
+    assert.equal(operationsSheet.rows[1][2], "article_generation");
+    const articleAttribution = attributionSheet.rows.find((row) => row[1] === "article_generation");
+    const batchSummary = attributionSheet.rows.find((row) => row[1] === "batch_generation_run" && row[2] === "batch_summary");
+    assert.equal(articleAttribution?.[12], 0.42);
+    assert.equal(articleAttribution?.[14], 0.5);
+    assert.equal(batchSummary?.[12], 0.42);
+    assert.equal(batchSummary?.[14], 0.5);
+  });
 });
 
 function sampleTelemetry(overrides: Partial<GenerationTelemetryDocument> = {}): GenerationTelemetryDocument {
@@ -287,5 +315,113 @@ function sampleArticle(overrides: Partial<ArticleDocument> & { researchScore?: n
     sources: [],
     needsReviewReasons: [],
     ...articleOverrides
+  };
+}
+
+function sampleOperation(overrides: Partial<OperationalTelemetryDocument> = {}): OperationalTelemetryDocument {
+  return {
+    id: "op-article-1",
+    projectId: "default-project",
+    articleId: "article-telemetry",
+    jobId: "job-telemetry",
+    batchRunId: "batch-1",
+    type: "article_generation",
+    status: "completed",
+    title: "Telemetry Article",
+    contentProfile: "industry_explainer",
+    provider: "test-provider",
+    attributionDate: "2026-06-17",
+    attributionEligible: true,
+    attributionUnits: 1,
+    startedAt: "2026-06-17T12:00:00.000Z",
+    completedAt: "2026-06-17T12:03:30.000Z",
+    occurredAt: "2026-06-17T12:03:30.000Z",
+    metrics: {
+      articleCount: 1,
+      durationMs: 210000,
+      researchDurationMs: 90000,
+      generationDurationMs: 120000,
+      totalDurationMs: 210000
+    },
+    costs: {
+      researchCostUsd: 0.03,
+      generationCostUsd: 0.05,
+      totalCostUsd: 0.08
+    },
+    metadata: {},
+    createdAt: "2026-06-17T12:03:30.000Z",
+    updatedAt: "2026-06-17T12:03:30.000Z",
+    ...overrides
+  };
+}
+
+function sampleBatchRun(overrides: Partial<OperationalTelemetryDocument> = {}): OperationalTelemetryDocument {
+  return {
+    id: "op-batch-1",
+    projectId: "default-project",
+    articleId: null,
+    jobId: null,
+    batchRunId: "batch-1",
+    type: "batch_generation_run",
+    status: "queued",
+    title: "1 article queue",
+    contentProfile: "industry_explainer",
+    provider: null,
+    attributionDate: "2026-06-17",
+    attributionEligible: false,
+    attributionUnits: 0,
+    startedAt: "2026-06-17T12:00:00.000Z",
+    completedAt: null,
+    occurredAt: "2026-06-17T12:00:00.000Z",
+    metrics: {
+      articleCount: 1
+    },
+    costs: {},
+    metadata: {},
+    createdAt: "2026-06-17T12:00:00.000Z",
+    updatedAt: "2026-06-17T12:00:00.000Z",
+    ...overrides
+  };
+}
+
+function sampleSnapshot(overrides: Partial<NeonUsageSnapshotDocument> = {}): NeonUsageSnapshotDocument {
+  return {
+    id: "neon-purple-fire-64344998-2026-06-17",
+    neonOrgId: "org-yellow-morning-51834425",
+    neonProjectId: "purple-fire-64344998",
+    neonProjectName: "neon-cerise-cave",
+    granularity: "daily",
+    timeframeStart: "2026-06-17T00:00:00.000Z",
+    timeframeEnd: "2026-06-18T00:00:00.000Z",
+    periodPlan: "scale",
+    source: "neon_api_v2",
+    capturedAt: "2026-06-18T00:05:00.000Z",
+    computeUnitSeconds: 3600,
+    computeCuHours: 1,
+    rootBranchByteHours: 0,
+    rootStorageGbMonths: 0.1,
+    childBranchByteHours: 0,
+    childStorageGbMonths: 0.02,
+    instantRestoreByteHours: 0,
+    instantRestoreGbMonths: 0,
+    publicNetworkTransferBytes: 100000000,
+    publicTransferGb: 0.1,
+    privateNetworkTransferBytes: 0,
+    privateTransferGb: 0,
+    extraBranchesHours: 0,
+    extraBranchesMonths: 0,
+    estimatedComputeCostUsd: 0.222,
+    estimatedStorageCostUsd: 0.042,
+    estimatedInstantRestoreCostUsd: 0,
+    estimatedPublicTransferCostUsd: 0.01,
+    estimatedPrivateTransferCostUsd: 0,
+    estimatedExtraBranchesCostUsd: 0,
+    estimatedTotalCostUsd: 0.42,
+    pricingSource: "neon_usage_based_scale_pricing_2026-06",
+    notes: "test snapshot",
+    metadata: {},
+    createdAt: "2026-06-18T00:05:00.000Z",
+    updatedAt: "2026-06-18T00:05:00.000Z",
+    ...overrides
   };
 }

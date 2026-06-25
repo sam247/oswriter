@@ -1,4 +1,4 @@
-import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, SiteKnowledgePageDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, NeonUsageSnapshotDocument, OperationalTelemetryDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, SiteKnowledgePageDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { applyPublishingDefaults } from "@/lib/publishing/status";
 import { normalizeProjectProfile } from "@/lib/project/profile";
@@ -7,7 +7,7 @@ import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { isApprovedStatus, isCompletedArticleStatus } from "@/lib/status";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, neonUsageSnapshotPath, neonUsageSnapshotPrefix, operationalTelemetryPath, operationalTelemetryPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
@@ -480,6 +480,34 @@ export class WorkspaceStore {
 
   async listTelemetryExportStatuses() {
     return this.storage.listJson<TelemetryExportStatusDocument>(telemetryExportStatusPrefix());
+  }
+
+  async saveOperationalTelemetry(event: OperationalTelemetryDocument) {
+    await this.storage.putJson(operationalTelemetryPath(event.id), event);
+  }
+
+  async getOperationalTelemetry(id: string) {
+    return this.storage.getJson<OperationalTelemetryDocument>(operationalTelemetryPath(id));
+  }
+
+  async listOperationalTelemetry(projectId?: string) {
+    const events = await this.storage.listJson<OperationalTelemetryDocument>(operationalTelemetryPrefix());
+    if (!projectId) return events;
+    return events.filter((event) => event.projectId === projectId);
+  }
+
+  async saveNeonUsageSnapshot(snapshot: NeonUsageSnapshotDocument) {
+    await this.storage.putJson(neonUsageSnapshotPath(snapshot.id), snapshot);
+  }
+
+  async getNeonUsageSnapshot(id: string) {
+    return this.storage.getJson<NeonUsageSnapshotDocument>(neonUsageSnapshotPath(id));
+  }
+
+  async listNeonUsageSnapshots(neonProjectId?: string) {
+    const snapshots = await this.storage.listJson<NeonUsageSnapshotDocument>(neonUsageSnapshotPrefix());
+    if (!neonProjectId) return snapshots;
+    return snapshots.filter((snapshot) => snapshot.neonProjectId === neonProjectId);
   }
 
   async getWorkerLease(projectId?: string) {

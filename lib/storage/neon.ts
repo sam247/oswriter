@@ -5,10 +5,10 @@ import { applyPublishingDefaults } from "@/lib/publishing/status";
 import { normalizeProjectProfile, profileKeyFor } from "@/lib/project/profile";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, neonUsageSnapshotPath, neonUsageSnapshotPrefix, operationalTelemetryPath, operationalTelemetryPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
 import type { WorkerObservationTimings } from "@/lib/storage/storage";
-import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, NeonUsageSnapshotDocument, OperationalTelemetryDocument, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 
@@ -36,6 +36,7 @@ export class NeonStorageProvider implements StorageProvider {
   private generationTelemetrySchemaReady = false;
   private wordPressConnectionSchemaReady = false;
   private siteKnowledgeSchemaReady = false;
+  private infraTelemetrySchemaReady = false;
   private readonly ensuredProjects = new Set<string>();
 
   constructor(options: NeonStorageProviderOptions = {}) {
@@ -59,6 +60,8 @@ export class NeonStorageProvider implements StorageProvider {
       if (isDebugPath(path)) return this.getDebug(pathProjectId(path), pathId(path)) as Promise<T | null>;
       if (isGenerationTelemetryPath(path)) return this.getGenerationTelemetry(pathProjectId(path), pathId(path)) as Promise<T | null>;
       if (isTelemetryExportStatusPath(path)) return this.getTelemetryExportStatus(decodeURIComponent(pathId(path))) as Promise<T | null>;
+      if (isOperationalTelemetryPath(path)) return this.getOperationalTelemetry(decodeURIComponent(pathId(path))) as Promise<T | null>;
+      if (isNeonUsageSnapshotPath(path)) return this.getNeonUsageSnapshot(decodeURIComponent(pathId(path))) as Promise<T | null>;
       if (isWorkerLeasePath(path)) return this.getWorkerLease(pathProjectId(path)) as Promise<T | null>;
       return null;
     });
@@ -80,6 +83,8 @@ export class NeonStorageProvider implements StorageProvider {
       if (isDebugPath(path)) return this.saveDebug(value as DebugDocument, pathProjectId(path));
       if (isGenerationTelemetryPath(path)) return this.saveGenerationTelemetry(value as GenerationTelemetryDocument, pathProjectId(path));
       if (isTelemetryExportStatusPath(path)) return this.saveTelemetryExportStatus(value as TelemetryExportStatusDocument);
+      if (isOperationalTelemetryPath(path)) return this.saveOperationalTelemetry(value as OperationalTelemetryDocument);
+      if (isNeonUsageSnapshotPath(path)) return this.saveNeonUsageSnapshot(value as NeonUsageSnapshotDocument);
       if (isWorkerLeasePath(path)) return this.upsertWorkerLease(value as WorkerLeaseDocument, pathProjectId(path));
     });
   }
@@ -122,6 +127,28 @@ export class NeonStorageProvider implements StorageProvider {
           order by updated_at desc
         `);
         return found.map(telemetryExportStatusFromRow) as T[];
+      }
+      if (prefix === operationalTelemetryPrefix()) {
+        const tenant = await this.ensureTenant();
+        await this.ensureInfraTelemetrySchema();
+        const found = rows(await this.sql`
+          select *
+          from operational_telemetry
+          where organisation_id = ${tenant.organisationId}
+          order by occurred_at asc, created_at asc
+        `);
+        return found.map(operationalTelemetryFromRow) as T[];
+      }
+      if (prefix === neonUsageSnapshotPrefix()) {
+        const tenant = await this.ensureTenant();
+        await this.ensureInfraTelemetrySchema();
+        const found = rows(await this.sql`
+          select *
+          from neon_usage_snapshots
+          where organisation_id = ${tenant.organisationId}
+          order by timeframe_start asc, neon_project_id asc
+        `);
+        return found.map(neonUsageSnapshotFromRow) as T[];
       }
       return [];
     });
@@ -663,6 +690,14 @@ export class NeonStorageProvider implements StorageProvider {
       } else if (isTelemetryExportStatusPath(path)) {
         const tenant = await this.ensureTenant();
         await this.sql`delete from telemetry_export_status where organisation_id = ${tenant.organisationId} and id = ${decodeURIComponent(pathId(path))}`;
+      } else if (isOperationalTelemetryPath(path)) {
+        const tenant = await this.ensureTenant();
+        await this.ensureInfraTelemetrySchema();
+        await this.sql`delete from operational_telemetry where organisation_id = ${tenant.organisationId} and id = ${decodeURIComponent(pathId(path))}`;
+      } else if (isNeonUsageSnapshotPath(path)) {
+        const tenant = await this.ensureTenant();
+        await this.ensureInfraTelemetrySchema();
+        await this.sql`delete from neon_usage_snapshots where organisation_id = ${tenant.organisationId} and id = ${decodeURIComponent(pathId(path))}`;
       } else if (isExportPath(path)) {
         await this.sql`delete from exports where project_id = ${pathProjectId(path)} and blob_path = ${path}`;
       } else if (isWorkerLeasePath(path)) {
@@ -1100,6 +1135,28 @@ export class NeonStorageProvider implements StorageProvider {
         order by updated_at desc
       `);
       return found.map((row) => telemetryExportStatusPath(String(row.id)));
+    }
+    if (prefix === operationalTelemetryPrefix()) {
+      const tenant = await this.ensureTenant();
+      await this.ensureInfraTelemetrySchema();
+      const found = rows(await this.sql`
+        select id
+        from operational_telemetry
+        where organisation_id = ${tenant.organisationId}
+        order by occurred_at asc, created_at asc
+      `);
+      return found.map((row) => operationalTelemetryPath(String(row.id)));
+    }
+    if (prefix === neonUsageSnapshotPrefix()) {
+      const tenant = await this.ensureTenant();
+      await this.ensureInfraTelemetrySchema();
+      const found = rows(await this.sql`
+        select id
+        from neon_usage_snapshots
+        where organisation_id = ${tenant.organisationId}
+        order by timeframe_start asc, neon_project_id asc
+      `);
+      return found.map((row) => neonUsageSnapshotPath(String(row.id)));
     }
     if (prefix.endsWith("/queue/")) {
       const tenant = await this.ensureTenant();
@@ -1972,6 +2029,248 @@ export class NeonStorageProvider implements StorageProvider {
     `;
   }
 
+  private async getOperationalTelemetry(id: string) {
+    const tenant = await this.ensureTenant();
+    await this.ensureInfraTelemetrySchema();
+    const found = rows(await this.sql`
+      select *
+      from operational_telemetry
+      where organisation_id = ${tenant.organisationId}
+        and id = ${id}
+      limit 1
+    `);
+    return found[0] ? operationalTelemetryFromRow(found[0]) : null;
+  }
+
+  private async saveOperationalTelemetry(event: OperationalTelemetryDocument) {
+    const tenant = await this.ensureTenant();
+    await this.ensureInfraTelemetrySchema();
+    const now = new Date().toISOString();
+    const next: OperationalTelemetryDocument = {
+      ...event,
+      organisationId: event.organisationId ?? tenant.organisationId,
+      articleId: event.articleId ?? null,
+      jobId: event.jobId ?? null,
+      batchRunId: event.batchRunId ?? null,
+      title: event.title ?? null,
+      contentProfile: event.contentProfile ?? null,
+      provider: event.provider ?? null,
+      startedAt: event.startedAt ?? null,
+      completedAt: event.completedAt ?? null,
+      metrics: event.metrics ?? {},
+      costs: event.costs ?? {},
+      metadata: event.metadata ?? {},
+      createdAt: event.createdAt ?? now,
+      updatedAt: event.updatedAt ?? now
+    };
+    await this.ensureProjectRows(next.projectId);
+    await this.sql`
+      insert into operational_telemetry (
+        id, organisation_id, project_id, article_id, job_id, batch_run_id, operation_type, status, title,
+        content_profile, provider, attribution_date, attribution_eligible, attribution_units, started_at,
+        completed_at, occurred_at, metrics, costs, metadata, document, created_at, updated_at
+      )
+      values (
+        ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.articleId}, ${next.jobId}, ${next.batchRunId},
+        ${next.type}, ${next.status}, ${next.title}, ${next.contentProfile}, ${next.provider}, ${next.attributionDate}::date,
+        ${next.attributionEligible}, ${next.attributionUnits}, ${next.startedAt ?? null}::timestamptz,
+        ${next.completedAt ?? null}::timestamptz, ${next.occurredAt}::timestamptz, ${JSON.stringify(next.metrics)}::jsonb,
+        ${JSON.stringify(next.costs)}::jsonb, ${JSON.stringify(next.metadata)}::jsonb, ${JSON.stringify(next)}::jsonb,
+        ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+      )
+      on conflict (id) do update set
+        article_id = excluded.article_id,
+        job_id = excluded.job_id,
+        batch_run_id = excluded.batch_run_id,
+        status = excluded.status,
+        title = excluded.title,
+        content_profile = excluded.content_profile,
+        provider = excluded.provider,
+        attribution_date = excluded.attribution_date,
+        attribution_eligible = excluded.attribution_eligible,
+        attribution_units = excluded.attribution_units,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        occurred_at = excluded.occurred_at,
+        metrics = excluded.metrics,
+        costs = excluded.costs,
+        metadata = excluded.metadata,
+        document = excluded.document,
+        updated_at = excluded.updated_at
+    `;
+  }
+
+  private async getNeonUsageSnapshot(id: string) {
+    const tenant = await this.ensureTenant();
+    await this.ensureInfraTelemetrySchema();
+    const found = rows(await this.sql`
+      select *
+      from neon_usage_snapshots
+      where organisation_id = ${tenant.organisationId}
+        and id = ${id}
+      limit 1
+    `);
+    return found[0] ? neonUsageSnapshotFromRow(found[0]) : null;
+  }
+
+  private async saveNeonUsageSnapshot(snapshot: NeonUsageSnapshotDocument) {
+    const tenant = await this.ensureTenant();
+    await this.ensureInfraTelemetrySchema();
+    const now = new Date().toISOString();
+    const next: NeonUsageSnapshotDocument = {
+      ...snapshot,
+      organisationId: snapshot.organisationId ?? tenant.organisationId,
+      neonProjectName: snapshot.neonProjectName ?? null,
+      periodPlan: snapshot.periodPlan ?? null,
+      notes: snapshot.notes ?? null,
+      metadata: snapshot.metadata ?? {},
+      createdAt: snapshot.createdAt ?? now,
+      updatedAt: snapshot.updatedAt ?? now
+    };
+    await this.sql`
+      insert into neon_usage_snapshots (
+        id, organisation_id, neon_org_id, neon_project_id, neon_project_name, granularity, timeframe_start, timeframe_end,
+        period_plan, source, captured_at, compute_unit_seconds, compute_cu_hours, root_branch_byte_hours, root_storage_gb_months,
+        child_branch_byte_hours, child_storage_gb_months, instant_restore_byte_hours, instant_restore_gb_months,
+        public_network_transfer_bytes, public_transfer_gb, private_network_transfer_bytes, private_transfer_gb,
+        extra_branches_hours, extra_branches_months, estimated_compute_cost_usd, estimated_storage_cost_usd,
+        estimated_instant_restore_cost_usd, estimated_public_transfer_cost_usd, estimated_private_transfer_cost_usd,
+        estimated_extra_branches_cost_usd, estimated_total_cost_usd, pricing_source, notes, metadata, document,
+        created_at, updated_at
+      )
+      values (
+        ${next.id}, ${next.organisationId}, ${next.neonOrgId}, ${next.neonProjectId}, ${next.neonProjectName}, ${next.granularity},
+        ${next.timeframeStart}::timestamptz, ${next.timeframeEnd}::timestamptz, ${next.periodPlan}, ${next.source},
+        ${next.capturedAt}::timestamptz, ${next.computeUnitSeconds}, ${next.computeCuHours}, ${next.rootBranchByteHours},
+        ${next.rootStorageGbMonths}, ${next.childBranchByteHours}, ${next.childStorageGbMonths}, ${next.instantRestoreByteHours},
+        ${next.instantRestoreGbMonths}, ${next.publicNetworkTransferBytes}, ${next.publicTransferGb},
+        ${next.privateNetworkTransferBytes}, ${next.privateTransferGb}, ${next.extraBranchesHours}, ${next.extraBranchesMonths},
+        ${next.estimatedComputeCostUsd}, ${next.estimatedStorageCostUsd}, ${next.estimatedInstantRestoreCostUsd},
+        ${next.estimatedPublicTransferCostUsd}, ${next.estimatedPrivateTransferCostUsd}, ${next.estimatedExtraBranchesCostUsd},
+        ${next.estimatedTotalCostUsd}, ${next.pricingSource}, ${next.notes}, ${JSON.stringify(next.metadata)}::jsonb,
+        ${JSON.stringify(next)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+      )
+      on conflict (id) do update set
+        neon_project_name = excluded.neon_project_name,
+        timeframe_end = excluded.timeframe_end,
+        period_plan = excluded.period_plan,
+        source = excluded.source,
+        captured_at = excluded.captured_at,
+        compute_unit_seconds = excluded.compute_unit_seconds,
+        compute_cu_hours = excluded.compute_cu_hours,
+        root_branch_byte_hours = excluded.root_branch_byte_hours,
+        root_storage_gb_months = excluded.root_storage_gb_months,
+        child_branch_byte_hours = excluded.child_branch_byte_hours,
+        child_storage_gb_months = excluded.child_storage_gb_months,
+        instant_restore_byte_hours = excluded.instant_restore_byte_hours,
+        instant_restore_gb_months = excluded.instant_restore_gb_months,
+        public_network_transfer_bytes = excluded.public_network_transfer_bytes,
+        public_transfer_gb = excluded.public_transfer_gb,
+        private_network_transfer_bytes = excluded.private_network_transfer_bytes,
+        private_transfer_gb = excluded.private_transfer_gb,
+        extra_branches_hours = excluded.extra_branches_hours,
+        extra_branches_months = excluded.extra_branches_months,
+        estimated_compute_cost_usd = excluded.estimated_compute_cost_usd,
+        estimated_storage_cost_usd = excluded.estimated_storage_cost_usd,
+        estimated_instant_restore_cost_usd = excluded.estimated_instant_restore_cost_usd,
+        estimated_public_transfer_cost_usd = excluded.estimated_public_transfer_cost_usd,
+        estimated_private_transfer_cost_usd = excluded.estimated_private_transfer_cost_usd,
+        estimated_extra_branches_cost_usd = excluded.estimated_extra_branches_cost_usd,
+        estimated_total_cost_usd = excluded.estimated_total_cost_usd,
+        pricing_source = excluded.pricing_source,
+        notes = excluded.notes,
+        metadata = excluded.metadata,
+        document = excluded.document,
+        updated_at = excluded.updated_at
+    `;
+  }
+
+  private async ensureInfraTelemetrySchema() {
+    if (this.infraTelemetrySchemaReady) return;
+    await this.sql`
+      create table if not exists operational_telemetry (
+        id text primary key,
+        organisation_id text not null references organisations(id) on delete cascade,
+        project_id text not null references projects(id) on delete cascade,
+        article_id text null,
+        job_id text null,
+        batch_run_id text null,
+        operation_type text not null,
+        status text not null,
+        title text null,
+        content_profile text null,
+        provider text null,
+        attribution_date date not null,
+        attribution_eligible boolean not null default false,
+        attribution_units numeric(12,4) not null default 0,
+        started_at timestamptz null,
+        completed_at timestamptz null,
+        occurred_at timestamptz not null,
+        metrics jsonb not null default '{}'::jsonb,
+        costs jsonb not null default '{}'::jsonb,
+        metadata jsonb not null default '{}'::jsonb,
+        document jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+    await this.sql`
+      create index if not exists idx_operational_telemetry_org_project_date
+        on operational_telemetry (organisation_id, project_id, attribution_date desc, occurred_at desc)
+    `;
+    await this.sql`
+      create index if not exists idx_operational_telemetry_batch
+        on operational_telemetry (batch_run_id)
+    `;
+    await this.sql`
+      create table if not exists neon_usage_snapshots (
+        id text primary key,
+        organisation_id text not null references organisations(id) on delete cascade,
+        neon_org_id text not null,
+        neon_project_id text not null,
+        neon_project_name text null,
+        granularity text not null,
+        timeframe_start timestamptz not null,
+        timeframe_end timestamptz not null,
+        period_plan text null,
+        source text not null,
+        captured_at timestamptz not null,
+        compute_unit_seconds numeric(20,6) not null default 0,
+        compute_cu_hours numeric(20,6) not null default 0,
+        root_branch_byte_hours numeric(28,6) not null default 0,
+        root_storage_gb_months numeric(20,6) not null default 0,
+        child_branch_byte_hours numeric(28,6) not null default 0,
+        child_storage_gb_months numeric(20,6) not null default 0,
+        instant_restore_byte_hours numeric(28,6) not null default 0,
+        instant_restore_gb_months numeric(20,6) not null default 0,
+        public_network_transfer_bytes numeric(28,6) not null default 0,
+        public_transfer_gb numeric(20,6) not null default 0,
+        private_network_transfer_bytes numeric(28,6) not null default 0,
+        private_transfer_gb numeric(20,6) not null default 0,
+        extra_branches_hours numeric(20,6) not null default 0,
+        extra_branches_months numeric(20,6) not null default 0,
+        estimated_compute_cost_usd numeric(20,6) not null default 0,
+        estimated_storage_cost_usd numeric(20,6) not null default 0,
+        estimated_instant_restore_cost_usd numeric(20,6) not null default 0,
+        estimated_public_transfer_cost_usd numeric(20,6) not null default 0,
+        estimated_private_transfer_cost_usd numeric(20,6) not null default 0,
+        estimated_extra_branches_cost_usd numeric(20,6) not null default 0,
+        estimated_total_cost_usd numeric(20,6) not null default 0,
+        pricing_source text not null,
+        notes text null,
+        metadata jsonb not null default '{}'::jsonb,
+        document jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+    await this.sql`
+      create unique index if not exists idx_neon_usage_snapshots_org_project_day
+        on neon_usage_snapshots (organisation_id, neon_project_id, timeframe_start)
+    `;
+    this.infraTelemetrySchemaReady = true;
+  }
+
   private async upsertWorkerLease(lease: WorkerLeaseDocument, projectId: string) {
     const tenant = await this.ensureTenant();
     const next = withLeaseDefaults(lease, tenant, projectId);
@@ -2478,6 +2777,14 @@ function isTelemetryExportStatusPath(path: string) {
   return path.startsWith(telemetryExportStatusPrefix()) && path.endsWith(".json");
 }
 
+function isOperationalTelemetryPath(path: string) {
+  return path.startsWith(operationalTelemetryPrefix()) && path.endsWith(".json");
+}
+
+function isNeonUsageSnapshotPath(path: string) {
+  return path.startsWith(neonUsageSnapshotPrefix()) && path.endsWith(".json");
+}
+
 function isWorkerLeasePath(path: string) {
   return path.endsWith("/worker/lease.json");
 }
@@ -2752,6 +3059,94 @@ function telemetryExportStatusFromRow(row: Record<string, unknown>): TelemetryEx
     attempts: Number(row.attempts ?? 0),
     lastError: nullableString(row.last_error),
     exportedAt: nullableDate(row.exported_at),
+    createdAt: dateIso(row.created_at),
+    updatedAt: dateIso(row.updated_at)
+  };
+}
+
+function operationalTelemetryFromRow(row: Record<string, unknown>): OperationalTelemetryDocument {
+  const metrics = isRecord(row.metrics) ? row.metrics : {};
+  const costs = isRecord(row.costs) ? row.costs : {};
+  const metadata = isRecord(row.metadata) ? row.metadata : {};
+  return {
+    id: String(row.id),
+    organisationId: String(row.organisation_id),
+    projectId: String(row.project_id),
+    articleId: nullableString(row.article_id),
+    jobId: nullableString(row.job_id),
+    batchRunId: nullableString(row.batch_run_id),
+    type: String(row.operation_type) as OperationalTelemetryDocument["type"],
+    status: String(row.status) as OperationalTelemetryDocument["status"],
+    title: nullableString(row.title),
+    contentProfile: nullableString(row.content_profile) as OperationalTelemetryDocument["contentProfile"],
+    provider: nullableString(row.provider),
+    attributionDate: new Date(row.attribution_date as string | number | Date).toISOString().slice(0, 10),
+    attributionEligible: Boolean(row.attribution_eligible),
+    attributionUnits: Number(row.attribution_units ?? 0),
+    startedAt: nullableDate(row.started_at),
+    completedAt: nullableDate(row.completed_at),
+    occurredAt: dateIso(row.occurred_at),
+    metrics: {
+      articleCount: nullableNumber(metrics.articleCount),
+      pagesIndexed: nullableNumber(metrics.pagesIndexed),
+      processedPages: nullableNumber(metrics.processedPages),
+      totalDiscoveredUrls: nullableNumber(metrics.totalDiscoveredUrls),
+      sourcesFound: nullableNumber(metrics.sourcesFound),
+      sourcesAccepted: nullableNumber(metrics.sourcesAccepted),
+      evidenceItemsUsed: nullableNumber(metrics.evidenceItemsUsed),
+      durationMs: nullableNumber(metrics.durationMs),
+      researchDurationMs: nullableNumber(metrics.researchDurationMs),
+      generationDurationMs: nullableNumber(metrics.generationDurationMs),
+      totalDurationMs: nullableNumber(metrics.totalDurationMs)
+    },
+    costs: {
+      researchCostUsd: nullableNumber(costs.researchCostUsd),
+      generationCostUsd: nullableNumber(costs.generationCostUsd),
+      totalCostUsd: nullableNumber(costs.totalCostUsd)
+    },
+    metadata,
+    createdAt: dateIso(row.created_at),
+    updatedAt: dateIso(row.updated_at)
+  };
+}
+
+function neonUsageSnapshotFromRow(row: Record<string, unknown>): NeonUsageSnapshotDocument {
+  return {
+    id: String(row.id),
+    organisationId: String(row.organisation_id),
+    neonOrgId: String(row.neon_org_id),
+    neonProjectId: String(row.neon_project_id),
+    neonProjectName: nullableString(row.neon_project_name),
+    granularity: String(row.granularity) as NeonUsageSnapshotDocument["granularity"],
+    timeframeStart: dateIso(row.timeframe_start),
+    timeframeEnd: dateIso(row.timeframe_end),
+    periodPlan: nullableString(row.period_plan),
+    source: String(row.source) as NeonUsageSnapshotDocument["source"],
+    capturedAt: dateIso(row.captured_at),
+    computeUnitSeconds: Number(row.compute_unit_seconds ?? 0),
+    computeCuHours: Number(row.compute_cu_hours ?? 0),
+    rootBranchByteHours: Number(row.root_branch_byte_hours ?? 0),
+    rootStorageGbMonths: Number(row.root_storage_gb_months ?? 0),
+    childBranchByteHours: Number(row.child_branch_byte_hours ?? 0),
+    childStorageGbMonths: Number(row.child_storage_gb_months ?? 0),
+    instantRestoreByteHours: Number(row.instant_restore_byte_hours ?? 0),
+    instantRestoreGbMonths: Number(row.instant_restore_gb_months ?? 0),
+    publicNetworkTransferBytes: Number(row.public_network_transfer_bytes ?? 0),
+    publicTransferGb: Number(row.public_transfer_gb ?? 0),
+    privateNetworkTransferBytes: Number(row.private_network_transfer_bytes ?? 0),
+    privateTransferGb: Number(row.private_transfer_gb ?? 0),
+    extraBranchesHours: Number(row.extra_branches_hours ?? 0),
+    extraBranchesMonths: Number(row.extra_branches_months ?? 0),
+    estimatedComputeCostUsd: Number(row.estimated_compute_cost_usd ?? 0),
+    estimatedStorageCostUsd: Number(row.estimated_storage_cost_usd ?? 0),
+    estimatedInstantRestoreCostUsd: Number(row.estimated_instant_restore_cost_usd ?? 0),
+    estimatedPublicTransferCostUsd: Number(row.estimated_public_transfer_cost_usd ?? 0),
+    estimatedPrivateTransferCostUsd: Number(row.estimated_private_transfer_cost_usd ?? 0),
+    estimatedExtraBranchesCostUsd: Number(row.estimated_extra_branches_cost_usd ?? 0),
+    estimatedTotalCostUsd: Number(row.estimated_total_cost_usd ?? 0),
+    pricingSource: String(row.pricing_source ?? ""),
+    notes: nullableString(row.notes),
+    metadata: isRecord(row.metadata) ? row.metadata : {},
     createdAt: dateIso(row.created_at),
     updatedAt: dateIso(row.updated_at)
   };

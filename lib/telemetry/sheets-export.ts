@@ -2,7 +2,8 @@ import { createSign } from "node:crypto";
 import { calculateArticleScores } from "@/lib/scoring/article-scores";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import { buildDailySummaryRows, DAILY_SUMMARY_HEADERS, type DailySummaryContext } from "@/lib/telemetry/daily-summary";
-import type { ArticleDocument, GenerationTelemetryDocument, ProjectDocument, ResearchPack, TelemetryExportStatusDocument } from "@/lib/types";
+import { collectDailyNeonUsageSnapshots } from "@/lib/telemetry/neon-usage";
+import type { ArticleDocument, GenerationTelemetryDocument, NeonUsageSnapshotDocument, OperationalTelemetryDocument, ProjectDocument, ResearchPack, TelemetryExportStatusDocument } from "@/lib/types";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 
 export const TELEMETRY_SPREADSHEET_ID = "1G0wbTt7xPoobZZncWZ1K-Y9EP2CjvmOrKP3WZvtAC3o";
@@ -11,7 +12,10 @@ export const TELEMETRY_SHEETS = {
   dailySummary: "Daily Summary",
   articleTelemetry: "Article Telemetry",
   providerTelemetry: "Provider Telemetry",
-  anomalies: "Anomalies"
+  anomalies: "Anomalies",
+  neonUsage: "Neon Usage",
+  operationalTelemetry: "Operational Telemetry",
+  operationCostAttribution: "Operation Cost Attribution"
 } as const;
 
 export const PROVIDER_TELEMETRY_HEADERS = [
@@ -38,6 +42,84 @@ export const PROVIDER_TELEMETRY_HEADERS = [
   "Provider Type",
   "Provider Credits",
   "Provider Cost Pricing Source"
+] as const;
+
+export const NEON_USAGE_HEADERS = [
+  "Date",
+  "Captured At",
+  "Neon Project ID",
+  "Neon Project Name",
+  "Plan",
+  "Compute Unit Seconds",
+  "Compute CU Hours",
+  "Root Storage GB-Months",
+  "Child Storage GB-Months",
+  "Instant Restore GB-Months",
+  "Public Transfer GB",
+  "Private Transfer GB",
+  "Extra Branch Months",
+  "Estimated Compute Cost",
+  "Estimated Storage Cost",
+  "Estimated Instant Restore Cost",
+  "Estimated Public Transfer Cost",
+  "Estimated Private Transfer Cost",
+  "Estimated Extra Branch Cost",
+  "Estimated Total Cost",
+  "Pricing Source",
+  "Notes"
+] as const;
+
+export const OPERATIONAL_TELEMETRY_HEADERS = [
+  "Date",
+  "Occurred At",
+  "Operation Type",
+  "Status",
+  "Project ID",
+  "Article ID",
+  "Job ID",
+  "Batch Run ID",
+  "Title",
+  "Content Profile",
+  "Provider",
+  "Attribution Eligible",
+  "Attribution Units",
+  "Article Count",
+  "Pages Indexed",
+  "Processed Pages",
+  "Total Discovered URLs",
+  "Sources Found",
+  "Sources Accepted",
+  "Evidence Used",
+  "Duration (seconds)",
+  "Research Duration (seconds)",
+  "Generation Duration (seconds)",
+  "Total Duration (seconds)",
+  "Research Cost",
+  "Generation Cost",
+  "Total Direct Cost",
+  "Metadata"
+] as const;
+
+export const OPERATION_COST_ATTRIBUTION_HEADERS = [
+  "Date",
+  "Operation Type",
+  "Derivation",
+  "Project ID",
+  "Article ID",
+  "Job ID",
+  "Batch Run ID",
+  "Title",
+  "Status",
+  "Eligible Units",
+  "Daily Neon Cost Pool",
+  "Daily Eligible Units",
+  "Attributed Neon Cost",
+  "Direct Operation Cost",
+  "Estimated Total Operation Cost",
+  "Article Count",
+  "Pages Indexed",
+  "Infra Cost Per Article",
+  "Total Cost Per Article"
 ] as const;
 
 export interface SheetsAppendClient {
@@ -122,6 +204,7 @@ export async function exportDailyTelemetrySummaries(store: WorkspaceStore, clien
 
   if (client.replaceRows) {
     await client.replaceRows(TELEMETRY_SHEETS.dailySummary, [Array.from(DAILY_SUMMARY_HEADERS), ...rows]);
+    await exportInfrastructureTelemetry(store, client, requiredDate ?? previousUtcDate());
   } else {
     const row = rows.find((item) => item[0] === (requiredDate ?? previousUtcDate()));
     if (row) await client.appendRow(TELEMETRY_SHEETS.dailySummary, row);
@@ -444,6 +527,180 @@ async function loadDailySummaryContexts(store: WorkspaceStore): Promise<DailySum
   return groups.flat();
 }
 
+async function exportInfrastructureTelemetry(store: WorkspaceStore, client: SheetsAppendClient, date: string) {
+  try {
+    await collectDailyNeonUsageSnapshots(store, date);
+  } catch (error) {
+    console.warn("neon usage snapshot collection failed", error instanceof Error ? error.message : String(error));
+  }
+
+  const [snapshots, operations] = await Promise.all([
+    store.listNeonUsageSnapshots(),
+    store.listOperationalTelemetry()
+  ]);
+  const sortedSnapshots = [...snapshots].sort((left, right) => left.timeframeStart.localeCompare(right.timeframeStart) || left.neonProjectId.localeCompare(right.neonProjectId));
+  const sortedOperations = [...operations].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id));
+  await client.replaceRows?.(TELEMETRY_SHEETS.neonUsage, [Array.from(NEON_USAGE_HEADERS), ...buildNeonUsageRows(sortedSnapshots)]);
+  await client.replaceRows?.(TELEMETRY_SHEETS.operationalTelemetry, [Array.from(OPERATIONAL_TELEMETRY_HEADERS), ...buildOperationalTelemetryRows(sortedOperations)]);
+  await client.replaceRows?.(TELEMETRY_SHEETS.operationCostAttribution, [Array.from(OPERATION_COST_ATTRIBUTION_HEADERS), ...buildOperationCostAttributionRows(sortedOperations, sortedSnapshots)]);
+}
+
+function buildNeonUsageRows(snapshots: NeonUsageSnapshotDocument[]) {
+  return snapshots.map((snapshot): TelemetryCell[] => [
+    snapshot.timeframeStart.slice(0, 10),
+    snapshot.capturedAt,
+    snapshot.neonProjectId,
+    snapshot.neonProjectName ?? "",
+    snapshot.periodPlan ?? "",
+    snapshot.computeUnitSeconds,
+    snapshot.computeCuHours,
+    snapshot.rootStorageGbMonths,
+    snapshot.childStorageGbMonths,
+    snapshot.instantRestoreGbMonths,
+    snapshot.publicTransferGb,
+    snapshot.privateTransferGb,
+    snapshot.extraBranchesMonths,
+    snapshot.estimatedComputeCostUsd,
+    snapshot.estimatedStorageCostUsd,
+    snapshot.estimatedInstantRestoreCostUsd,
+    snapshot.estimatedPublicTransferCostUsd,
+    snapshot.estimatedPrivateTransferCostUsd,
+    snapshot.estimatedExtraBranchesCostUsd,
+    snapshot.estimatedTotalCostUsd,
+    snapshot.pricingSource,
+    snapshot.notes ?? ""
+  ]);
+}
+
+function buildOperationalTelemetryRows(operations: OperationalTelemetryDocument[]) {
+  return operations.map((event): TelemetryCell[] => [
+    event.attributionDate,
+    event.occurredAt,
+    event.type,
+    event.status,
+    event.projectId,
+    event.articleId ?? "",
+    event.jobId ?? "",
+    event.batchRunId ?? "",
+    event.title ?? "",
+    event.contentProfile ?? "",
+    event.provider ?? "",
+    event.attributionEligible ? "Yes" : "No",
+    event.attributionUnits,
+    event.metrics.articleCount ?? "",
+    event.metrics.pagesIndexed ?? "",
+    event.metrics.processedPages ?? "",
+    event.metrics.totalDiscoveredUrls ?? "",
+    event.metrics.sourcesFound ?? "",
+    event.metrics.sourcesAccepted ?? "",
+    event.metrics.evidenceItemsUsed ?? "",
+    seconds(event.metrics.durationMs),
+    seconds(event.metrics.researchDurationMs),
+    seconds(event.metrics.generationDurationMs),
+    seconds(event.metrics.totalDurationMs),
+    event.costs.researchCostUsd ?? "",
+    event.costs.generationCostUsd ?? "",
+    directOperationCost(event) || "",
+    event.metadata && Object.keys(event.metadata).length ? JSON.stringify(event.metadata) : ""
+  ]);
+}
+
+function buildOperationCostAttributionRows(operations: OperationalTelemetryDocument[], snapshots: NeonUsageSnapshotDocument[]) {
+  const dailyCostPool = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    const date = snapshot.timeframeStart.slice(0, 10);
+    dailyCostPool.set(date, (dailyCostPool.get(date) ?? 0) + snapshot.estimatedTotalCostUsd);
+  }
+
+  const dailyEligibleUnits = new Map<string, number>();
+  for (const event of operations) {
+    if (!event.attributionEligible || event.status !== "completed") continue;
+    dailyEligibleUnits.set(event.attributionDate, (dailyEligibleUnits.get(event.attributionDate) ?? 0) + event.attributionUnits);
+  }
+
+  const attributedEvents = operations.map((event) => {
+    const costPool = dailyCostPool.get(event.attributionDate) ?? 0;
+    const eligibleUnits = dailyEligibleUnits.get(event.attributionDate) ?? 0;
+    const attributedNeonCost = event.attributionEligible && event.status === "completed" && eligibleUnits > 0
+      ? money(costPool * (event.attributionUnits / eligibleUnits))
+      : 0;
+    const directCost = directOperationCost(event);
+    return {
+      event,
+      costPool,
+      eligibleUnits,
+      attributedNeonCost,
+      directCost,
+      totalCost: money(attributedNeonCost + directCost)
+    };
+  });
+
+  const rows = attributedEvents.map(({ event, costPool, eligibleUnits, attributedNeonCost, directCost, totalCost }): TelemetryCell[] => {
+    const articleCount = event.metrics.articleCount ?? (event.type === "article_generation" ? 1 : "");
+    const perArticleInfra = typeof articleCount === "number" && articleCount > 0 ? money(attributedNeonCost / articleCount) : "";
+    const perArticleTotal = typeof articleCount === "number" && articleCount > 0 ? money(totalCost / articleCount) : "";
+    return [
+      event.attributionDate,
+      event.type,
+      "event",
+      event.projectId,
+      event.articleId ?? "",
+      event.jobId ?? "",
+      event.batchRunId ?? "",
+      event.title ?? "",
+      event.status,
+      event.attributionUnits,
+      costPool,
+      eligibleUnits,
+      attributedNeonCost || "",
+      directCost || "",
+      totalCost || "",
+      articleCount,
+      event.metrics.pagesIndexed ?? "",
+      perArticleInfra,
+      perArticleTotal
+    ];
+  });
+
+  const articleEventsByBatch = new Map<string, typeof attributedEvents>();
+  for (const item of attributedEvents) {
+    const batchRunId = item.event.batchRunId;
+    if (!batchRunId || item.event.type !== "article_generation") continue;
+    articleEventsByBatch.set(batchRunId, [...(articleEventsByBatch.get(batchRunId) ?? []), item]);
+  }
+
+  for (const batch of operations.filter((event) => event.type === "batch_generation_run" && event.batchRunId)) {
+    const children = articleEventsByBatch.get(String(batch.batchRunId)) ?? [];
+    const articleCount = children.length || batch.metrics.articleCount || 0;
+    const attributedNeonCost = money(sum(children.map((item) => item.attributedNeonCost)));
+    const directCost = money(sum(children.map((item) => item.directCost)));
+    const totalCost = money(attributedNeonCost + directCost);
+    rows.push([
+      batch.attributionDate,
+      batch.type,
+      "batch_summary",
+      batch.projectId,
+      "",
+      "",
+      batch.batchRunId ?? "",
+      batch.title ?? "",
+      articleCount ? "completed_observed" : batch.status,
+      articleCount,
+      dailyCostPool.get(batch.attributionDate) ?? 0,
+      dailyEligibleUnits.get(batch.attributionDate) ?? 0,
+      attributedNeonCost || "",
+      directCost || "",
+      totalCost || "",
+      articleCount || "",
+      "",
+      articleCount ? money(attributedNeonCost / articleCount) : "",
+      articleCount ? money(totalCost / articleCount) : ""
+    ]);
+  }
+
+  return rows.sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])));
+}
+
 async function ensureSheetSize(spreadsheetId: string, token: string, sheetName: string, columnCount: number) {
   const metadataResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`, {
     headers: { authorization: `Bearer ${token}` }
@@ -629,6 +886,15 @@ function dateOnly(value: string) {
 
 function millisecondsToSeconds(value: number | null | undefined): TelemetryCell {
   return isNumber(value) ? Number((value / 1000).toFixed(3)) : "";
+}
+
+function seconds(value: number | null | undefined): TelemetryCell {
+  return millisecondsToSeconds(value);
+}
+
+function directOperationCost(event: OperationalTelemetryDocument) {
+  if (isNumber(event.costs.totalCostUsd)) return event.costs.totalCostUsd;
+  return money((event.costs.researchCostUsd ?? 0) + (event.costs.generationCostUsd ?? 0));
 }
 
 function metadataString(metadata: Record<string, unknown>, key: string) {
