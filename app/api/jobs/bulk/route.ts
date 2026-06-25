@@ -20,6 +20,6 @@ export async function POST(req: Request) {
   const jobs = body.avoidDuplicates
     ? await runner.addUniqueTitles(titles, undefined, contentProfile, postGenerationAction)
     : await runner.addTitles(titles, undefined, contentProfile, postGenerationAction);
-  const state = await store.getState();
-  return NextResponse.json({ jobs, state });
+  const queueControl = await store.getQueueControl();
+  return NextResponse.json({ jobs, queueControl });
 }

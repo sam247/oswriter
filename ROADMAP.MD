@@ -7,11 +7,11 @@
 - Audited the primary sluggish flows around `Upload (titles to queue)` and `Generate` and tightened the app around those interaction bottlenecks rather than expanding the broader activity system.
 - Added immediate action feedback for queue creation and queue start so users now see pending, success, and error states directly in the `Add titles` and `Generate` controls.
 - Improved queue polling responsiveness during queue start and active processing so the sidebar reflects live state sooner after user actions.
-- Promoted queue state into a more durable left-panel system surface with:
-  - persistent queue state banner
-  - live queue visibility summary
-  - surfaced recent completions
-  - clearer access back to active queued work
+- Corrected the first pass after review:
+  - removed the extra queue-history/dashboard surface that duplicated metrics and recent completions
+  - kept the queue banner focused on state plus next action instead of status recap
+  - changed `Add titles` to optimistic local queue insertion with server reconciliation and rollback on failure
+  - trimmed the bulk queue API response so the client confirms jobs and queue control without waiting on a full-state payload
 - Kept the implementation intentionally scoped to Phases 1-3 only, deferring deeper worker/progress infrastructure until the first-pass UX improvements are evaluated.
 
 ### Navigation Polish Recovery

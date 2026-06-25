@@ -237,6 +237,8 @@ function Workbench() {
   const visibilityBaselineRef = useRef<Set<string> | null>(null);
   const traceJobIdRef = useRef<string | null>(null);
   const optimisticClaimsRef = useRef<Map<string, QueueJob>>(new Map());
+  const optimisticQueuedJobIdsRef = useRef<Set<string>>(new Set());
+  const optimisticQueueControlRef = useRef<AppState["queueControl"] | null>(null);
   const analyticsProjectIdRef = useRef<string | null>(null);
 
   const jobs = state?.jobs ?? [];
@@ -266,12 +268,6 @@ function Workbench() {
   }), [articles, jobs]);
   const visibleJobs = displayJobs.filter((job) => filter === "all" || job.status === filter || (filter === "failed" && job.status === "research_failed"));
   const queueJobs = visibleJobs.filter(isQueueJobVisible);
-  const recentCompletedArticles = useMemo(
-    () => [...inventoryArticles]
-      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
-      .slice(0, 3),
-    [inventoryArticles]
-  );
   const libraryArticles = inventoryArticles.filter((article) => filter !== "needs_review" || article.status === "needs_review");
   const pinnedLibraryArticles = libraryArticles.filter((article) => pinnedArticleIds.has(article.id));
   const regularLibraryArticles = libraryArticles.filter((article) => !pinnedArticleIds.has(article.id));
@@ -572,6 +568,8 @@ function Workbench() {
     const submittedTitles = parseSubmittedTitles(titles);
     if (!submittedTitles.length) return;
     const startedAt = performance.now();
+    const pendingInput = titles;
+    const optimisticJobs = createOptimisticQueuedJobs(state?.project.id, submittedTitles, jobs, postGenerationAction);
     setSidebarTab("queue");
     setUploadFeedback({
       status: "submitting",
@@ -579,6 +577,11 @@ function Workbench() {
       durationMs: null,
       message: `Adding ${submittedTitles.length} title${submittedTitles.length === 1 ? "" : "s"} to the queue...`
     });
+    setTitles("");
+    if (optimisticJobs.length) {
+      optimisticQueuedJobIdsRef.current = new Set(optimisticJobs.map((job) => job.id));
+      insertOptimisticQueuedJobs(optimisticJobs);
+    }
     setBusy(true);
     setMessage(`Adding ${submittedTitles.length} title${submittedTitles.length === 1 ? "" : "s"} to queue...`);
     const res = await fetch("/api/jobs/bulk", {
@@ -589,15 +592,15 @@ function Workbench() {
         postGenerationAction
       })
     });
-    const data = await res.json().catch(() => ({})) as { state?: AppState; jobs?: QueueJob[]; error?: string };
+    const data = await res.json().catch(() => ({})) as { jobs?: QueueJob[]; queueControl?: AppState["queueControl"]; error?: string };
     const durationMs = performance.now() - startedAt;
     setBusy(false);
     if (res.ok) {
       const queuedCount = data.jobs?.length ?? submittedTitles.length;
-      if (queuedCount > 0) setTitles("");
       const successMessage = queuedCount > 0
         ? `${queuedCount} title${queuedCount === 1 ? "" : "s"} added to queue.`
         : "Those titles already exist in this project or queue.";
+      reconcileQueuedJobs(data.jobs ?? [], data.queueControl);
       setUploadFeedback({
         status: "success",
         titleCount: queuedCount,
@@ -605,11 +608,10 @@ function Workbench() {
         message: successMessage
       });
       setMessage(successMessage);
-      if (data.state) applyServerState(data.state, "jobs-bulk");
-      else await refresh();
-      void refreshQueueStatus();
     } else {
       const errorMessage = data.error ?? "Could not add titles.";
+      rollbackOptimisticQueuedJobs();
+      setTitles(pendingInput);
       setUploadFeedback({
         status: "error",
         titleCount: submittedTitles.length,
@@ -1273,7 +1275,7 @@ function Workbench() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ titles: selected, avoidDuplicates: true })
     });
-    const data = await res.json().catch(() => ({})) as { jobs?: QueueJob[]; state?: AppState; error?: string };
+    const data = await res.json().catch(() => ({})) as { jobs?: QueueJob[]; queueControl?: AppState["queueControl"]; error?: string };
     setBusy(false);
     if (!res.ok) {
       setMessage(data.error ?? "Could not add related titles.");
@@ -1282,11 +1284,10 @@ function Workbench() {
     setSimilarCandidate(null);
     setSidebarTab("queue");
     const queuedCount = data.jobs?.length ?? selected.length;
+    if (data.jobs) reconcileQueuedJobs(data.jobs, data.queueControl);
     setMessage(queuedCount
       ? `${queuedCount} related title${queuedCount === 1 ? "" : "s"} queued.`
       : "Those titles already exist in this project or queue.");
-    if (data.state) applyServerState(data.state, "similar-titles");
-    else await refresh();
   }
 
   function updateArticleDraft(articleId: string, patch: { title?: string; markdown?: string }) {
@@ -1491,6 +1492,63 @@ function Workbench() {
       ...current,
       jobs: current.jobs.map((item) => item.id === job.id ? job : item)
     } : current);
+  }
+
+  function insertOptimisticQueuedJobs(optimisticJobs: QueueJob[]) {
+    setQueueStatus(null);
+    setState((current) => {
+      if (!current) return current;
+      optimisticQueueControlRef.current = current.queueControl;
+      const hasProcessing = current.jobs.some((job) => job.status === "processing");
+      return {
+        ...current,
+        queueControl: hasProcessing ? current.queueControl : {
+          ...current.queueControl,
+          mode: "stopped",
+          stoppedAt: new Date().toISOString(),
+          reason: "Queued titles waiting for generation start.",
+          updatedAt: new Date().toISOString()
+        },
+        jobs: [
+          ...current.jobs.filter((job) => !optimisticQueuedJobIdsRef.current.has(job.id)),
+          ...optimisticJobs
+        ]
+      };
+    });
+  }
+
+  function reconcileQueuedJobs(confirmedJobs: QueueJob[], queueControl?: AppState["queueControl"]) {
+    const optimisticIds = new Set(optimisticQueuedJobIdsRef.current);
+    optimisticQueuedJobIdsRef.current.clear();
+    optimisticQueueControlRef.current = null;
+    setQueueStatus(null);
+    setState((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        queueControl: queueControl ?? current.queueControl,
+        jobs: [
+          ...current.jobs.filter((job) => !optimisticIds.has(job.id)),
+          ...confirmedJobs
+        ]
+      };
+    });
+  }
+
+  function rollbackOptimisticQueuedJobs() {
+    const optimisticIds = new Set(optimisticQueuedJobIdsRef.current);
+    const previousQueueControl = optimisticQueueControlRef.current;
+    optimisticQueuedJobIdsRef.current.clear();
+    optimisticQueueControlRef.current = null;
+    setQueueStatus(null);
+    setState((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        queueControl: previousQueueControl ?? current.queueControl,
+        jobs: current.jobs.filter((job) => !optimisticIds.has(job.id))
+      };
+    });
   }
 
   function markNextJobGenerating() {
@@ -1725,23 +1783,9 @@ function Workbench() {
               <>
                 <QueueStateBanner
                   state={queueState}
-                  metrics={queueMetrics}
-                  owner={state?.queueControl.requestedBy ?? null}
                   onResume={() => void setQueueControl("resume", "Queue running.")}
                   onRetryFailed={stats.failed > 0 ? retryFailedJobs : undefined}
                   onRecover={hasRecoverableQueueWork ? recoverQueue : undefined}
-                />
-                <QueueVisibilityPanel
-                  jobs={queueJobs.slice(0, 3)}
-                  recentCompletedArticles={recentCompletedArticles}
-                  stats={stats}
-                  uploadFeedback={uploadFeedback}
-                  generateFeedback={generateFeedback}
-                  onOpenQueue={() => {
-                    setSidebarTab("queue");
-                    setFilter("all");
-                  }}
-                  onOpenArticle={setSelectedArticleId}
                 />
               </>
             )}
@@ -2049,15 +2093,11 @@ function Workbench() {
 
 function QueueStateBanner({
   state,
-  metrics,
-  owner,
   onResume,
   onRetryFailed,
   onRecover
 }: {
   state: QueueStateDescription | null;
-  metrics: QueueMetrics;
-  owner: string | null;
   onResume: () => void;
   onRetryFailed?: () => void;
   onRecover?: () => void;
@@ -2082,112 +2122,6 @@ function QueueStateBanner({
           )}
         </div>
       </div>
-      <div className="mono mt-2 grid grid-cols-3 gap-2 text-[10px] text-ink-subtle">
-        <span>{metrics.completed} of {metrics.total || 0}</span>
-        <span>{metrics.remaining} remaining</span>
-        <span className="truncate">{owner ? `Owner ${owner}` : "Owner local"}</span>
-      </div>
-    </div>
-  );
-}
-
-function QueueVisibilityPanel({
-  jobs,
-  recentCompletedArticles,
-  stats,
-  uploadFeedback,
-  generateFeedback,
-  onOpenQueue,
-  onOpenArticle
-}: {
-  jobs: QueueJob[];
-  recentCompletedArticles: ArticleSummary[];
-  stats: Record<"queued" | "processing" | "generated" | "needs_review" | "failed" | "skipped", number>;
-  uploadFeedback: UploadFeedbackState;
-  generateFeedback: GenerateFeedbackState;
-  onOpenQueue: () => void;
-  onOpenArticle: (articleId: string | null) => void;
-}) {
-  const queueUpdates = [
-    uploadFeedback.message ? {
-      key: "upload",
-      label: uploadFeedback.status === "error" ? "Add blocked" : uploadFeedback.status === "success" ? "Added to queue" : "Adding titles",
-      detail: uploadFeedback.message,
-      tone: uploadFeedback.status === "error" ? "text-danger" : uploadFeedback.status === "success" ? "text-success" : "text-ink-muted"
-    } : null,
-    generateFeedback.message ? {
-      key: "generate",
-      label: generateFeedback.status === "error" ? "Generate blocked" : generateFeedback.status === "success" ? "Queue response" : "Starting queue",
-      detail: generateFeedback.message,
-      tone: generateFeedback.status === "error" ? "text-danger" : generateFeedback.status === "success" ? "text-success" : "text-ink-muted"
-    } : null
-  ].filter(Boolean) as Array<{ key: string; label: string; detail: string; tone: string }>;
-
-  return (
-    <div className="mt-3 rounded-md border border-line/80 bg-surface-1 px-2.5 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <div className="text-[11.5px] font-semibold text-ink">Queue visibility</div>
-          <div className="mt-0.5 text-[10.5px] text-ink-subtle">Live status for queued work and recent completions.</div>
-        </div>
-        <button onClick={onOpenQueue} className="rounded bg-surface-3 px-2 py-1 text-[10.5px] text-ink-muted hover:text-ink">
-          Open queue
-        </button>
-      </div>
-      <div className="mono mt-2 grid grid-cols-4 gap-1 text-[10px] text-ink-subtle">
-        <span>{stats.queued} queued</span>
-        <span>{stats.processing} running</span>
-        <span>{stats.generated + stats.needs_review} done</span>
-        <span>{stats.failed} failed</span>
-      </div>
-      {queueUpdates.length > 0 && (
-        <div className="mt-2 space-y-1.5">
-          {queueUpdates.map((update) => (
-            <div key={update.key} className="rounded bg-surface-2 px-2 py-1.5">
-              <div className="text-[10px] uppercase tracking-[0.12em] text-ink-subtle">{update.label}</div>
-              <div className={cn("mt-0.5 text-[11px]", update.tone)}>{update.detail}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {jobs.length > 0 && (
-        <div className="mt-2">
-          <div className="text-[10px] uppercase tracking-[0.12em] text-ink-subtle">Now in queue</div>
-          <div className="mt-1 space-y-1">
-            {jobs.map((job) => (
-              <button
-                key={job.id}
-                onClick={() => onOpenArticle(job.articleId)}
-                className="flex w-full items-center justify-between gap-2 rounded bg-surface-2 px-2 py-1.5 text-left hover:bg-surface-3"
-              >
-                <span className="truncate text-[11px] text-ink">{job.title}</span>
-                <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[9.5px]", statusBadgeTone(job.status))}>
-                  {displayStatusLabel(job, null)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      {recentCompletedArticles.length > 0 && (
-        <div className="mt-2">
-          <div className="text-[10px] uppercase tracking-[0.12em] text-ink-subtle">Recent completions</div>
-          <div className="mt-1 space-y-1">
-            {recentCompletedArticles.map((article) => (
-              <button
-                key={article.id}
-                onClick={() => onOpenArticle(article.id)}
-                className="flex w-full items-center justify-between gap-2 rounded bg-surface-2 px-2 py-1.5 text-left hover:bg-surface-3"
-              >
-                <span className="truncate text-[11px] text-ink">{article.title}</span>
-                <span className={cn("mono shrink-0 rounded px-1.5 py-0.5 text-[9.5px]", statusBadgeTone(article.status))}>
-                  {filterLabel(article.status)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -3527,6 +3461,7 @@ function ProjectExportReadiness({ articles, jobs, metrics }: { articles: Article
 
 function attentionSummary(article: ArticleSummary | null | undefined, job: QueueJob) {
   if (article?.status === "needs_review") return "Article needs review";
+  if (job.statusReason) return job.statusReason;
   if (job.fatalError) return job.fatalError;
   if (job.needsReviewReasons.length) return job.needsReviewReasons[0];
   return null;
@@ -5653,6 +5588,7 @@ function readTransitionTrace() {
 }
 
 function displayStatusLabel(job: QueueJob, article?: ArticleSummary | ArticleDocument | null) {
+  if (isOptimisticQueuedJob(job)) return "Adding";
   if (job.status !== "processing") return statusLabel(article?.status ?? job.status);
   const activeStage = currentPipelineStage(job.pipeline);
   if (activeStage === "research") return "Researching";
@@ -5750,15 +5686,15 @@ function describeQueueState(mode: QueueControlMode, jobs: QueueJob[]): QueueStat
     return {
       mode,
       label: "Stop After Current",
-      detail: processing ? `Finishing ${processing.title}` : "Will stop before another article starts."
+      detail: processing ? `Finishing ${processing.title}, then stopping before the next queued title.` : "Will stop before another article starts."
     };
   }
-  if (mode === "paused") return { mode, label: "Paused", detail: "Queue processing is paused." };
-  if (mode === "stopped") return { mode, label: "Stopped", detail: "No new article will start until resumed." };
+  if (mode === "paused") return { mode, label: "Paused", detail: "Queue processing is paused. Resume when you want the next queued title to start." };
+  if (mode === "stopped") return { mode, label: "Stopped", detail: queued > 0 ? `Resume to start the next queued title. ${queued} waiting.` : "Add titles or resume when you are ready to run the queue." };
   if (processing) return { mode: "running", label: "Running", detail: `Current article: ${processing.title}` };
-  if (queued > 0) return { mode: "running", label: "Running", detail: `${queued} queued articles waiting.` };
-  if (failed > 0) return { mode: "failed", label: "Failed", detail: `${failed} article${failed === 1 ? "" : "s"} need attention.` };
-  return { mode: "completed", label: "Completed", detail: "No remaining queue work." };
+  if (queued > 0) return { mode: "running", label: "Running", detail: `${queued} queued title${queued === 1 ? "" : "s"} waiting to start.` };
+  if (failed > 0) return { mode: "failed", label: "Failed", detail: `${failed} article${failed === 1 ? "" : "s"} need attention before you continue.` };
+  return { mode: "completed", label: "Completed", detail: "No remaining queue work. Add titles when you are ready for the next run." };
 }
 
 function queueStateTone(mode: QueueStateDescription["mode"]) {
@@ -5926,6 +5862,42 @@ function isResumableQueuedJob(job: QueueJob) {
     job.attempts > 0 ||
     job.pipeline.some((step) => step.status === "done" || step.status === "running")
   );
+}
+
+function isOptimisticQueuedJob(job: QueueJob) {
+  return job.id.startsWith("optimistic-job-");
+}
+
+function createOptimisticQueuedJobs(
+  projectId: string | undefined,
+  titles: string[],
+  existingJobs: QueueJob[],
+  postGenerationAction: PostGenerationPublishingAction
+) {
+  if (!projectId) return [];
+  const basePosition = Math.max(
+    Date.now(),
+    ...existingJobs.map((job) => job.queuePosition ?? new Date(job.createdAt).getTime())
+  );
+  return titles.map((title, index) => {
+    const createdAt = new Date(basePosition + index + 1).toISOString();
+    return {
+      id: `optimistic-job-${basePosition}-${index}`,
+      projectId,
+      articleId: `optimistic-article-${basePosition}-${index}`,
+      title,
+      postGenerationAction,
+      status: "queued" as const,
+      statusReason: "Saving to queue...",
+      createdAt,
+      updatedAt: createdAt,
+      attempts: 0,
+      queuePosition: basePosition + index + 1,
+      needsReviewReasons: [],
+      pipeline: [],
+      timings: { queued_at: createdAt }
+    } satisfies QueueJob;
+  });
 }
 
 function parseSubmittedTitles(value: string) {
