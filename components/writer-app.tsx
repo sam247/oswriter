@@ -1966,7 +1966,12 @@ function Workbench() {
               bulkAction={bulkAction}
               bulkProgress={bulkProgress}
               bulkBusy={busy}
+              generateLabel={generateButton.label}
+              generateDisabled={generateButton.disabled}
+              generateTitle={generateButton.title}
+              generateStarting={generateFeedback.status === "starting"}
               onSelectArticle={setSelectedArticleId}
+              onGenerate={() => void processNext()}
               onFilterChange={setFilter}
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
@@ -2351,7 +2356,12 @@ function ProjectDashboard({
   bulkAction,
   bulkProgress,
   bulkBusy,
+  generateLabel,
+  generateDisabled,
+  generateTitle,
+  generateStarting,
   onSelectArticle,
+  onGenerate,
   onFilterChange,
   onToggleArticleSelection,
   onToggleSelectAll,
@@ -2372,7 +2382,12 @@ function ProjectDashboard({
   bulkAction: BulkPublishingAction;
   bulkProgress: BulkPublishingProgress | null;
   bulkBusy: boolean;
+  generateLabel: string;
+  generateDisabled: boolean;
+  generateTitle: string;
+  generateStarting: boolean;
   onSelectArticle: (id: string) => void;
+  onGenerate: () => void;
   onFilterChange: (filter: Filter) => void;
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
@@ -2410,8 +2425,7 @@ function ProjectDashboard({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
-        <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Content workspace</div>
-        <div className="mt-1 flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
             <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? articles.length)} articles in this workspace</div>
@@ -2430,65 +2444,88 @@ function ProjectDashboard({
               <Settings className="size-3.5 text-ink-subtle" />
               Project Settings
             </button>
-            <ProjectExportMenu summary={summary} />
           </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <button
+            onClick={onGenerate}
+            disabled={generateDisabled}
+            title={generateTitle}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[12px] font-medium transition-colors",
+              generateDisabled ? "bg-surface-3 text-ink-subtle" : "bg-ink text-white hover:bg-ink/90"
+            )}
+          >
+            {generateStarting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5 fill-current" />}
+            {generateLabel}
+          </button>
+          <ProjectExportMenu summary={summary} />
+          <div className="mx-1 hidden h-4 w-px bg-line lg:block" />
+          <ContentFilterChip
+            label="All articles"
+            value={summary?.articleCount ?? articles.length}
+            active={activeFilter === "all"}
+            onClick={() => onFilterChange("all")}
+          />
+          <ContentFilterChip
+            label="Needs review"
+            value={summary?.reviewCount ?? 0}
+            active={activeFilter === "needs_review"}
+            warn={(summary?.reviewCount ?? 0) > 0}
+            onClick={() => onFilterChange("needs_review")}
+          />
+          <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
+          <div className="mx-1 hidden h-4 w-px bg-line lg:block" />
+          <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink">
+            <input
+              type="checkbox"
+              checked={allInventorySelected}
+              onChange={() => onToggleSelectAll(contentInventoryIds)}
+            />
+            <span>Select all</span>
+          </label>
+          <select
+            value={bulkAction}
+            onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
+            className="h-8 min-w-36 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none"
+            aria-label="Bulk action"
+          >
+            {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <button
+            onClick={onRunBulkAction}
+            disabled={!selectedInventoryCount || bulkBusy}
+            className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+          >
+            {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
+          </button>
+          <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
+          {bulkProgress && (
+            <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
+              {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+              {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+            </span>
+          )}
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8">
-        <div className="space-y-5">
-          {attentionRows.length > 0 && (
-            <ProjectSection title="Needs attention">
-              <ContentAttentionList rows={attentionRows} onSelectArticle={onSelectArticle} />
-            </ProjectSection>
-          )}
-
-          <ProjectSection title={activeFilter === "needs_review" ? "Review queue" : "Articles"}>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <ContentFilterChip
-                  label="All articles"
-                  value={summary?.articleCount ?? articles.length}
-                  active={activeFilter === "all"}
-                  onClick={() => onFilterChange("all")}
-                />
-                <ContentFilterChip
-                  label="Needs review"
-                  value={summary?.reviewCount ?? 0}
-                  active={activeFilter === "needs_review"}
-                  warn={(summary?.reviewCount ?? 0) > 0}
-                  onClick={() => onFilterChange("needs_review")}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
-              </div>
-            </div>
-            {contentInventory.length ? (
-              <div className="space-y-2">
-                {pinnedRows.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="mono px-1 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Pinned</div>
-                    {pinnedRows.map(({ article }) => (
-                      <ArticleLibraryItem
-                        key={article.id}
-                        article={article}
-                        sourceCount={sourceCounts[article.id] ?? 0}
-                        pinned
-                        active={false}
-                        onOpen={() => onSelectArticle(article.id)}
-                        onPin={() => onPinArticle(article)}
-                        onDelete={() => onDeleteArticle(article)}
-                      />
-                    ))}
-                  </div>
-                )}
-                {regularRows.map(({ article }) => (
+        {attentionRows.length > 0 && (
+          <div className="mb-4">
+            <ContentAttentionList rows={attentionRows} onSelectArticle={onSelectArticle} />
+          </div>
+        )}
+        {contentInventory.length ? (
+          <div className="overflow-hidden border-t border-line/80">
+            {pinnedRows.length > 0 && (
+              <div className="border-b border-line/70">
+                <div className="mono px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Pinned</div>
+                {pinnedRows.map(({ article }) => (
                   <ArticleLibraryItem
                     key={article.id}
                     article={article}
                     sourceCount={sourceCounts[article.id] ?? 0}
-                    pinned={false}
+                    pinned
                     active={false}
                     onOpen={() => onSelectArticle(article.id)}
                     onPin={() => onPinArticle(article)}
@@ -2496,51 +2533,23 @@ function ProjectDashboard({
                   />
                 ))}
               </div>
-            ) : (
-              <Empty text={activeFilter === "needs_review" ? "Nothing needs review right now." : "Generated articles will appear here."} />
             )}
-            <div className="mt-4 border-t border-line pt-3">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-[12px] font-medium text-ink">Publishing</div>
-                <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">{selectedInventoryCount} selected</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink">
-                  <input
-                    type="checkbox"
-                    checked={allInventorySelected}
-                    onChange={() => onToggleSelectAll(contentInventoryIds)}
-                  />
-                  <span>Select all</span>
-                </label>
-                <select
-                  value={bulkAction}
-                  onChange={(event) => onBulkActionChange(event.currentTarget.value as BulkPublishingAction)}
-                  className="h-8 min-w-36 rounded-md border border-line bg-surface-2 px-3 text-[12px] text-ink outline-none"
-                  aria-label="Bulk publishing action"
-                >
-                  {BULK_PUBLISHING_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-                <button
-                  onClick={onRunBulkAction}
-                  disabled={!selectedInventoryCount || bulkBusy}
-                  className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-                >
-                  {bulkBusy ? "Running..." : bulkActionLabel(bulkAction)}
-                </button>
-                {bulkProgress && (
-                  <span className="mono rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-subtle">
-                    {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-                    {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-                  </span>
-                )}
-              </div>
-              <div className="mt-2 text-[10.5px] text-ink-subtle">
-                Publishing stays attached to selected content and no longer leads the workspace.
-              </div>
-            </div>
-          </ProjectSection>
-        </div>
+            {regularRows.map(({ article }) => (
+              <ArticleLibraryItem
+                key={article.id}
+                article={article}
+                sourceCount={sourceCounts[article.id] ?? 0}
+                pinned={false}
+                active={false}
+                onOpen={() => onSelectArticle(article.id)}
+                onPin={() => onPinArticle(article)}
+                onDelete={() => onDeleteArticle(article)}
+              />
+            ))}
+          </div>
+        ) : (
+          <Empty text={activeFilter === "needs_review" ? "Nothing needs review right now." : "Generated articles will appear here."} />
+        )}
       </div>
     </div>
   );
@@ -2559,7 +2568,7 @@ function ContentAttentionList({
         <button
           key={article.id}
           onClick={() => onSelectArticle(article.id)}
-          className="flex w-full items-center justify-between gap-3 rounded-md border border-line bg-surface-2 px-3 py-2 text-left hover:bg-surface-3"
+          className="flex w-full items-center justify-between gap-3 border-b border-line/70 px-1 py-2 text-left hover:bg-surface-2"
         >
           <span className="min-w-0">
             <span className="block truncate text-[13px] font-medium text-ink">{article.title}</span>
@@ -3969,8 +3978,8 @@ function ArticleLibraryItem({
           }
         }}
         className={cn(
-          "relative flex w-full items-start gap-2.5 bg-surface-2 px-3 py-2.5 pr-9 text-left transition-colors",
-          active ? "bg-ink/[0.06]" : "hover:bg-surface-3"
+          "relative flex w-full items-start gap-2.5 border-b border-line/70 px-3 py-3 pr-9 text-left transition-colors",
+          active ? "bg-ink/[0.04]" : "hover:bg-surface-2"
         )}
       >
         <span className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", article.status === "needs_review" ? "bg-warn" : "bg-success")} />

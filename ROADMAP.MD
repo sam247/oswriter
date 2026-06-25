@@ -25,6 +25,8 @@
 - Collapsed `Needs attention` completely when no review or failure work exists.
 - Simplified primary article list actions down to the core workflow and removed regenerate/similar-generation controls from the main library surface.
 - Trimmed duplicated summary surfaces by removing the extra left export control, dropping the queue estimate widget from the queue rail, and simplifying the right-side project overview away from repeated article count cards.
+- Flattened the centre workspace further so the project header now flows straight into a single control bar and then directly into the content list, with less section framing and fewer nested card treatments.
+- Grouped `Generate`, `Export`, `Filter`, `Sort`, and `Bulk Actions` into one workspace control strip near the project title to make the article list feel like the page rather than a dashboard subsection.
 
 ### Navigation Polish Recovery
 
