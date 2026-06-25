@@ -45,6 +45,11 @@
   - reduced duplicated publish controls by routing selection actions through a single dropdown
   - kept the command bar to one horizontal row with more whitespace and less competing chrome
   - tightened table alignment, status badge weight, and hover states so the centre panel feels more like a premium document manager than a dashboard
+- Simplified the interaction model again to preserve continuity:
+  - kept the header command bar visually stable whether zero, one, or many rows are selected
+  - removed the temporary selection toolbar pattern and replaced it with a persistent `Actions` control plus an `Apply` button that simply enables when selection exists
+  - moved bulk selection fully into the table with a header checkbox for visible rows, removing the extra toolbar `Select all` control
+  - preserved the desktop-app mental model by enabling capability progressively instead of rebuilding the interface around selection
 
 ### Navigation Polish Recovery
 

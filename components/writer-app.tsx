@@ -570,10 +570,6 @@ function Workbench() {
     });
   }
 
-  function clearInventoryArticleSelections() {
-    setSelectedInventoryArticleIds(new Set());
-  }
-
   async function addTitles() {
     const submittedTitles = parseSubmittedTitles(titles);
     if (!submittedTitles.length) return;
@@ -2059,7 +2055,6 @@ function Workbench() {
               onFilterChange={setFilter}
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
-              onClearSelection={clearInventoryArticleSelections}
               onRunSelectionAction={(action) => void runSelectionAction(action)}
               onPinArticle={(article) => void toggleArticlePin(article)}
               onDeleteArticle={(article) => void deleteArticle(article.id)}
@@ -2443,7 +2438,6 @@ function ProjectDashboard({
   onFilterChange,
   onToggleArticleSelection,
   onToggleSelectAll,
-  onClearSelection,
   onRunSelectionAction,
   onPinArticle,
   onDeleteArticle
@@ -2463,7 +2457,6 @@ function ProjectDashboard({
   onFilterChange: (filter: Filter) => void;
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
-  onClearSelection: () => void;
   onRunSelectionAction: (action: SelectionAction) => void;
   onPinArticle: (article: ArticleSummary) => void;
   onDeleteArticle: (article: ArticleSummary) => void;
@@ -2480,6 +2473,7 @@ function ProjectDashboard({
   const contentInventoryIds = contentInventory.map(({ article }) => article.id);
   const allInventorySelected = contentInventoryIds.length > 0 && contentInventoryIds.every((articleId) => selectedArticleIds.has(articleId));
   const selectedInventoryCount = selectedArticleIds.size;
+  const someInventorySelected = selectedInventoryCount > 0 && !allInventorySelected;
   const attentionRows = inventoryRows
     .filter(({ article, job }) => article.status === "needs_review" || job?.status === "failed" || job?.status === "research_failed")
     .slice(0, 8);
@@ -2495,9 +2489,9 @@ function ProjectDashboard({
       setSortDirection("desc");
     }
   }
-  async function handleSelectionAction(action: SelectionAction) {
-    setSelectionActionValue("");
-    await onRunSelectionAction(action);
+  async function handleSelectionAction() {
+    if (!selectionActionValue) return;
+    await onRunSelectionAction(selectionActionValue);
   }
 
   return (
@@ -2514,60 +2508,44 @@ function ProjectDashboard({
         </div>
         <div className="mt-4 overflow-x-auto">
           <div className="flex min-w-max items-center gap-2 whitespace-nowrap">
-            {selectedInventoryCount > 0 ? (
-              <>
-                <span className="mono text-[11px] text-ink-muted">{selectedInventoryCount} selected</span>
-                <button
-                  onClick={() => onToggleSelectAll(contentInventoryIds)}
-                  className="inline-flex h-8 items-center rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink hover:bg-surface-2"
-                >
-                  {allInventorySelected ? "Deselect all" : "Select all"}
-                </button>
-                <select
-                  value={selectionActionValue}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.value as SelectionAction | "";
-                    setSelectionActionValue(nextValue);
-                    if (nextValue) void handleSelectionAction(nextValue);
-                  }}
-                  disabled={bulkBusy}
-                  className="h-8 min-w-40 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none disabled:opacity-50"
-                  aria-label="Selection actions"
-                >
-                  <option value="">Actions</option>
-                  {SELECTION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-                <button
-                  onClick={onClearSelection}
-                  className="inline-flex h-8 items-center rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink hover:bg-surface-2"
-                >
-                  Cancel
-                </button>
-                {bulkProgress && (
-                  <span className="mono text-[10.5px] text-ink-subtle">
-                    {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
-                    {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
-                  </span>
-                )}
-              </>
-            ) : (
-              <>
-                <ContentFilterChip
-                  label="All articles"
-                  value={summary?.articleCount ?? articles.length}
-                  active={activeFilter === "all"}
-                  onClick={() => onFilterChange("all")}
-                />
-                <ContentFilterChip
-                  label="Needs review"
-                  value={summary?.reviewCount ?? 0}
-                  active={activeFilter === "needs_review"}
-                  warn={(summary?.reviewCount ?? 0) > 0}
-                  onClick={() => onFilterChange("needs_review")}
-                />
-                <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
-                <ProjectExportMenu summary={summary} />
-              </>
+            <ContentFilterChip
+              label="All articles"
+              value={summary?.articleCount ?? articles.length}
+              active={activeFilter === "all"}
+              onClick={() => onFilterChange("all")}
+            />
+            <ContentFilterChip
+              label="Needs review"
+              value={summary?.reviewCount ?? 0}
+              active={activeFilter === "needs_review"}
+              warn={(summary?.reviewCount ?? 0) > 0}
+              onClick={() => onFilterChange("needs_review")}
+            />
+            <ContentSortSelect sortKey={sortKey} sortDirection={sortDirection} onChangeSort={changeSort} />
+            <ProjectExportMenu summary={summary} />
+            <div className="w-3" />
+            <select
+              value={selectionActionValue}
+              onChange={(event) => setSelectionActionValue(event.currentTarget.value as SelectionAction | "")}
+              disabled={bulkBusy}
+              className="h-8 min-w-40 rounded-md border border-line bg-surface-1 px-3 text-[12px] text-ink outline-none disabled:opacity-50"
+              aria-label="Selection actions"
+            >
+              <option value="">Actions</option>
+              {SELECTION_ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <button
+              onClick={() => void handleSelectionAction()}
+              disabled={!selectionActionValue || !selectedInventoryCount || bulkBusy}
+              className="inline-flex h-8 items-center rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:bg-surface-3 disabled:text-ink-subtle"
+            >
+              {selectionActionValue ? bulkActionLabel(selectionActionValue) : "Apply"}
+            </button>
+            {bulkProgress && (
+              <span className="mono text-[10.5px] text-ink-subtle">
+                {bulkActionLabel(bulkProgress.action)} {bulkProgress.completed}/{bulkProgress.total}
+                {bulkProgress.failed ? ` · ${bulkProgress.failed} failed` : ""}
+              </span>
             )}
           </div>
         </div>
@@ -2587,7 +2565,10 @@ function ProjectDashboard({
               selectedArticleIds={selectedArticleIds}
               pinnedArticleIds={pinnedArticleIds}
               activeArticleId={activeArticleId}
+              allVisibleSelected={allInventorySelected}
+              someVisibleSelected={someInventorySelected}
               onToggleArticleSelection={onToggleArticleSelection}
+              onToggleSelectAll={() => onToggleSelectAll(contentInventoryIds)}
               onSelectArticle={onSelectArticle}
               onPinArticle={onPinArticle}
               onDeleteArticle={onDeleteArticle}
@@ -3383,7 +3364,10 @@ function InventoryTable({
   pinnedArticleIds,
   activeArticleId,
   selectedArticleIds,
+  allVisibleSelected,
+  someVisibleSelected,
   onToggleArticleSelection,
+  onToggleSelectAll,
   onSelectArticle,
   onPinArticle,
   onDeleteArticle,
@@ -3396,7 +3380,10 @@ function InventoryTable({
   pinnedArticleIds: Set<string>;
   activeArticleId: string | null;
   selectedArticleIds: Set<string>;
+  allVisibleSelected: boolean;
+  someVisibleSelected: boolean;
   onToggleArticleSelection: (id: string) => void;
+  onToggleSelectAll: () => void;
   onSelectArticle: (id: string) => void;
   onPinArticle: (article: ArticleSummary) => void;
   onDeleteArticle: (article: ArticleSummary) => void;
@@ -3404,6 +3391,12 @@ function InventoryTable({
   sortDirection: SortDirection;
   onSort: (key: InventorySortKey) => void;
 }) {
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected;
+  }, [someVisibleSelected]);
+
   return (
     <div className="overflow-hidden rounded-lg border border-line/80">
       <table className="w-full table-fixed border-collapse">
@@ -3420,7 +3413,18 @@ function InventoryTable({
         </colgroup>
         <thead>
           <tr className="border-b border-line/70 bg-surface-1/70 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
-            <th className="px-2 py-2 text-left"><span className="sr-only">Select</span></th>
+            <th className="px-2 py-2 text-left">
+              <label className="flex items-center justify-center">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={onToggleSelectAll}
+                  aria-label="Select visible articles"
+                  className="size-3.5"
+                />
+              </label>
+            </th>
             <th className="px-3 py-2 text-left">Article</th>
             <th className="px-3 py-2 text-right">Sources</th>
             <th className="px-3 py-2 text-right"><InventorySortHeader label="Quality" metric="quality" active={sortKey} direction={sortDirection} onSort={onSort} /></th>
@@ -3452,7 +3456,7 @@ function InventoryTable({
                       checked={selected}
                       onChange={() => onToggleArticleSelection(article.id)}
                       aria-label={`Select ${article.title}`}
-                      className={cn("size-3.5 opacity-0 transition-opacity group-hover/row:opacity-100", (selected || active) && "opacity-100")}
+                      className="size-3.5"
                     />
                   </label>
                 </td>
