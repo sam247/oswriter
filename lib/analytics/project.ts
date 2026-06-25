@@ -1,5 +1,6 @@
 import type { ArticleDocument, QueueJob, ResearchPack } from "@/lib/types";
 import { calculateArticleScores, type ArticleScores, type ScoreComponent, type ScoreProfileItem } from "@/lib/scoring/article-scores";
+import { isCompletedArticleStatus, isApprovedStatus } from "@/lib/status";
 
 export interface ArticleScoreDiagnostics {
   score: number;
@@ -104,7 +105,7 @@ export function buildProjectAnalytics({
   researchPacks?: ResearchPack[];
 }): ProjectAnalytics {
   const completedArticles = articles
-    .filter((article) => article.status === "generated" || article.status === "needs_review")
+    .filter((article) => isCompletedArticleStatus(article.status))
     .sort((a, b) => completedAtForArticle(b, jobs).localeCompare(completedAtForArticle(a, jobs)));
   const researchByArticle = new Map(researchPacks.map((pack) => [pack.articleId, pack]));
   const baseMetrics = completedArticles.map((article) => {
@@ -121,7 +122,7 @@ export function buildProjectAnalytics({
     { key: "save_duration_ms", label: "Save", average_ms: averageMetric(recent, "save_duration_ms") },
     { key: "visibility_delay_ms", label: "Visibility Delay", average_ms: averageMetric(recent, "visibility_delay_ms") }
   ];
-  const successfulJobs = jobs.filter((job) => job.status === "generated" || job.status === "needs_review").length;
+  const successfulJobs = jobs.filter((job) => job.status === "generated" || job.status === "needs_review" || isApprovedStatus(job.status)).length;
   const failedJobs = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const completedJobs = successfulJobs + failedJobs;
   const throughputWindowMs = projectWindowMs(metrics);

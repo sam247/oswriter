@@ -1,4 +1,4 @@
-export type JobStatus = "queued" | "processing" | "generated" | "needs_review" | "research_failed" | "failed" | "skipped";
+export type JobStatus = "queued" | "processing" | "generated" | "needs_review" | "approved" | "scheduled" | "published" | "research_failed" | "failed" | "skipped";
 export type QueueControlMode = "running" | "paused" | "stop_after_current" | "stopped";
 export type PipelineStageName = "research" | "outline" | "generation" | "save" | "editor" | "validation" | "export";
 export type PipelineStatus = "idle" | "running" | "done" | "failed" | "skipped";
@@ -493,6 +493,8 @@ export interface ArticleDocument {
   wordpressUrl?: string | null;
   scheduledPublishAt?: string | null;
   publishingError?: string | null;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
   publishing?: {
     wordpress?: {
       postId: number;

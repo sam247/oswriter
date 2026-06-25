@@ -27,6 +27,13 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   }
   try {
     const updated = await publishArticleViaProjectConnection(store, article, status);
+    const job = await store.getJob(article.jobId, article.projectId);
+    if (job) await store.saveJob({
+      ...job,
+      status: updated.status,
+      statusReason: status === "publish" ? "Published to WordPress." : "Published as WordPress draft.",
+      updatedAt: updated.updatedAt
+    });
     return NextResponse.json({
       article: updated,
       message: status === "draft" ? "Draft published successfully" : "Article published successfully"

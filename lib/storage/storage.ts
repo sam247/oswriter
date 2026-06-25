@@ -5,6 +5,7 @@ import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
+import { isApprovedStatus, isCompletedArticleStatus } from "@/lib/status";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
@@ -145,7 +146,7 @@ export class WorkspaceStore {
     return {
       queued: jobs.filter((job) => job.status === "queued").length,
       processing: jobs.filter((job) => job.status === "processing").length,
-      generated: jobs.filter((job) => job.status === "generated").length,
+      generated: jobs.filter((job) => job.status === "generated" || isApprovedStatus(job.status)).length,
       review: jobs.filter((job) => job.status === "needs_review").length,
       failed: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length,
       ...(activeJob ? { activeJob: {
@@ -169,11 +170,11 @@ export class WorkspaceStore {
       this.listJobs(resolvedProjectId),
       this.getArticleListMetadata(resolvedProjectId)
     ]);
-    const completed = articles.filter((article) => article.status === "generated" || article.status === "needs_review");
+    const completed = articles.filter((article) => isCompletedArticleStatus(article.status));
     const average = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
     return {
       article_count: completed.length,
-      generated_count: completed.filter((article) => article.status === "generated").length,
+      generated_count: completed.filter((article) => article.status === "generated" || isApprovedStatus(article.status)).length,
       review_count: completed.filter((article) => article.status === "needs_review").length,
       failed_count: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length,
       average_quality: average(completed.map((article) => article.qualityScore)),
@@ -311,7 +312,7 @@ export class WorkspaceStore {
     return {
       queued: jobs.filter((job) => job.status === "queued").length,
       processing: jobs.filter((job) => job.status === "processing").length,
-      generated: jobs.filter((job) => job.status === "generated").length,
+      generated: jobs.filter((job) => job.status === "generated" || isApprovedStatus(job.status)).length,
       needsReview: jobs.filter((job) => job.status === "needs_review").length,
       failed: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length
     };

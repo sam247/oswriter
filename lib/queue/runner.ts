@@ -107,15 +107,21 @@ export class QueueRunner {
     const article = await this.store.getArticle(articleId, resolvedProjectId);
     if (!article) throw new Error(`Article not found: ${articleId}`);
     const [job] = await this.addTitles([article.title], resolvedProjectId, article.contentProfile);
+    const replacementJob: QueueJob = {
+      ...job,
+      articleId: article.id,
+      statusReason: "Regeneration requested by reviewer."
+    };
     const updatedArticle: ArticleDocument = {
       ...article,
-      status: "needs_review",
-      statusReason: "Regeneration requested; original retained for comparison.",
-      needsReviewReasons: [...new Set([...article.needsReviewReasons, "Regeneration requested; compare with the new article."])],
+      jobId: replacementJob.id,
+      status: "queued",
+      statusReason: "Regeneration requested by reviewer.",
       updatedAt: nowIso()
     };
+    await this.store.saveJob(replacementJob);
     await this.store.saveArticle(updatedArticle);
-    return { article: updatedArticle, job };
+    return { article: updatedArticle, job: replacementJob };
   }
 
   async retryJob(jobId: string, projectId?: string) {
@@ -519,8 +525,9 @@ export class QueueRunner {
       let article = createArticle(job, markdown, uniqueReasons, validation, research, plan.targetWords, profileSnapshot, planningDiagnostics, costTelemetry, contentProfile);
       await this.store.saveArticle(article);
       article = await this.applyPostGenerationWorkflow(job, article, log);
+      job = { ...job, status: article.status, updatedAt: article.updatedAt };
       await this.saveGenerationTelemetry(job, article, research, generation, plan, log);
-      log({ stage: "queue", level: finalStatus === "needs_review" ? "warn" : "info", message: `Job completed as ${finalStatus}.`, data: uniqueReasons });
+      log({ stage: "queue", level: article.status === "needs_review" ? "warn" : "info", message: `Job completed as ${article.status}.`, data: uniqueReasons });
       await this.store.saveJob(job);
       await this.store.saveDebug(debug, job.projectId);
       await this.markStoppedIfRequested(job.projectId);
@@ -966,6 +973,7 @@ function createArticle(
 ): ArticleDocument {
   const now = nowIso();
   const sources = research.sources;
+  const status = job.status === "processing" ? statusFromReviewReasons(needsReviewReasons) : job.status;
   return {
     id: job.articleId,
     projectId: job.projectId,
@@ -973,7 +981,7 @@ function createArticle(
     title: job.title,
     contentProfile: job.contentProfile,
     resolvedContentProfile: contentProfile,
-    status: job.status === "processing" ? statusFromReviewReasons(needsReviewReasons) : job.status,
+    status,
     isPinned: false,
     markdown,
     createdAt: job.createdAt,
@@ -992,6 +1000,8 @@ function createArticle(
     wordpressUrl: null,
     scheduledPublishAt: null,
     publishingError: null,
+    approvedAt: status === "approved" ? now : null,
+    approvedBy: null,
     validation,
     pipeline: job.pipeline,
     sources,

@@ -1,4 +1,5 @@
 import { nowIso } from "@/lib/defaults";
+import { approveArticle } from "@/lib/articles/approval";
 import type {
   ArticleDocument,
   PublishingScheduleIntervalUnit,
@@ -17,9 +18,10 @@ export function buildPublishingSchedule(startAt: string, articleCount: number, r
 }
 
 export function markArticleAsScheduled(article: ArticleDocument, scheduledAt: string): ArticleDocument {
-  const next = applyPublishingDefaults(article);
+  const next = applyPublishingDefaults(article.status === "needs_review" || article.status === "generated" ? approveArticle(article, null) : article);
   return {
     ...next,
+    status: "scheduled",
     publishingStatus: "scheduled",
     scheduledPublishAt: scheduledAt,
     publishingError: null,

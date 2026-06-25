@@ -46,6 +46,13 @@ export async function POST(req: Request) {
     try {
       const next = markArticleAsScheduled(article, scheduleTimes[index]);
       await store.updateArticle(next);
+      const job = await store.getJob(article.jobId, article.projectId);
+      if (job) await store.saveJob({
+        ...job,
+        status: next.status,
+        statusReason: "Scheduled for publishing.",
+        updatedAt: next.updatedAt
+      });
       updated.push(next);
     } catch (error) {
       failed.push({ articleId, error: error instanceof Error ? error.message : "Could not update article." });

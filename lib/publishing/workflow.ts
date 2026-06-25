@@ -1,4 +1,5 @@
 import { nowIso } from "@/lib/defaults";
+import { approveArticle } from "@/lib/articles/approval";
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import type {
   ArticleDocument,
@@ -15,6 +16,7 @@ export function markArticleAsNotPublished(article: ArticleDocument): ArticleDocu
   const next = applyPublishingDefaults(article);
   return {
     ...next,
+    status: next.status === "needs_review" ? next.status : next.status === "generated" ? "approved" : next.status,
     publishingStatus: "not_published",
     scheduledPublishAt: null,
     publishingError: null,
@@ -48,10 +50,14 @@ export async function publishArticleWithConnection(
   connection: ProjectWordPressConnectionSecret,
   status: WordPressPostStatus
 ) {
-  const published = await publishArticleToWordPress(connection, article, status);
-  const next = applyPublishingDefaults(article);
+  const approved = article.status === "needs_review" || article.status === "generated"
+    ? approveArticle(article, null)
+    : article;
+  const published = await publishArticleToWordPress(connection, approved, status);
+  const next = applyPublishingDefaults(approved);
   return {
     ...next,
+    status: status === "publish" ? "published" : next.status === "generated" ? "approved" : next.status,
     publishingStatus: status === "publish" ? "published" : "draft",
     publishedAt: published.publishedAt,
     wordpressPostId: published.postId,

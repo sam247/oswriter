@@ -280,7 +280,7 @@ function Workbench() {
   const localStats = useMemo(() => ({
     queued: displayJobs.filter((job) => job.status === "queued").length,
     processing: displayJobs.filter((job) => job.status === "processing").length,
-    generated: inventoryArticles.filter((article) => article.status === "generated").length,
+    generated: inventoryArticles.filter((article) => article.status === "generated" || isApprovedArticleStatus(article.status)).length,
     needs_review: inventoryArticles.filter((article) => article.status === "needs_review").length,
     failed: displayJobs.filter((job) => job.status === "failed" || job.status === "research_failed").length,
     skipped: displayJobs.filter((job) => job.status === "skipped").length
@@ -814,7 +814,7 @@ function Workbench() {
     setRunning(false);
     setBusy(true);
     const res = await fetch("/api/queue/clear", { method: "POST" });
-    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
+    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; state?: AppState; error?: string };
     setBusy(false);
     if (res.ok) {
       setMessage("Queue work cleared.");
@@ -917,6 +917,21 @@ function Workbench() {
     }
     applyUpdatedArticle(data.article);
     setMessage(data.message ?? (status === "draft" ? "Draft published successfully" : "Article published successfully"));
+    return true;
+  }
+
+  async function approveSelectedArticle(articleId = selectedArticle?.id) {
+    if (!articleId) return false;
+    setBusy(true);
+    const res = await fetch(`/api/articles/${articleId}/approve`, { method: "POST" });
+    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; error?: string; message?: string };
+    setBusy(false);
+    if (!res.ok || !data.article) {
+      setMessage(data.error ?? "Article approval failed.");
+      return false;
+    }
+    applyUpdatedArticle(data.article);
+    setMessage(data.message ?? "Article approved.");
     return true;
   }
 
@@ -1145,7 +1160,7 @@ function Workbench() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ activeProjectId: projectId })
     });
-    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
+    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; state?: AppState; error?: string };
     if (res.ok) {
       setSelectedArticleId(null);
       setDetails({ research: null, debug: null });
@@ -1250,14 +1265,15 @@ function Workbench() {
     if (!regenerateCandidate) return;
     setBusy(true);
     const res = await fetch(`/api/articles/${regenerateCandidate.id}/regenerate`, { method: "POST" });
-    const data = await res.json().catch(() => ({})) as { state?: AppState; error?: string };
+    const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; state?: AppState; error?: string };
     setBusy(false);
     if (!res.ok) {
       setMessage(data.error ?? "Article regeneration could not be queued.");
       return;
     }
     setRegenerateCandidate(null);
-    setMessage("Original moved to Review; regeneration queued.");
+    setMessage("Regeneration queued.");
+    if (data.article) applyUpdatedArticle(data.article);
     if (data.state) applyServerState(data.state, "article-regenerate");
     else await refresh();
   }
@@ -1923,12 +1939,15 @@ function Workbench() {
                 onBack={openProjectBreadcrumb}
                 onTitleChange={(title) => selectedArticle && updateArticleDraft(selectedArticle.id, { title })}
                 projectDefaultContentProfile={state?.project.defaultContentProfile}
+                busy={busy}
                 onReviewClick={() => {
                   setTab("validation");
                   setHighlightWarnings(true);
                   window.setTimeout(() => warningsRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
                   window.setTimeout(() => setHighlightWarnings(false), 1800);
                 }}
+                onApprove={() => void approveSelectedArticle()}
+                onRegenerate={() => selectedArticle && setRegenerateCandidate(toArticleSummary(selectedArticle))}
               />
               <ArticleToolbar
                 article={selectedArticle}
@@ -2003,6 +2022,9 @@ function Workbench() {
             setSelectedStage={setSelectedStage}
             warningsRef={warningsRef}
             highlightWarnings={highlightWarnings}
+            busy={busy}
+            onApproveArticle={(articleId) => void approveSelectedArticle(articleId)}
+            onRegenerateArticle={(article) => setRegenerateCandidate(toArticleSummary(article))}
             onNotify={setMessage}
           />
         </aside>}
@@ -3015,7 +3037,7 @@ function ProjectInsights({
             <StatusDistribution jobs={jobs} />
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
               <MetricLine label="Success rate" value={`${metrics.successRate}%`} />
-              <MetricLine label="Generated" value={metrics.generated} />
+              <MetricLine label="Approved" value={metrics.generated} />
               <MetricLine label="Review" value={metrics.needsReview} />
               <MetricLine label="Failed" value={metrics.failed} />
               <MetricLine label="Queued" value={jobs.filter((job) => job.status === "queued").length} />
@@ -3032,7 +3054,7 @@ function ProjectInsights({
               <MetricLine label="Evidence" value={scoreAverages.evidence || "-"} />
               <MetricLine label="Warnings" value={warnings} />
               <MetricLine label="Review reasons" value={reviewReasons} />
-              <MetricLine label="Validated" value={articles.filter((article) => article.status === "generated").length} />
+              <MetricLine label="Approved" value={articles.filter((article) => article.status === "generated" || isApprovedArticleStatus(article.status)).length} />
             </div>
             <AttentionList articles={articles} jobs={jobs} />
           </div>
@@ -3386,7 +3408,7 @@ function inventorySortValue(article: ArticleSummary, key: InventorySortKey) {
 function StatusDistribution({ jobs }: { jobs: QueueJob[] }) {
   const total = Math.max(1, jobs.length);
   const segments: { label: string; value: number; className: string }[] = [
-    { label: "Generated", value: jobs.filter((job) => job.status === "generated").length, className: "bg-success" },
+    { label: "Approved", value: jobs.filter((job) => job.status === "generated" || isApprovedArticleStatus(job.status)).length, className: "bg-success" },
     { label: "Review", value: jobs.filter((job) => job.status === "needs_review").length, className: "bg-warn" },
     { label: "Failed", value: jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length, className: "bg-danger" },
     { label: "Writing", value: jobs.filter((job) => job.status === "processing").length, className: "bg-info" },
@@ -3462,7 +3484,7 @@ function SourceDomainList({ domains }: { domains: SourceDomainSummary[] }) {
 }
 
 function ProjectExportReadiness({ articles, jobs, metrics }: { articles: ArticleSummary[]; jobs: QueueJob[]; metrics: QueueMetrics }) {
-  const generated = articles.filter((article) => article.status === "generated").length;
+  const generated = articles.filter((article) => article.status === "generated" || isApprovedArticleStatus(article.status)).length;
   const needsReview = articles.filter((article) => article.status === "needs_review").length;
   const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const exportable = articles.length > 0;
@@ -3472,7 +3494,7 @@ function ProjectExportReadiness({ articles, jobs, metrics }: { articles: Article
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
         <MetricLine label="Package" value={exportable ? "Ready" : "Waiting"} />
         <MetricLine label="Articles" value={articles.length} />
-        <MetricLine label="Generated" value={generated} />
+        <MetricLine label="Approved" value={generated} />
         <MetricLine label="Needs review" value={needsReview} />
         <MetricLine label="Failed" value={failed} />
         <MetricLine label="Success" value={`${metrics.successRate}%`} />
@@ -3971,7 +3993,10 @@ function ArticleHeader({
   onBack,
   onTitleChange,
   projectDefaultContentProfile,
-  onReviewClick
+  busy,
+  onReviewClick,
+  onApprove,
+  onRegenerate
 }: {
   article: ArticleDocument | null;
   job: QueueJob | null;
@@ -3981,7 +4006,10 @@ function ArticleHeader({
   onBack: () => void;
   onTitleChange: (title: string) => void;
   projectDefaultContentProfile?: ContentProfile;
+  busy: boolean;
   onReviewClick: () => void;
+  onApprove: () => void;
+  onRegenerate: () => void;
 }) {
   const [openScore, setOpenScore] = useState<keyof ArticleScores | null>(null);
   if (!article && job) {
@@ -4042,7 +4070,7 @@ function ArticleHeader({
           <ScoreMetricButton score={scores.research} active={openScore === "research"} onClick={() => setOpenScore(openScore === "research" ? null : "research")} />
           <MetadataDot />
           <ScoreMetricButton score={scores.evidence} active={openScore === "evidence"} onClick={() => setOpenScore(openScore === "evidence" ? null : "evidence")} />
-          {article.needsReviewReasons.length > 0 && (
+          {article.status === "needs_review" && article.needsReviewReasons.length > 0 && (
             <>
               <MetadataDot />
               <button onClick={onReviewClick} className="text-warn hover:underline">
@@ -4059,6 +4087,22 @@ function ArticleHeader({
           <span>{readingTime} min read</span>
         </div>
       </div>
+      {article.status === "needs_review" ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-warn/25 bg-warn/5 px-3 py-2 text-[12px] text-ink">
+          <AlertCircle className="size-4 shrink-0 text-warn" />
+          <div className="min-w-[180px] flex-1">
+            <div className="font-medium">Needs review</div>
+            <div className="text-ink-muted">This article has validation warnings.</div>
+          </div>
+          <button type="button" disabled={busy} onClick={onApprove} className="rounded-md border border-line bg-background px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface-1 disabled:opacity-50">Approve</button>
+          <button type="button" disabled={busy} onClick={onRegenerate} className="inline-flex items-center gap-1 rounded-md border border-line bg-background px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface-1 disabled:opacity-50"><RotateCw className="size-3" />Regenerate</button>
+        </div>
+      ) : article.status === "approved" || article.status === "scheduled" || article.status === "published" ? (
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-success/10 px-2.5 py-1 text-[12px] font-medium text-success">
+          <CheckCircle2 className="size-3.5" />
+          Approved
+        </div>
+      ) : null}
       {selectedScore && <ScoreDetailPanel score={selectedScore} />}
     </div>
   );
@@ -4201,7 +4245,7 @@ function ProjectSummaryPanel({ state, metrics }: { state: AppState | null; metri
       title="Project Summary"
       tone="context"
       defaultOpen
-      summary={summary ? `${summary.articleCount} Articles · ${summary.generatedCount} Generated · ${summary.failedCount} Failed` : "Project context loading"}
+      summary={summary ? `${summary.articleCount} Articles · ${summary.generatedCount} Approved · ${summary.failedCount} Failed` : "Project context loading"}
     >
       {summary ? (
         <div className="space-y-2">
@@ -4211,7 +4255,7 @@ function ProjectSummaryPanel({ state, metrics }: { state: AppState | null; metri
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <MetricLine label="Articles" value={formatNumber(summary.articleCount)} />
-            <MetricLine label="Generated" value={formatNumber(summary.generatedCount)} />
+            <MetricLine label="Approved" value={formatNumber(summary.generatedCount)} />
             <MetricLine label="Needs review" value={formatNumber(summary.reviewCount)} />
             <MetricLine label="Failed" value={formatNumber(summary.failedCount)} />
             <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
@@ -4546,6 +4590,9 @@ function Inspector({
   setSelectedStage,
   warningsRef,
   highlightWarnings,
+  busy,
+  onApproveArticle,
+  onRegenerateArticle,
   onNotify
 }: {
   tab: InspectorTab;
@@ -4566,6 +4613,9 @@ function Inspector({
   setSelectedStage: (stage: string) => void;
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
+  busy: boolean;
+  onApproveArticle: (articleId: string) => void;
+  onRegenerateArticle: (article: ArticleDocument) => void;
   onNotify: (message: string) => void;
 }) {
   return (
@@ -4573,7 +4623,7 @@ function Inspector({
       {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} />}
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
-      {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
+      {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} busy={busy} onApprove={() => onApproveArticle(article.id)} onRegenerate={() => onRegenerateArticle(article)} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? (
         <SeoDecisionPanel
           key={article.id}
@@ -4933,13 +4983,19 @@ function StageDetails({ step, article, details }: { step: ArticleDocument["pipel
 function ValidationPanel({
   article,
   warningsRef,
-  highlightWarnings
+  highlightWarnings,
+  busy,
+  onApprove,
+  onRegenerate
 }: {
   article: ArticleDocument;
   warningsRef: RefObject<HTMLDivElement | null>;
   highlightWarnings: boolean;
+  busy: boolean;
+  onApprove: () => void;
+  onRegenerate: () => void;
 }) {
-  const reviewItems = [...article.needsReviewReasons, ...article.validation.warnings];
+  const reviewItems = [...new Set([...article.needsReviewReasons, ...article.validation.warnings])];
   const snapshot = article.profileSnapshot;
   const planning = article.planningDiagnostics;
   return (
@@ -4994,17 +5050,69 @@ function ValidationPanel({
       <div
         ref={warningsRef}
         className={cn(
-          "rounded-md transition-shadow",
+          "space-y-2 rounded-md transition-shadow",
           highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
         )}
       >
-        <PanelTitle title="Review reasons" />
+        <PanelTitle title="Validation" />
         {reviewItems.length ? (
-          <ul className="mt-2 space-y-2 text-xs text-ink-muted">
-            {reviewItems.map((warning) => <li key={warning} className="rounded-md bg-surface-1 p-2">{warning}</li>)}
-          </ul>
+          <div className="space-y-2">
+            {reviewItems.map((warning) => (
+              <ValidationIssueCard
+                key={warning}
+                issue={warning}
+                status={article.status === "needs_review" ? "Needs review" : statusLabel(article.status)}
+                busy={busy}
+                onApprove={onApprove}
+                onRegenerate={onRegenerate}
+              />
+            ))}
+          </div>
+        ) : article.status === "approved" || article.status === "scheduled" || article.status === "published" ? (
+          <div className="rounded-md border border-success/20 bg-success/5 p-3 text-xs text-success">Approved</div>
         ) : <Empty text="No validation warnings." />}
       </div>
+    </div>
+  );
+}
+
+function ValidationIssueCard({
+  issue,
+  status,
+  busy,
+  onApprove,
+  onRegenerate
+}: {
+  issue: string;
+  status: string;
+  busy: boolean;
+  onApprove: () => void;
+  onRegenerate: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-line bg-surface-1 p-3 text-xs">
+      <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
+        <AlertCircle className="size-4 text-warn" />
+        {validationIssueTitle(issue)}
+      </div>
+      <div className="mt-3 space-y-2">
+        <ValidationDetail label="Status" value={status} />
+        <ValidationDetail label="Reason" value={validationReason(issue)} />
+        <ValidationDetail label="Recommendation" value={validationRecommendation(issue)} />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" disabled={busy} onClick={onApprove} className="rounded-md border border-line bg-background px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface-2 disabled:opacity-50">Approve anyway</button>
+        <button type="button" disabled={busy} onClick={onRegenerate} className="inline-flex items-center gap-1 rounded-md border border-line bg-background px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface-2 disabled:opacity-50"><RotateCw className="size-3" />Regenerate</button>
+      </div>
+    </div>
+  );
+}
+
+function ValidationDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
+      <div className="mt-0.5 text-ink-muted">{value}</div>
     </div>
   );
 }
@@ -5313,6 +5421,9 @@ function statusColor(status: JobStatus) {
     processing: "bg-info",
     generated: "bg-success",
     needs_review: "bg-warn",
+    approved: "bg-success",
+    scheduled: "bg-info",
+    published: "bg-success",
     research_failed: "bg-danger",
     failed: "bg-danger",
     skipped: "bg-ink-subtle"
@@ -5325,6 +5436,9 @@ function statusBadgeTone(status: JobStatus) {
     processing: "bg-info/10 text-info",
     generated: "bg-success/10 text-success",
     needs_review: "bg-warn/10 text-warn",
+    approved: "bg-success/10 text-success",
+    scheduled: "bg-info/10 text-info",
+    published: "bg-success/10 text-success",
     research_failed: "bg-danger/10 text-danger",
     failed: "bg-danger/10 text-danger",
     skipped: "bg-surface-3 text-ink-subtle"
@@ -5337,6 +5451,9 @@ function statusTextTone(status: JobStatus) {
     processing: "text-info",
     generated: "text-success",
     needs_review: "text-warn",
+    approved: "text-success",
+    scheduled: "text-info",
+    published: "text-success",
     research_failed: "text-danger",
     failed: "text-danger",
     skipped: "text-ink-subtle"
@@ -5349,10 +5466,39 @@ function statusLabel(status: JobStatus) {
     processing: "Generating",
     generated: "Generated",
     needs_review: "Needs review",
+    approved: "Approved",
+    scheduled: "Scheduled",
+    published: "Published",
     research_failed: "Research Failed",
     failed: "Failed",
     skipped: "Skipped"
   }[status];
+}
+
+function validationIssueTitle(issue: string) {
+  if (/complete|below|shorter|word target/i.test(issue)) return "Completeness";
+  if (/faq/i.test(issue)) return "FAQ";
+  if (/heading|h2|section/i.test(issue)) return "Structure";
+  if (/research|source/i.test(issue)) return "Research";
+  if (/profile|format|guide|comparison|how-to|definition/i.test(issue)) return "Format";
+  return "Quality";
+}
+
+function validationReason(issue: string) {
+  if (/below 80%|word target|shorter/i.test(issue)) return "Article is below the configured target length.";
+  if (/faq/i.test(issue)) return "FAQ coverage is missing or needs human review.";
+  if (/heading|h2|section/i.test(issue)) return "Article structure may be thinner than the configured outline.";
+  if (/research-process|source language|leakage/i.test(issue)) return "Article may expose source or research-process language.";
+  return issue;
+}
+
+function validationRecommendation(issue: string) {
+  if (/below 80%|word target|shorter|complete/i.test(issue)) return "Expand the thin sections and add more concrete coverage of the highest-risk decision points.";
+  if (/faq/i.test(issue)) return "Add or revise concise buyer questions that match the article intent.";
+  if (/heading|h2|section/i.test(issue)) return "Add missing sections or split broad sections into clearer H2 coverage.";
+  if (/research-process|source language|leakage/i.test(issue)) return "Edit out process language and rewrite claims as reader-facing guidance.";
+  if (/profile|format|guide|comparison|how-to|definition/i.test(issue)) return "Add the missing format element required by this content profile.";
+  return "Review the warning, edit if needed, or approve if the article is acceptable as written.";
 }
 
 function publishingStatusTone(status: PublishingWorkflowStatus) {
@@ -5607,13 +5753,17 @@ export function reconcileQueueStatusState(state: AppState, status: QueueStatus):
 function queueStatusNeedsFullRefresh(state: AppState, status: QueueStatus) {
   if (status.activeJob) return false;
   if (state.jobs.some((job) => job.status === "processing")) return true;
-  return state.jobs.filter((job) => job.status === "generated").length !== status.generated
+  return state.jobs.filter((job) => job.status === "generated" || isApprovedArticleStatus(job.status)).length !== status.generated
     || state.jobs.filter((job) => job.status === "needs_review").length !== status.review
     || state.jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length !== status.failed;
 }
 
 function isInventoryArticle(article: ArticleSummary) {
-  return article.status === "generated" || article.status === "needs_review";
+  return article.status === "generated" || article.status === "needs_review" || isApprovedArticleStatus(article.status);
+}
+
+function isApprovedArticleStatus(status: JobStatus) {
+  return status === "approved" || status === "scheduled" || status === "published";
 }
 
 function currentPipelineStage(pipeline: QueueJob["pipeline"]) {
@@ -5631,6 +5781,9 @@ function filterLabel(filter: Filter) {
     processing: "Writing",
     generated: "Generated",
     needs_review: "Review",
+    approved: "Approved",
+    scheduled: "Scheduled",
+    published: "Published",
     research_failed: "Research Failed",
     failed: "Failed",
     skipped: "Skipped"
@@ -5948,7 +6101,7 @@ function pickMilestoneShareMessage(stats: AccountOutcomeStats) {
 function calculateProjectSummary(state: AppState, analytics: ProjectAnalyticsSummary | null): ProjectSummary {
   const articles = state.articles;
   const scoreAverages = summaryScoreAverages(articles);
-  const generatedCount = articles.filter((article) => article.status === "generated").length;
+  const generatedCount = articles.filter((article) => article.status === "generated" || isApprovedArticleStatus(article.status)).length;
   const reviewCount = articles.filter((article) => article.status === "needs_review").length;
   const failedCount = state.jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const completedAssets = generatedCount + reviewCount + failedCount;
@@ -6010,7 +6163,7 @@ function buildRunHistory(jobs: QueueJob[], _articles: ArticleSummary[]): RunSumm
       id: run[0]?.id ?? "run",
       startedAt: run[0]?.createdAt ?? "",
       total: run.length,
-      generated: run.filter((job) => job.status === "generated").length,
+      generated: run.filter((job) => job.status === "generated" || isApprovedArticleStatus(job.status)).length,
       needsReview: run.filter((job) => job.status === "needs_review").length,
       failed: run.filter((job) => job.status === "failed" || job.status === "research_failed").length,
       averageRuntimeMs: runtimes.length ? Math.round(runtimes.reduce((sum, runtime) => sum + runtime, 0) / runtimes.length) : null
@@ -6020,7 +6173,7 @@ function buildRunHistory(jobs: QueueJob[], _articles: ArticleSummary[]): RunSumm
 
 function calculateQueueMetrics(jobs: QueueJob[], _articles: ArticleSummary[], now: number): QueueMetrics {
   const total = jobs.length;
-  const generated = jobs.filter((job) => job.status === "generated").length;
+  const generated = jobs.filter((job) => job.status === "generated" || isApprovedArticleStatus(job.status)).length;
   const needsReview = jobs.filter((job) => job.status === "needs_review").length;
   const failed = jobs.filter((job) => job.status === "failed" || job.status === "research_failed").length;
   const skipped = jobs.filter((job) => job.status === "skipped").length;

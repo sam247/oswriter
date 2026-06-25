@@ -154,7 +154,7 @@ export class NeonStorageProvider implements StorageProvider {
           count(*) filter (where j.status = 'queued')::int as queued,
           count(*) filter (where j.status = 'processing')::int as processing,
           count(*) filter (where j.status in ('failed', 'research_failed'))::int as failed,
-          count(*) filter (where j.status = 'generated')::int as generated,
+          count(*) filter (where j.status in ('generated', 'approved', 'scheduled', 'published'))::int as generated,
           count(*) filter (where j.status = 'needs_review')::int as review,
           (array_agg(j.id order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_id,
           (array_agg(j.title order by j.updated_at asc) filter (where j.status = 'processing'))[1] as active_job_title,
@@ -211,7 +211,7 @@ export class NeonStorageProvider implements StorageProvider {
         select
           count(*) filter (where status = 'queued')::int as queued,
           count(*) filter (where status = 'processing')::int as processing,
-          count(*) filter (where status = 'generated')::int as generated,
+          count(*) filter (where status in ('generated', 'approved', 'scheduled', 'published'))::int as generated,
           count(*) filter (where status = 'needs_review')::int as needs_review,
           count(*) filter (where status in ('failed', 'research_failed'))::int as failed
         from jobs
@@ -579,7 +579,7 @@ export class NeonStorageProvider implements StorageProvider {
         with article_metrics as (
           select
             count(*)::int as article_count,
-            count(*) filter (where status = 'generated')::int as generated_count,
+            count(*) filter (where status in ('generated', 'approved', 'scheduled', 'published'))::int as generated_count,
             count(*) filter (where status = 'needs_review')::int as review_count,
             coalesce(round(avg(quality_score)), 0)::int as average_quality,
             coalesce(round(avg(coalesce((document #>> '{summaryScores,research}')::numeric, quality_score, 0))), 0)::int as average_research,
@@ -588,7 +588,7 @@ export class NeonStorageProvider implements StorageProvider {
             coalesce(sum(jsonb_array_length(coalesce(sources, '[]'::jsonb))), 0)::int as source_count
           from articles
           where project_id = ${projectId}
-            and status in ('generated', 'needs_review')
+            and status in ('generated', 'needs_review', 'approved', 'scheduled', 'published')
         ), job_metrics as (
           select count(*) filter (where status in ('failed', 'research_failed'))::int as failed_count
           from jobs where project_id = ${projectId}
@@ -1430,7 +1430,7 @@ export class NeonStorageProvider implements StorageProvider {
       insert into articles (
         id, organisation_id, project_id, job_id, title, status, status_reason, markdown, markdown_blob_path,
         current_version_number, versioned_at, word_count, quality_score, research_summary, validation, pipeline,
-        sources, needs_review_reasons, timings, created_by_user_id, document, created_at, updated_at
+        sources, needs_review_reasons, timings, approved_at, approved_by, created_by_user_id, document, created_at, updated_at
       )
       values (
         ${next.id}, ${next.organisationId}, ${next.projectId}, ${next.jobId}, ${next.title}, ${next.status},
@@ -1438,7 +1438,8 @@ export class NeonStorageProvider implements StorageProvider {
         ${next.versionedAt ?? null}::timestamptz, ${next.wordCount}, ${next.qualityScore}, ${next.researchSummary},
         ${JSON.stringify(next.validation)}::jsonb, ${JSON.stringify(next.pipeline)}::jsonb, ${JSON.stringify(next.sources)}::jsonb,
         ${JSON.stringify(next.needsReviewReasons)}::jsonb, ${JSON.stringify(next.timings ?? {})}::jsonb,
-        ${next.createdByUserId}, ${JSON.stringify(persistedDocument)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+        ${next.approvedAt ?? null}::timestamptz, ${next.approvedBy ?? null}, ${next.createdByUserId},
+        ${JSON.stringify(persistedDocument)}::jsonb, ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
       )
       on conflict (id) do update set
         status = excluded.status,
@@ -1455,6 +1456,8 @@ export class NeonStorageProvider implements StorageProvider {
         sources = excluded.sources,
         needs_review_reasons = excluded.needs_review_reasons,
         timings = excluded.timings,
+        approved_at = excluded.approved_at,
+        approved_by = excluded.approved_by,
         document = excluded.document,
         updated_at = excluded.updated_at
     `;
@@ -2221,7 +2224,9 @@ function withArticleDefaults(article: ArticleDocument, tenant: TenantSeed): Arti
     versionedAt: article.versionedAt ?? null,
     markdownBlobPath: article.markdownBlobPath ?? null,
     statusReason: article.statusReason ?? null,
-    isPinned: article.isPinned ?? false
+    isPinned: article.isPinned ?? false,
+    approvedAt: article.approvedAt ?? null,
+    approvedBy: article.approvedBy ?? null
   });
 }
 

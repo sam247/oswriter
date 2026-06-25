@@ -482,7 +482,7 @@ describe("QueueRunner", () => {
     assert.ok(model.input?.plan?.knowledgeContext?.includes("Preferred CTA: Book a screening appointment."));
   });
 
-  it("queues regeneration as a new lifecycle while retaining the original article", async () => {
+  it("queues regeneration against the same article for replacement", async () => {
     const { store, runner } = setup();
     const [originalJob] = await runner.addTitles(["Original article"]);
     await drainQueue(runner);
@@ -490,10 +490,12 @@ describe("QueueRunner", () => {
     assert.ok(original);
 
     const regenerated = await runner.regenerateArticle(original.id);
-    assert.notEqual(regenerated.job.articleId, original.id);
+    assert.equal(regenerated.job.articleId, original.id);
+    assert.notEqual(regenerated.job.id, original.jobId);
     assert.equal(regenerated.job.title, original.title);
     assert.equal(regenerated.job.status, "queued");
-    assert.equal(regenerated.article.status, "needs_review");
+    assert.equal(regenerated.article.status, "queued");
+    assert.equal(regenerated.article.jobId, regenerated.job.id);
     assert.equal(regenerated.article.markdown, original.markdown);
     assert.ok(await store.getArticle(original.id));
   });
