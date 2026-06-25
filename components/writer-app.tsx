@@ -2058,6 +2058,7 @@ function Workbench() {
               activeArticleId={selectedArticleId}
               onSelectArticle={setSelectedArticleId}
               onFilterChange={setFilter}
+              onOpenProjectSettings={openCurrentProjectSettings}
               onToggleArticleSelection={toggleInventoryArticleSelection}
               onToggleSelectAll={toggleAllInventoryArticleSelections}
               onRunSelectionAction={(action) => void runSelectionAction(action)}
@@ -2441,6 +2442,7 @@ function ProjectDashboard({
   activeArticleId,
   onSelectArticle,
   onFilterChange,
+  onOpenProjectSettings,
   onToggleArticleSelection,
   onToggleSelectAll,
   onRunSelectionAction,
@@ -2460,6 +2462,7 @@ function ProjectDashboard({
   activeArticleId: string | null;
   onSelectArticle: (id: string) => void;
   onFilterChange: (filter: Filter) => void;
+  onOpenProjectSettings: () => void;
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: (articleIds: string[]) => void;
   onRunSelectionAction: (action: SelectionAction) => void;
@@ -2505,13 +2508,24 @@ function ProjectDashboard({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
         <div className="min-w-0">
-          <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
-          <div className="mono mt-2 text-[11px] text-ink-muted">{formatNumber(summary?.articleCount ?? articles.length)} articles in this workspace</div>
-          {profile && (
-            <div className="mono mt-1 text-[11px] text-ink-muted">
-              {profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words · v{profile.profileVersion}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">{state?.project.name ?? "Project"}</h1>
+            {state?.project.id && (
+              <button
+                type="button"
+                onClick={onOpenProjectSettings}
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition hover:bg-surface-2 hover:text-ink"
+                aria-label="Project settings"
+                title="Project settings"
+              >
+                <Settings className="size-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="mono mt-2 text-[11px] text-ink-muted">
+            {formatNumber(summary?.articleCount ?? articles.length)} articles
+            {profile ? ` • ${profile.regionLabel} • ${profile.audienceLabel} • ${formatNumber(profile.defaultTargetWords)} words` : ""}
+          </div>
         </div>
         <div className="mt-4 overflow-x-auto">
           <div className="flex min-w-max items-center whitespace-nowrap">

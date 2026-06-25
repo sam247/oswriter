@@ -55,6 +55,10 @@
   - moved `Export` out of the permanent toolbar and into the `Actions` dropdown so rarely used actions no longer occupy constant space
   - right-aligned `Actions` and `Apply` so the workflow reads left-to-right as view first, action second
   - kept row selection on the left after evaluation because the header checkbox pattern remains the clearest desktop-style bulk-selection affordance
+- Tightened the project header:
+  - moved project settings into the title row as a compact inline gear action
+  - collapsed project metadata into one calmer line with article count, region, audience, and target words only
+  - removed the extra workspace phrasing, industry label, and profile version from the main header
 
 ### Navigation Polish Recovery
 
