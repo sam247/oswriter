@@ -97,7 +97,7 @@ export function buildSnapshots(payload: NeonUsageApiResponse, config: UsageConfi
           metricValues[name as keyof typeof metricValues] = number(metric.value);
         }
 
-        const plan = normalizePlan(period.period_plan);
+        const plan = normalizePlan(stringOrNull(period.period_plan));
         const pricing = pricingForPlan(plan);
         const computeCuHours = metricValues.compute_unit_seconds / 3600;
         const rootStorageGbMonths = metricValues.root_branch_bytes_month / BILLING_MONTH_HOURS / BYTES_PER_GB;

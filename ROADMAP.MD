@@ -11,6 +11,7 @@
 ### Vercel Deploy Build Fix
 
 - Fixed a type mismatch in operational telemetry mapping (`number | null` -> `number | undefined`) that was breaking `next build` on Vercel.
+- Fixed a Neon usage snapshot typing edge-case where `period_plan` could be `undefined` and needed normalisation to `null` before plan parsing.
 
 ### SEO Assistant Panel Refinement
 
