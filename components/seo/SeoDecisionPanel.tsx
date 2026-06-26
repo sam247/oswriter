@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, Circle } from "lucide-react";
+import { Check, CheckCircle2, ChevronDown, ChevronUp, Circle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   applySeoRecommendations,
@@ -52,6 +52,7 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [trackedArticleId, setTrackedArticleId] = useState(article.id);
   const [trackedRecommendations, setTrackedRecommendations] = useState<TrackedRecommendation[]>([]);
+  const [selectedRecommendations, setSelectedRecommendations] = useState<Record<string, boolean>>({});
   const [selectedInternalLinks, setSelectedInternalLinks] = useState<Record<string, boolean>>({});
   const [websiteIntelligence, setWebsiteIntelligence] = useState<WebsiteIntelligenceState>({ pages: [], profile: null });
   const decision = useMemo(
@@ -152,6 +153,13 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
   }, [article.id, currentRecommendationIds, decision.recommendations, priorityRecommendations, trackedArticleId]);
 
   useEffect(() => {
+    setSelectedRecommendations((current) => {
+      const next = Object.fromEntries(decision.recommendations.map((item) => [item.id, current[item.id] ?? true]));
+      return sameRecommendationSelection(current, next) ? current : next;
+    });
+  }, [decision.recommendations]);
+
+  useEffect(() => {
     if (!internalLinkOpportunities.length) {
       setSelectedInternalLinks({});
       return;
@@ -191,6 +199,10 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
       setRunningActionId(null);
       return;
     }
+    if (!(selectedRecommendations[recommendation.id] ?? true)) {
+      onNotify?.("Select the change to apply");
+      return;
+    }
     setRunningActionId(recommendation.id);
     await new Promise((resolve) => window.setTimeout(resolve, 150));
     onApplyMarkdown(recommendation.apply(markdown));
@@ -211,6 +223,13 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
 
   function toggleExpanded(key: string) {
     setExpandedKey((current) => current === key ? null : key);
+  }
+
+  function toggleRecommendationSelection(recommendation: SeoRecommendation) {
+    setSelectedRecommendations((current) => ({
+      ...current,
+      [recommendation.id]: !(current[recommendation.id] ?? true)
+    }));
   }
 
   function toggleInternalLink(opportunity: SeoInternalLinkOpportunity) {
@@ -339,6 +358,7 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
                 const expanded = expandedKey === recommendation.id;
                 const internalLinks = extractInternalLinkOpportunities(recommendation);
                 const selectedCount = internalLinks.filter((item) => selectedInternalLinks[internalLinkKey(item)] ?? true).length;
+                const isSelected = selectedRecommendations[recommendation.id] ?? true;
                 return (
                   <article
                     key={recommendation.id}
@@ -358,98 +378,92 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
                     )}
                   >
                     <div className="min-w-0">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[13px] font-semibold leading-snug text-ink">{recommendation.title}</div>
-                          <p className="mt-1 text-[11.5px] leading-snug text-ink-muted">{recommendation.reason}</p>
-                          <p className="mt-2 text-[11px] leading-snug text-ink">
-                            <span className="font-medium">Outcome:</span> {recommendationOutcome(recommendation)}
-                          </p>
-                          <div className="mono mt-2 text-[10px] text-ink-subtle">+{recommendation.impact} points</div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleExpanded(recommendation.id);
-                            }}
-                            className="flex items-center gap-1 rounded-md border border-line bg-background px-2 py-1 text-[11px] font-medium text-ink hover:bg-surface-3"
-                          >
-                            {recommendation.id === "suggest-internal-links" ? "Generate Suggestions" : recommendation.actionLabel}
-                            <ArrowRight className="size-3" />
-                          </button>
-                          {expanded ? <ChevronUp className="mt-0.5 size-4 text-ink-subtle" /> : <ChevronDown className="mt-0.5 size-4 text-ink-subtle" />}
-                        </div>
+                      <div className="min-w-0">
+                        <div className="text-[13px] font-semibold leading-snug text-ink">{recommendation.title}</div>
+                        <p className="mt-1 text-[11.5px] leading-snug text-ink-muted">{recommendation.reason}</p>
+                        <p className="mt-2 text-[11px] leading-snug text-ink">
+                          <span className="font-medium">Outcome:</span> {recommendationOutcome(recommendation)}
+                        </p>
+                        <div className="mono mt-2 text-[10px] text-ink-subtle">+{recommendation.impact} points</div>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-2">
+                        <div className="text-[11px] font-medium text-ink-muted">{expanded ? "Hide" : "Review"}</div>
+                        {expanded ? <ChevronUp className="size-4 text-ink-subtle" /> : <ChevronDown className="size-4 text-ink-subtle" />}
                       </div>
 
                       {expanded ? (
                         <div className="mt-3 border-t border-line pt-3" onClick={(event) => event.stopPropagation()}>
                           <div className="grid gap-3">
                             {recommendation.id === "suggest-internal-links" ? (
-                              <div>
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">Suggested links</div>
-                                  <div className="mono text-[10px] text-ink-subtle">{selectedCount} selected</div>
-                                </div>
-                                <div className="mt-2 space-y-2">
+                              <>
+                                <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{internalLinks.length} opportunities found</div>
+                                <div className="space-y-2">
                                   {internalLinks.map((opportunity) => {
                                     const selected = selectedInternalLinks[internalLinkKey(opportunity)] ?? true;
                                     return (
-                                      <div key={internalLinkKey(opportunity)} className="rounded-md border border-line bg-background p-2.5">
-                                        <div className="flex items-start justify-between gap-3">
+                                      <label
+                                        key={internalLinkKey(opportunity)}
+                                        className={cn(
+                                          "block cursor-pointer rounded-md border border-line bg-background px-3 py-2.5 transition-colors hover:bg-surface-2",
+                                          !selected && "opacity-70"
+                                        )}
+                                      >
+                                        <div className="flex items-start gap-2">
+                                          <input
+                                            type="checkbox"
+                                            checked={selected}
+                                            onChange={() => toggleInternalLink(opportunity)}
+                                            className="mt-0.5 size-4 accent-ink"
+                                          />
                                           <div className="min-w-0">
-                                            <div className="text-[11.5px] font-medium text-ink">{opportunity.anchorText}</div>
-                                            <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">
-                                              {opportunity.title} · {opportunity.url}
-                                            </div>
+                                            <div className="text-[11.5px] font-semibold text-ink">{opportunity.anchorText}</div>
+                                            <div className="mono mt-1 text-[10px] text-ink-subtle">{opportunity.url}</div>
                                             <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{opportunity.reason}</div>
                                           </div>
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleInternalLink(opportunity)}
-                                            className={cn(
-                                              "rounded-md border px-2 py-1 text-[11px] font-medium",
-                                              selected
-                                                ? "border-success/30 bg-success/10 text-success"
-                                                : "border-line bg-surface-1 text-ink-muted"
-                                            )}
-                                          >
-                                            {selected ? "Keep" : "Remove"}
-                                          </button>
                                         </div>
-                                      </div>
+                                      </label>
                                     );
                                   })}
                                 </div>
-                              </div>
+                              </>
                             ) : (
                               <>
+                                <label className={cn("block cursor-pointer rounded-md border border-line bg-background px-3 py-2.5", !isSelected && "opacity-70")}>
+                                  <div className="flex items-start gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleRecommendationSelection(recommendation)}
+                                      className="mt-0.5 size-4 accent-ink"
+                                    />
+                                    <div className="min-w-0">
+                                      <div className="text-[11.5px] font-semibold text-ink">{recommendation.actionLabel}</div>
+                                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">Include this change when applying.</div>
+                                    </div>
+                                  </div>
+                                </label>
                                 <PreviewBlock label="Current text" text={recommendation.currentText} />
                                 <PreviewBlock label="Suggested update" text={recommendation.proposedText} />
                               </>
                             )}
-                            <div className="rounded-md border border-line bg-background p-2.5">
+                            <div className="rounded-md border border-line bg-background px-3 py-2.5">
                               <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">Why it matters</div>
                               <p className="mt-1 text-[11px] leading-snug text-ink-muted">{recommendation.reason}</p>
-                              <p className="mt-2 text-[11px] leading-snug text-ink">
-                                <span className="font-medium">If fixed:</span> {recommendationOutcome(recommendation)}
-                              </p>
                             </div>
                           </div>
-                          <div className="mt-3 flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedKey(null)}
-                              className="rounded-md border border-line bg-background px-3 py-1.5 text-[11px] font-medium text-ink"
-                            >
-                              Cancel
-                            </button>
+
+                          <div className="mt-3 border-t border-line pt-3">
+                            <div className="mono text-[10px] text-ink-subtle">
+                              {recommendation.id === "suggest-internal-links"
+                                ? `${selectedCount} of ${internalLinks.length} selected`
+                                : `${(isSelected ? 1 : 0)} of 1 selected`}
+                            </div>
                             <button
                               type="button"
                               onClick={() => void applyRecommendation(recommendation)}
-                              disabled={runningActionId === recommendation.id || (recommendation.id === "suggest-internal-links" && selectedCount === 0)}
-                              className="rounded-md bg-ink px-3 py-1.5 text-[11px] font-medium text-white"
+                              disabled={runningActionId === recommendation.id || (recommendation.id === "suggest-internal-links" ? selectedCount === 0 : !isSelected)}
+                              className="mt-2 h-8 w-full rounded-md bg-ink text-[11.5px] font-medium text-white disabled:opacity-60"
                             >
                               {recommendation.id === "suggest-internal-links"
                                 ? runningActionId === recommendation.id
@@ -457,7 +471,7 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
                                   : "Insert Selected Links"
                                 : runningActionId === recommendation.id
                                   ? loadingLabelForRecommendation(recommendation.id)
-                                  : "Accept"}
+                                  : "Apply Selected"}
                             </button>
                           </div>
                         </div>
@@ -483,6 +497,12 @@ function toTrackedRecommendation(recommendation: SeoRecommendation): TrackedReco
 
 function sameTrackedRecommendations(left: TrackedRecommendation[], right: TrackedRecommendation[]) {
   return left.length === right.length && left.every((item, index) => item.id === right[index]?.id && item.title === right[index]?.title);
+}
+
+function sameRecommendationSelection(left: Record<string, boolean>, right: Record<string, boolean>) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
 function recommendationGroupKey(recommendation: SeoRecommendation): RecommendationGroup["key"] {

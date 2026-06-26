@@ -304,7 +304,7 @@ describe("SEO decision engine", () => {
     }).recommendations.find((item) => item.id === "suggest-internal-links");
 
     assert.ok(recommendation);
-    const opportunities = (recommendation.metadata?.internalLinkOpportunities ?? []) as Array<{ anchorText: string; url: string }>;
+    const opportunities = (recommendation.metadata?.internalLinkOpportunities ?? []) as Parameters<typeof applySelectedInternalLinks>[1];
     const selected = opportunities.filter((item) => /groundworks|drainage/i.test(item.anchorText));
     const updated = applySelectedInternalLinks(article.markdown, selected);
 

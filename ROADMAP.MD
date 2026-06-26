@@ -26,6 +26,9 @@
   - expand in place
   - review current and suggested text
   - accept or cancel
+- Refined the interaction model so expanded cards behave as the preview:
+  - internal links use a checkbox list (unchecked = rejected) with a single footer action
+  - other optimisations allow selection and apply from one bottom action instead of scattered buttons
 - Regrouped recommendations into clearer working sections:
   - `Critical` for required pre-publish fixes
   - `Recommended` for quality improvements
