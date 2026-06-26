@@ -7,7 +7,7 @@ export async function GET() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const store = createWorkspaceStore();
+  const store = await createWorkspaceStore();
   const state = await store.getState();
   const telemetry = await store.listGenerationTelemetry(state.project.id);
   const articleCount = state.jobs.filter((job) => job.status === "queued").length;

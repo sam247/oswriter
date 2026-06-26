@@ -22,7 +22,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Project ID is required." }, { status: 400 });
     }
 
-    const { store } = createRuntime();
+    const { store } = await createRuntime();
     const project = await getAccessibleProject(store, projectId);
     if (!project) {
       return NextResponse.json({ error: "Project not found." }, { status: 404 });

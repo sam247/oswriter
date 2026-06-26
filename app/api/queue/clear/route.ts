@@ -7,7 +7,7 @@ import { nowIso } from "@/lib/defaults";
 export async function POST() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const blocker = await getQueueMutationBlocker(store);
   if (blocker) return NextResponse.json({ error: blocker }, { status: 409 });
   const count = await store.clearQueueData();

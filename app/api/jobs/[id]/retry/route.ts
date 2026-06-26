@@ -6,7 +6,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
   const unauth = await requireAuth();
   if (unauth) return unauth;
   const { id } = await context.params;
-  const { runner } = createRuntime();
+  const { runner } = await createRuntime();
   const job = await runner.retryJob(id);
   return NextResponse.json({ job });
 }

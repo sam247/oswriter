@@ -5,7 +5,7 @@ import { createRuntime } from "@/lib/server/runtime";
 export async function POST() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
-  const { runner } = createRuntime();
+  const { runner } = await createRuntime();
   const count = await runner.retryFailed();
   return NextResponse.json({ count });
 }

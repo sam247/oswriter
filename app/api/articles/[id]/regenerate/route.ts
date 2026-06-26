@@ -7,7 +7,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
   if (unauth) return unauth;
 
   const { id } = await context.params;
-  const { runner, store } = createRuntime();
+  const { runner, store } = await createRuntime();
   try {
     const result = await runner.regenerateArticle(id);
     return NextResponse.json({ ...result, state: await store.getState(result.article.projectId) });

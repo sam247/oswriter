@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   if (unauth) return unauth;
 
   const body = await req.json().catch(() => ({})) as ImportSiteKnowledgeBody;
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const projectId = body.projectId?.trim() || await store.getActiveProjectId();
   const sitemapUrl = body.sitemapUrl?.trim();
 

@@ -1,8 +1,18 @@
 import type { StorageProvider } from "@/lib/storage/storage";
 import type { QueueJob } from "@/lib/types";
 
+type SharedMemoryBuckets = Map<string, Map<string, string>>;
+
+type MemoryStorageAdapterOptions = {
+  sharedKey?: string;
+};
+
 export class MemoryStorageAdapter implements StorageProvider {
-  private docs = new Map<string, string>();
+  private readonly docs: Map<string, string>;
+
+  constructor(options: MemoryStorageAdapterOptions = {}) {
+    this.docs = options.sharedKey ? sharedDocs(options.sharedKey) : new Map<string, string>();
+  }
 
   async getJson<T>(path: string): Promise<T | null> {
     const raw = this.docs.get(path);
@@ -110,4 +120,25 @@ export class MemoryStorageAdapter implements StorageProvider {
       .map(([, raw]) => JSON.parse(raw) as QueueJob)
       .sort((a, b) => (a.queuePosition ?? new Date(a.createdAt).getTime()) - (b.queuePosition ?? new Date(b.createdAt).getTime()) || a.createdAt.localeCompare(b.createdAt));
   }
+}
+
+export function resetSharedMemoryStorage() {
+  sharedBuckets().clear();
+}
+
+function sharedDocs(key: string) {
+  const buckets = sharedBuckets();
+  const existing = buckets.get(key);
+  if (existing) return existing;
+  const created = new Map<string, string>();
+  buckets.set(key, created);
+  return created;
+}
+
+function sharedBuckets() {
+  const scope = globalThis as typeof globalThis & {
+    __queuewriteSharedMemoryStorage__?: SharedMemoryBuckets;
+  };
+  scope.__queuewriteSharedMemoryStorage__ ??= new Map<string, Map<string, string>>();
+  return scope.__queuewriteSharedMemoryStorage__;
 }

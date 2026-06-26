@@ -12,7 +12,7 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const date = url.searchParams.get("date") ?? undefined;
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const retry = await retryFailedTelemetryExports(store);
   await exportDailyTelemetrySummary(store, date);
   return NextResponse.json({ ok: true, date: date ?? "previous_utc_date", retry });

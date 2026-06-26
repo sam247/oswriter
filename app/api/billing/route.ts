@@ -8,7 +8,7 @@ import { createWorkspaceStore } from "@/lib/storage/server";
 export async function GET() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
-  const store = createWorkspaceStore();
+  const store = await createWorkspaceStore();
   const snapshot = await new BillingService(new WorkspaceUsageProvider(store)).getSnapshot("default-workspace");
   return NextResponse.json({ snapshot, plans: BILLING_PLANS });
 }

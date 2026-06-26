@@ -7,7 +7,7 @@ export async function POST(req: Request) {
   if (unauth) return unauth;
 
   const body = await req.json().catch(() => ({})) as { action?: string };
-  const { runner } = createRuntime();
+  const { runner } = await createRuntime();
   if (body.action === "stop_after_current") {
     const queueControl = await runner.stopAfterCurrent();
     return NextResponse.json({ queueControl });

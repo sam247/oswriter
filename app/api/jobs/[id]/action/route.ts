@@ -11,7 +11,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
 
   const { id } = await context.params;
   const body = await req.json().catch(() => ({})) as { action?: JobAction; contentProfile?: string | null };
-  const { runner } = createRuntime();
+  const { runner } = await createRuntime();
 
   try {
     if (body.action === "skip") return NextResponse.json({ job: await runner.skipJob(id) });

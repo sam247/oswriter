@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const url = new URL(req.url);
   const projectId = url.searchParams.get("projectId")?.trim() || await store.getActiveProjectId();
   const project = await getAccessibleProject(store, projectId);
@@ -46,7 +46,7 @@ export async function DELETE(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const url = new URL(req.url);
   const projectId = url.searchParams.get("projectId")?.trim() || await store.getActiveProjectId();
   const project = await getAccessibleProject(store, projectId);

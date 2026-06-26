@@ -1,6 +1,7 @@
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { RouteLink as Link } from "@/components/site/RouteLink";
+import { appUrl } from "@/lib/server/urls";
 import type { BlogPost } from "@/lib/site/blog-posts";
 
 export function BlogPostPage({ post }: { post: BlogPost }) {
@@ -161,7 +162,7 @@ function WhyAIWritersFail() {
       <hr />
       <p className="callout">
         <strong>Try QueueWrite.</strong> A workspace built around the full content workflow — research, generation, validation, SEO, publishing — running on a durable queue you don't have to watch.{" "}
-        <Link to="/dashboard" className="font-medium text-[#0a0a0a] underline">Create your first project</Link>.
+        <Link to={appUrl("/signup")} className="font-medium text-[#0a0a0a] underline">Create your first project</Link>.
       </p>
     </>
   );
@@ -180,7 +181,7 @@ function CTA() {
         </p>
         <div className="mt-6 flex items-center justify-center gap-3">
           <Link
-            to="/dashboard"
+            to={appUrl("/signup")}
             className="flex h-11 items-center gap-2 rounded-full bg-white px-5 text-[13.5px] font-medium text-[#0a0a0a] hover:bg-white/90"
           >
             Create Your Workspace <ArrowRight className="size-4" />
@@ -213,11 +214,11 @@ function Nav() {
           <Link to="/contact" className="hover:text-black">Contact</Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">
-          <Link to="/dashboard" className="hidden text-[13.5px] text-[#3a3a3a] hover:text-black sm:inline">
+          <Link to={appUrl("/login")} className="hidden text-[13.5px] text-[#3a3a3a] hover:text-black sm:inline">
             Sign in
           </Link>
           <Link
-            to="/dashboard"
+            to={appUrl("/signup")}
             className="flex h-9 items-center gap-1.5 rounded-full bg-[#0a0a0a] px-4 text-[13px] font-medium text-white hover:bg-black"
           >
             Start Free

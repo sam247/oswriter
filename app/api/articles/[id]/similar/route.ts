@@ -9,7 +9,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
   if (unauth) return unauth;
 
   const { id } = await context.params;
-  const { model, store } = createRuntime();
+  const { model, store } = await createRuntime();
   const article = await store.getArticle(id);
   if (!article) return NextResponse.json({ error: "Article not found." }, { status: 404 });
   const [project, settings, articles, jobs] = await Promise.all([

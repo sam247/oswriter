@@ -1,6 +1,5 @@
-import { isAuthed } from "@/lib/server/auth";
-import { WriterApp } from "@/components/writer-app";
+import { redirect } from "next/navigation";
 
-export default async function DashboardPage() {
-  return <WriterApp initialAuthed={await isAuthed()} />;
+export default function DashboardPage() {
+  redirect("/");
 }

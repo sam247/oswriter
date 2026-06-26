@@ -6,7 +6,7 @@ export async function GET(_req: Request, context: { params: Promise<{ id: string
   const unauth = await requireAuth();
   if (unauth) return unauth;
   const { id } = await context.params;
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const [research, debug] = await Promise.all([
     store.getResearch(id),
     store.getDebug(id)

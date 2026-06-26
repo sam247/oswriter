@@ -12,7 +12,7 @@ export async function GET(_req: Request, context: { params: Promise<{ id: string
   const { id, format } = await context.params;
   if (!articleFormats.has(format)) return NextResponse.json({ error: "Unsupported export format." }, { status: 400 });
 
-  const store = createWorkspaceStore();
+  const store = await createWorkspaceStore();
   const articles = await store.listArticles();
   const article = articles.find((item) => item.id === id);
   if (!article) return NextResponse.json({ error: "Article not found." }, { status: 404 });

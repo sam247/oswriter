@@ -1,6 +1,7 @@
 import type { ArticleDocument, DebugDocument, DebugEvent, GenerationTelemetryDocument, ModelAdapter, ModelGenerationResult, QueueJob, SearchAdapter } from "@/lib/types";
 import { createPipeline, nowIso } from "@/lib/defaults";
 import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
+import { sendQueueCompletionNotification } from "@/lib/mail/queue-notifications";
 import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
 import { runResearch } from "@/lib/research/research-engine";
@@ -860,6 +861,7 @@ export class QueueRunner {
       reason: "Queue completed.",
       updatedAt: now
     });
+    await sendQueueCompletionNotification(this.store, projectId);
   }
 
   private async throwIfEmergencyStopped(projectId: string) {

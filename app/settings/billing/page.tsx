@@ -20,8 +20,8 @@ const METRIC_LABELS: Record<BillingMetric, string> = {
 };
 
 export default async function BillingSettingsPage() {
-  if (!await isAuthed()) redirect("/dashboard");
-  const store = createWorkspaceStore();
+  if (!await isAuthed()) redirect("/login");
+  const store = await createWorkspaceStore();
   const snapshot = await new BillingService(new WorkspaceUsageProvider(store)).getSnapshot("default-workspace");
 
   return (
@@ -32,7 +32,7 @@ export default async function BillingSettingsPage() {
             <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Settings / Billing</div>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Billing</h1>
           </div>
-          <Link href="/dashboard" className="flex h-9 items-center gap-1.5 rounded-md px-3 text-sm text-ink-muted hover:bg-surface-3 hover:text-ink">
+          <Link href="/" className="flex h-9 items-center gap-1.5 rounded-md px-3 text-sm text-ink-muted hover:bg-surface-3 hover:text-ink">
             <ChevronLeft className="size-4" /> Back to workspace
           </Link>
         </div>

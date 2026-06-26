@@ -12,7 +12,7 @@ export async function GET(_req: Request, context: { params: Promise<{ format: st
   const { format } = await context.params;
   if (!projectFormats.has(format)) return NextResponse.json({ error: "Unsupported export format." }, { status: 400 });
 
-  const store = createWorkspaceStore();
+  const store = await createWorkspaceStore();
   const { project, articles } = await store.getFullState();
   const zip = exportProjectZip(project, articles, format as ProjectExportFormat);
   const extension = format === "markdown" ? "md" : format;

@@ -7,7 +7,7 @@ export async function GET() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const snapshot = await getWorkerQueueSnapshot(store);
   return NextResponse.json({
     serverTime: new Date().toISOString(),

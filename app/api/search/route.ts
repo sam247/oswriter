@@ -8,7 +8,7 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const query = url.searchParams.get("q") ?? "";
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const results = await store.globalSearch(query);
   return NextResponse.json(results);
 }

@@ -20,7 +20,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     return NextResponse.json({ error: "Publish status must be draft or publish." }, { status: 400 });
   }
 
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const article = await getAccessibleArticle(store, id);
   if (!article) {
     return NextResponse.json({ error: "Article not found." }, { status: 404 });

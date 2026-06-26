@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({})) as { articleId?: string; context?: "state_observed_after_initial_load" | "article_selected" };
   if (!body.articleId) return NextResponse.json({ error: "Missing articleId." }, { status: 400 });
 
-  const store = createWorkspaceStore();
+  const store = await createWorkspaceStore();
   const articles = await store.listArticles();
   const article = articles.find((item) => item.id === body.articleId);
   if (!article) return NextResponse.json({ error: "Article not found." }, { status: 404 });

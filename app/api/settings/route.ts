@@ -18,7 +18,7 @@ type SettingsPatch = {
 export async function GET() {
   const unauth = await requireAuth();
   if (unauth) return unauth;
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const [settings, preferences] = await Promise.all([
     store.getSettings(),
     store.getWorkspacePreferences()
@@ -30,7 +30,7 @@ export async function PATCH(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
   const patch = await req.json().catch(() => ({})) as SettingsPatch;
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const [settings, preferences] = await Promise.all([
     store.getSettings(),
     store.getWorkspacePreferences()

@@ -14,7 +14,7 @@ import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 
 type NeonSql = ReturnType<typeof neon>;
 
-interface TenantSeed {
+export interface TenantSeed {
   organisationId: string;
   organisationName: string;
   organisationSlug: string;

@@ -14,7 +14,7 @@ export async function PATCH(req: Request) {
   if (unauth) return unauth;
 
   const body = await req.json().catch(() => ({})) as { activeProjectId?: string; projectId?: string; name?: string; profile?: Partial<ProjectProfile>; knowledgeBase?: Partial<ProjectKnowledgeBase>; defaultContentProfile?: string };
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
 
   const activeProjectId = body.activeProjectId?.trim();
   if (activeProjectId) {
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({})) as { name?: string; profile?: Partial<ProjectProfile>; defaultContentProfile?: string };
   const name = body.name?.trim() || "Untitled Project";
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const now = nowIso();
   const projectId = slugId("project");
   const project = {
@@ -77,7 +77,7 @@ export async function DELETE(req: Request) {
   const unauth = await requireAuth();
   if (unauth) return unauth;
 
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const body = await req.json().catch(() => ({})) as { projectId?: string };
   const projectId = body.projectId?.trim() || await store.getActiveProjectId();
   const blocker = await getQueueMutationBlocker(store, projectId);

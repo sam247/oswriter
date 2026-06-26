@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     postGenerationAction?: PostGenerationPublishingAction;
   };
   const titles = Array.isArray(body.titles) ? body.titles : String(body.titles ?? "").split("\n");
-  const { runner, store } = createRuntime();
+  const { runner, store } = await createRuntime();
   const contentProfile = normalizeContentProfile(body.contentProfile);
   const postGenerationAction = body.postGenerationAction ?? "generate_only";
   const jobs = body.avoidDuplicates

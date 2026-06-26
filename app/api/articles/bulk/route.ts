@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Schedule start date and time are required." }, { status: 400 });
   }
 
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const updated = [];
   const failed: Array<{ articleId: string; error: string }> = [];
   const scheduleTimes = buildPublishingSchedule(body.schedule.startAt, articleIds.length, {

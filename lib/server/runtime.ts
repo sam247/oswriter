@@ -1,11 +1,21 @@
 import { OpenAIModelAdapter } from "@/lib/models/openai";
 import { QueueRunner } from "@/lib/queue/runner";
 import { WorkspaceResearchProvider } from "@/lib/research/providers/registry";
-import { createWorkspaceStore } from "@/lib/storage/server";
+import { createWorkspaceStore, createWorkspaceStoreForTenant } from "@/lib/storage/server";
+import type { TenantSeed } from "@/lib/storage/neon";
+import type { WorkspaceStore } from "@/lib/storage/storage";
 import type { ArticleGenerationInput, EditorInput, ModelAdapter, SimilarTitleGenerationInput, ValidationInput } from "@/lib/types";
 
-export function createRuntime() {
-  const store = createWorkspaceStore();
+export async function createRuntime() {
+  const store = await createWorkspaceStore();
+  return runtimeForStore(store);
+}
+
+export function createRuntimeForTenant(tenant: TenantSeed) {
+  return runtimeForStore(createWorkspaceStoreForTenant(tenant));
+}
+
+export function runtimeForStore(store: WorkspaceStore) {
   const model = new LazyModelAdapter();
   return {
     store,

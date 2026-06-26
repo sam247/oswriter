@@ -2,6 +2,37 @@
 
 ## Completed
 
+### QueueWrite Authentication And Application Split
+
+- Split QueueWrite into two explicit surfaces:
+  - `queuewrite.com` for public marketing only
+  - `app.queuewrite.com` for the authenticated application only
+- Moved the real QueueWrite workspace to `/` on the app host and changed `/dashboard` into a compatibility redirect instead of the primary application entry.
+- Replaced the shared workspace-password gate with email OTP authentication using:
+  - 6-digit single-use codes
+  - 10-minute expiry
+  - rate limiting
+  - secure HTTP-only session cookies
+- Added the app-only auth route set:
+  - `/login`
+  - `/signup`
+  - `/verify`
+  - `/forgot-password`
+  - `/reset-password`
+  - `/settings`
+  - `/settings/billing`
+  - `/projects`
+- Added Neon-backed auth persistence for OTPs and sessions through `0023_auth_otp_sessions.sql`.
+- Added a centralized mail service with Resend production delivery so auth emails and queue completion notifications share the same abstraction.
+- Kept the existing workspace, billing logic, queue APIs, research, validation, SEO, telemetry, storage contracts, and worker flows intact while changing only application access and host routing.
+- Updated middleware, host-aware URLs, and route guards so marketing pages stay off the app host and app-only routes redirect away from the marketing host.
+- Added split-host Playwright coverage for:
+  - public marketing navigation
+  - signup OTP delivery and verification
+  - returning-user login OTP delivery and verification
+  - authenticated billing access on the app host
+- Hardened the in-memory auth, mail, and storage adapters for local/browser verification by sharing state explicitly across Next dev route handlers.
+
 ### Homepage Refinement Pass
 
 - Removed the homepage `Trusted by` logo strip so visitors now move directly from the hero into the QueueWrite workflow narrative.

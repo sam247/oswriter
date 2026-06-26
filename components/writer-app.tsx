@@ -135,52 +135,8 @@ type TransitionTraceEntry = {
 const TRANSITION_TRACE_KEY = "oswriter.transitionTrace";
 const ARTICLE_VIEW_MODE_KEY = "oswriter.articleViewMode";
 
-export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
-  const [authed, setAuthed] = useState(initialAuthed);
-  if (!authed) return <Login onAuthed={() => setAuthed(true)} />;
+export function WriterApp() {
   return <Workbench />;
-}
-
-function Login({ onAuthed }: { onAuthed: () => void }) {
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password })
-    });
-    setLoading(false);
-    if (res.ok) onAuthed();
-    else setError("Incorrect workspace password.");
-  }
-
-  return (
-    <main className="grid min-h-screen place-items-center bg-background px-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-lg border border-line bg-surface-1 p-5 shadow-sm">
-        <div className="mb-4">
-          <h1 className="text-lg font-semibold tracking-tight text-ink">QueueWrite</h1>
-          <p className="mt-1 text-sm text-ink-muted">Enter the workspace password to open the production queue.</p>
-        </div>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="h-9 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-ink"
-          autoFocus
-        />
-        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
-        <button className="mt-4 flex h-9 w-full items-center justify-center rounded-md bg-ink px-3 text-sm font-medium text-white" disabled={loading}>
-          {loading ? <Loader2 className="size-4 animate-spin" /> : "Open workspace"}
-        </button>
-      </form>
-    </main>
-  );
 }
 
 function Workbench() {

@@ -8,7 +8,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
   if (unauth) return unauth;
 
   const { id } = await context.params;
-  const { store } = createRuntime();
+  const { store } = await createRuntime();
   const article = await store.getArticleById(id);
   if (!article) return NextResponse.json({ error: "Article not found." }, { status: 404 });
 
