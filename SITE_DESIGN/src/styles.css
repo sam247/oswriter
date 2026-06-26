@@ -1,0 +1,147 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 7px;
+  --radius-xl: 10px;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+
+  --color-card: var(--surface-1);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--surface-1);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--ink);
+  --color-primary-foreground: var(--surface-1);
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--ink-muted);
+  --color-accent: var(--surface-2);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--surface-1);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--ink);
+
+  --color-success: var(--success);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+
+  --color-sidebar: var(--surface-2);
+  --color-sidebar-foreground: var(--ink);
+  --color-sidebar-primary: var(--ink);
+  --color-sidebar-primary-foreground: var(--surface-1);
+  --color-sidebar-accent: var(--surface-3);
+  --color-sidebar-accent-foreground: var(--ink);
+  --color-sidebar-border: var(--line);
+  --color-sidebar-ring: var(--ink);
+}
+
+:root {
+  --radius: 6px;
+
+  /* Cool graphite monochrome */
+  --background: oklch(0.992 0.001 247);   /* #FCFCFD app paper */
+  --foreground: oklch(0.16 0.004 250);    /* #0B0D10 ink */
+
+  --surface-1: oklch(1 0 0);              /* pure white cards/inputs */
+  --surface-2: oklch(0.972 0.002 250);    /* #F4F5F7 sidebar / inspector */
+  --surface-3: oklch(0.945 0.003 250);    /* hover */
+
+  --line: oklch(0.91 0.003 250);          /* #E8EAED hairline */
+  --line-strong: oklch(0.85 0.004 250);
+
+  --ink: oklch(0.16 0.004 250);
+  --ink-muted: oklch(0.45 0.005 250);     /* #5B6166 */
+  --ink-subtle: oklch(0.62 0.004 250);
+
+  /* desaturated status, used sparingly */
+  --success: oklch(0.55 0.07 155);
+  --warn: oklch(0.65 0.09 75);
+  --danger: oklch(0.55 0.13 28);
+  --info: oklch(0.55 0.05 240);
+
+  --chart-1: oklch(0.16 0 0);
+  --chart-2: oklch(0.45 0 0);
+  --chart-3: oklch(0.62 0 0);
+  --chart-4: oklch(0.78 0 0);
+  --chart-5: oklch(0.88 0 0);
+}
+
+.dark {
+  --background: oklch(0.16 0.004 250);
+  --foreground: oklch(0.96 0.002 250);
+  --surface-1: oklch(0.20 0.004 250);
+  --surface-2: oklch(0.18 0.004 250);
+  --surface-3: oklch(0.24 0.004 250);
+  --line: oklch(0.28 0.004 250);
+  --line-strong: oklch(0.36 0.004 250);
+  --ink: oklch(0.96 0.002 250);
+  --ink-muted: oklch(0.68 0.004 250);
+  --ink-subtle: oklch(0.55 0.004 250);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01", "ss03";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: oklch(0.16 0.004 250 / 0.15);
+  }
+}
+
+/* Mac-app utility surfaces */
+@utility hairline-b { border-bottom: 1px solid var(--color-line); }
+@utility hairline-t { border-top: 1px solid var(--color-line); }
+@utility hairline-r { border-right: 1px solid var(--color-line); }
+@utility hairline-l { border-left: 1px solid var(--color-line); }
+
+@utility mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum", "zero";
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dense scrollbar */
+@layer base {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.85 0.004 250);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: oklch(0.72 0.004 250); background-clip: padding-box; border: 2px solid transparent; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}

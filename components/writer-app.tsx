@@ -5240,6 +5240,7 @@ function ValidationPanel({
   const snapshot = article.profileSnapshot;
   const planning = article.planningDiagnostics;
   const readyToPublish = article.validation.pass && validationGroups.length === 0;
+  const planningSummary = planning ? summarizePlanning(planning) : null;
   return (
     <div className="space-y-4">
       <div className={cn(
@@ -5254,15 +5255,16 @@ function ValidationPanel({
             </div>
             <div className="mt-1 text-[11.5px] leading-snug text-ink-muted">
               {readyToPublish
-                ? "All validation checks passed."
+                ? "All validation checks passed. This article meets the current publishing standard."
                 : `${validationGroups.length} validation issue${validationGroups.length === 1 ? "" : "s"} require attention before publishing.`}
             </div>
           </div>
         </div>
       </div>
+      <ValidationWorkflowIndicator readyToPublish={readyToPublish} />
       {snapshot && (
         <div className="rounded-md border border-line bg-surface-1 p-3">
-          <PanelTitle title="Article profile snapshot" />
+          <PanelTitle title="Article profile" />
           <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <MetricLine label="Region" value={snapshot.regionLabel} />
             <MetricLine label="Industry" value={snapshot.industryLabel} />
@@ -5275,6 +5277,19 @@ function ValidationPanel({
       {planning && (
         <div className="rounded-md border border-line bg-surface-1 p-3">
           <PanelTitle title="Planning" />
+          {planningSummary ? (
+            <div className="mt-2 rounded-md border border-line bg-background px-3 py-2.5">
+              <div className={cn("text-[12px] font-semibold", planningSummary.complete ? "text-success" : "text-warn")}>
+                {planningSummary.complete ? "Complete" : "Needs expansion"}
+              </div>
+              <div className="mt-1 text-[11px] leading-snug text-ink-muted">
+                {planningSummary.covered} of {planningSummary.planned} planned concepts covered.
+              </div>
+              <div className="mt-1 text-[11px] leading-snug text-ink-muted">
+                Coverage {planningSummary.coverage}%.
+              </div>
+            </div>
+          ) : null}
           <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <MetricLine label="Planned H2" value={formatNumber(planning.plannedH2Count)} />
             <MetricLine label="Actual H2" value={formatNumber(planning.actualH2Count)} />
@@ -5285,22 +5300,21 @@ function ValidationPanel({
             <MetricLine label="Plan completed" value={`${formatNumber(planning.targetAchievementPercent)}%`} />
             <MetricLine label="Plan outcome" value={titleCase(planning.plannerOutcome)} />
             <MetricLine label="Planned concepts" value={formatNumber(planning.researchConceptCount ?? 0)} />
-            <MetricLine label="Coverage ratio" value={(planning.plannedBreadthRatio ?? 0).toFixed(2)} />
             <MetricLine label="Concepts covered" value={formatNumber(planning.actualBreadthCoverage ?? 0)} />
             <MetricLine label="Coverage" value={`${formatNumber(planning.actualBreadthCoveragePercent ?? 0)}%`} />
             <MetricLine label="Coverage status" value={titleCase(planning.breadthStatus ?? "sufficient")} />
           </div>
         </div>
       )}
-      <div
-        ref={warningsRef}
-        className={cn(
-          "space-y-2 rounded-md transition-shadow",
-          highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
-        )}
-      >
-        <PanelTitle title="Validation findings" />
-        {validationGroups.length ? (
+      {validationGroups.length ? (
+        <div
+          ref={warningsRef}
+          className={cn(
+            "space-y-2 rounded-md transition-shadow",
+            highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
+          )}
+        >
+          <PanelTitle title="Validation findings" />
           <div className="space-y-2">
             {validationGroups.map((group) => (
               <ValidationIssueCard
@@ -5312,18 +5326,8 @@ function ValidationPanel({
               />
             ))}
           </div>
-        ) : article.status === "approved" || article.status === "scheduled" || article.status === "published" ? (
-          <div className="rounded-md border border-success/20 bg-success/5 p-3 text-xs text-success">This article is ready for publication review.</div>
-        ) : <Empty text="No validation warnings." />}
-        {article.validation.advisories?.length ? (
-          <div className="rounded-md border border-line bg-surface-1 p-3">
-            <div className="text-[11px] font-medium text-ink">Editorial notes</div>
-            <ul className="mt-2 space-y-2 text-xs text-ink-muted">
-              {article.validation.advisories.map((advisory) => <li key={advisory} className="rounded-md bg-surface-2 p-2">{advisory}</li>)}
-            </ul>
-          </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       <ValidationScoreSummary
         items={[
           ["Quality", article.validation.qualityScore],
@@ -5333,6 +5337,28 @@ function ValidationPanel({
           ["Warnings", article.validation.warnings.length]
         ]}
       />
+    </div>
+  );
+}
+
+function ValidationWorkflowIndicator({ readyToPublish }: { readyToPublish: boolean }) {
+  const items = readyToPublish
+    ? ["Research complete", "Generation complete", "Validation complete", "Ready to publish"]
+    : ["Research complete", "Generation complete", "Validation requires review"];
+  return (
+    <div className="rounded-md border border-line bg-surface-1 p-3">
+      <div className="space-y-1.5">
+        {items.map((item, index) => (
+          <div key={item} className="flex items-center gap-2 text-[11px]">
+            {readyToPublish || index < 2 ? (
+              <CheckCircle2 className="size-3.5 shrink-0 text-success" />
+            ) : (
+              <AlertCircle className="size-3.5 shrink-0 text-warn" />
+            )}
+            <span className={cn("text-ink-muted", readyToPublish && index === items.length - 1 && "text-ink")}>{item}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -5772,6 +5798,18 @@ interface ValidationIssueGroup {
   issues: string[];
   summary: string;
   action: string;
+}
+
+function summarizePlanning(planning: NonNullable<ArticleDocument["planningDiagnostics"]>) {
+  const planned = planning.researchConceptCount ?? 0;
+  const covered = planning.actualBreadthCoverage ?? 0;
+  const coverage = Math.round(planning.actualBreadthCoveragePercent ?? 0);
+  return {
+    complete: planned > 0 ? covered >= planned : coverage >= 100,
+    planned,
+    covered,
+    coverage
+  };
 }
 
 function buildValidationIssueGroups(issues: string[]): ValidationIssueGroup[] {

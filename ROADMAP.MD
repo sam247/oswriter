@@ -71,12 +71,17 @@
 
 - Reframed the Validation tab as an editorial publication review rather than a diagnostics surface.
 - Added a publishing-readiness summary card at the top so the first message is either `Ready to publish` or `Needs review`.
+- Strengthened the ready state copy so successful validation reads as a definitive publication gate rather than a generic success state.
+- Added a lightweight workflow indicator near the top to reinforce the production path from research through validation to publication.
 - Reordered the sidebar hierarchy to read as:
   - publishing status
   - article profile snapshot
   - planning
   - validation findings
   - quality scores
+- Renamed `Article profile snapshot` to `Article profile`.
+- Added a planning conclusion at the top of the Planning section so users see `Complete` or `Needs expansion` before the supporting metrics.
+- Removed the empty-state `No validation warnings.` block so success-state Validation flows directly from readiness into supporting context.
 - Merged duplicate validation findings by category so repeated issues such as completeness problems now appear in one combined review card.
 - Rewrote validation finding cards in more editorial language with:
   - a natural summary of what is wrong
