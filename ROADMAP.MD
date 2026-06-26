@@ -2,6 +2,16 @@
 
 ## Completed
 
+### Editor Toolbar Polish
+
+- Reordered the article editor primary actions to `Export`, `Copy All`, and `Publish`.
+- Renamed the article copy control to `Copy All` so the action is clearer at a glance.
+- Restyled the rich-text formatting tools to better match the surrounding app chrome with calmer borders, background treatment, and more breathing room between controls.
+
+### Vercel Deploy Build Fix
+
+- Fixed a type mismatch in operational telemetry mapping (`number | null` -> `number | undefined`) that was breaking `next build` on Vercel.
+
 ### SEO Assistant Panel Refinement
 
 - Reframed the right-hand SEO tab from a stack of separate tools into a calmer optimisation checklist with one consistent interaction model.

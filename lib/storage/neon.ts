@@ -3087,22 +3087,22 @@ function operationalTelemetryFromRow(row: Record<string, unknown>): OperationalT
     completedAt: nullableDate(row.completed_at),
     occurredAt: dateIso(row.occurred_at),
     metrics: {
-      articleCount: nullableNumber(metrics.articleCount),
-      pagesIndexed: nullableNumber(metrics.pagesIndexed),
-      processedPages: nullableNumber(metrics.processedPages),
-      totalDiscoveredUrls: nullableNumber(metrics.totalDiscoveredUrls),
-      sourcesFound: nullableNumber(metrics.sourcesFound),
-      sourcesAccepted: nullableNumber(metrics.sourcesAccepted),
-      evidenceItemsUsed: nullableNumber(metrics.evidenceItemsUsed),
-      durationMs: nullableNumber(metrics.durationMs),
-      researchDurationMs: nullableNumber(metrics.researchDurationMs),
-      generationDurationMs: nullableNumber(metrics.generationDurationMs),
-      totalDurationMs: nullableNumber(metrics.totalDurationMs)
+      articleCount: nullableNumber(metrics.articleCount) ?? undefined,
+      pagesIndexed: nullableNumber(metrics.pagesIndexed) ?? undefined,
+      processedPages: nullableNumber(metrics.processedPages) ?? undefined,
+      totalDiscoveredUrls: nullableNumber(metrics.totalDiscoveredUrls) ?? undefined,
+      sourcesFound: nullableNumber(metrics.sourcesFound) ?? undefined,
+      sourcesAccepted: nullableNumber(metrics.sourcesAccepted) ?? undefined,
+      evidenceItemsUsed: nullableNumber(metrics.evidenceItemsUsed) ?? undefined,
+      durationMs: nullableNumber(metrics.durationMs) ?? undefined,
+      researchDurationMs: nullableNumber(metrics.researchDurationMs) ?? undefined,
+      generationDurationMs: nullableNumber(metrics.generationDurationMs) ?? undefined,
+      totalDurationMs: nullableNumber(metrics.totalDurationMs) ?? undefined
     },
     costs: {
-      researchCostUsd: nullableNumber(costs.researchCostUsd),
-      generationCostUsd: nullableNumber(costs.generationCostUsd),
-      totalCostUsd: nullableNumber(costs.totalCostUsd)
+      researchCostUsd: nullableNumber(costs.researchCostUsd) ?? undefined,
+      generationCostUsd: nullableNumber(costs.generationCostUsd) ?? undefined,
+      totalCostUsd: nullableNumber(costs.totalCostUsd) ?? undefined
     },
     metadata,
     createdAt: dateIso(row.created_at),

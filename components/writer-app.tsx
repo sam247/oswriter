@@ -3958,15 +3958,15 @@ function ArticleToolbar({
         ? "This article is already published."
         : "Publish to WordPress";
   return (
-    <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-1 gap-y-1 px-5 py-1.5 lg:px-7">
+    <div className="hairline-b flex min-h-9 flex-wrap items-center gap-x-2.5 gap-y-2 px-5 py-2 lg:px-7">
       {article ? <ArticleExportActions articleId={article.id} /> : <span className="text-xs text-ink-subtle">Select an article to review exports.</span>}
       <button
         onClick={onCopyAll}
         disabled={!article}
-        className="flex h-7 items-center rounded px-2 text-[11.5px] font-medium text-ink-muted hover:bg-surface-3 hover:text-ink disabled:opacity-40"
+        className="flex h-7 items-center rounded-md border border-transparent px-2.5 text-[11.5px] font-medium text-ink-muted transition-colors hover:border-line hover:bg-surface-2 hover:text-ink disabled:opacity-40"
         title="Copy full article"
       >
-        Copy
+        Copy All
       </button>
       <div className="relative">
         <button
@@ -3980,10 +3980,10 @@ function ArticleToolbar({
           disabled={!article || busy || publishStatus === "published"}
           title={publishTitle}
           className={cn(
-            "flex h-7 items-center gap-1 rounded px-2 text-[11.5px] font-medium transition-colors",
+            "flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11.5px] font-medium transition-colors",
             publishDisabled
-              ? "cursor-not-allowed text-ink-subtle"
-              : "text-ink-muted hover:bg-surface-3 hover:text-ink"
+              ? "cursor-not-allowed border-transparent text-ink-subtle"
+              : "border-transparent text-ink-muted hover:border-line hover:bg-surface-2 hover:text-ink"
           )}
         >
           Publish
@@ -4012,11 +4012,17 @@ function ArticleToolbar({
           </div>
         )}
       </div>
-      <div className="mx-1 hidden h-4 w-px bg-line sm:block" />
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div className="mx-0.5 hidden h-5 w-px bg-line sm:block" />
+      <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface-1/80 px-1.5 py-1">
         {formatting.map(({ command, icon: Icon, title }) => (
-          <button key={command} onClick={() => onFormat(command)} disabled={!article} className="grid size-6.5 place-items-center rounded text-ink-subtle hover:bg-surface-3 hover:text-ink disabled:opacity-40" title={title}>
-            <Icon className="size-3.25" />
+          <button
+            key={command}
+            onClick={() => onFormat(command)}
+            disabled={!article}
+            className="grid size-7 place-items-center rounded-md border border-transparent bg-background/70 text-ink-muted transition-colors hover:border-line hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+            title={title}
+          >
+            <Icon className="size-3.5" />
           </button>
         ))}
       </div>
