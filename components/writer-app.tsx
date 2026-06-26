@@ -1774,7 +1774,7 @@ function Workbench() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
-                    <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{stats.queued + stats.processing} in queue · {stats.failed} failed</span>
+                    <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{formatNumber(stats.generated)} {stats.generated === 1 ? "Article" : "Articles"}</span>
                   </span>
                   <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
                 </button>
@@ -5056,17 +5056,30 @@ function ValidationPanel({
   onRegenerate: () => void;
 }) {
   const reviewItems = [...new Set([...article.needsReviewReasons, ...article.validation.warnings])];
+  const validationGroups = buildValidationIssueGroups(reviewItems);
   const snapshot = article.profileSnapshot;
   const planning = article.planningDiagnostics;
+  const readyToPublish = article.validation.pass && validationGroups.length === 0;
   return (
     <div className="space-y-4">
-      <MetricGrid items={[
-        ["Quality", article.validation.qualityScore],
-        ["FAQ", article.validation.faqScore],
-        ["SEO", article.validation.seoScore],
-        ["Profile relevance", article.profileRelevanceScore ?? article.validation.profileRelevanceScore ?? "-"],
-        ["Warnings", article.validation.warnings.length]
-      ]} />
+      <div className={cn(
+        "rounded-md border p-3",
+        readyToPublish ? "border-success/20 bg-success/5" : "border-warn/20 bg-warn/5"
+      )}>
+        <div className="flex items-start gap-2">
+          {readyToPublish ? <CheckCircle2 className="mt-0.5 size-4 text-success" /> : <AlertCircle className="mt-0.5 size-4 text-warn" />}
+          <div>
+            <div className={cn("text-[13px] font-semibold", readyToPublish ? "text-success" : "text-warn")}>
+              {readyToPublish ? "Ready to publish" : "Needs review"}
+            </div>
+            <div className="mt-1 text-[11.5px] leading-snug text-ink-muted">
+              {readyToPublish
+                ? "All validation checks passed."
+                : `${validationGroups.length} validation issue${validationGroups.length === 1 ? "" : "s"} require attention before publishing.`}
+            </div>
+          </div>
+        </div>
+      </div>
       {snapshot && (
         <div className="rounded-md border border-line bg-surface-1 p-3">
           <PanelTitle title="Article profile snapshot" />
@@ -5089,24 +5102,16 @@ function ValidationPanel({
             <MetricLine label="Actual H3" value={formatNumber(planning.actualH3Count)} />
             <MetricLine label="Expected depth" value={titleCase(planning.expectedDepth)} />
             <MetricLine label="Actual depth" value={titleCase(planning.actualDepth)} />
-            <MetricLine label="Target achieved" value={`${formatNumber(planning.targetAchievementPercent)}%`} />
-            <MetricLine label="Outcome" value={titleCase(planning.plannerOutcome)} />
-            <MetricLine label="Research concepts" value={formatNumber(planning.researchConceptCount ?? 0)} />
-            <MetricLine label="Breadth ratio" value={(planning.plannedBreadthRatio ?? 0).toFixed(2)} />
+            <MetricLine label="Plan completed" value={`${formatNumber(planning.targetAchievementPercent)}%`} />
+            <MetricLine label="Plan outcome" value={titleCase(planning.plannerOutcome)} />
+            <MetricLine label="Planned concepts" value={formatNumber(planning.researchConceptCount ?? 0)} />
+            <MetricLine label="Coverage ratio" value={(planning.plannedBreadthRatio ?? 0).toFixed(2)} />
             <MetricLine label="Concepts covered" value={formatNumber(planning.actualBreadthCoverage ?? 0)} />
-            <MetricLine label="Breadth covered" value={`${formatNumber(planning.actualBreadthCoveragePercent ?? 0)}%`} />
-            <MetricLine label="Breadth status" value={titleCase(planning.breadthStatus ?? "sufficient")} />
+            <MetricLine label="Coverage" value={`${formatNumber(planning.actualBreadthCoveragePercent ?? 0)}%`} />
+            <MetricLine label="Coverage status" value={titleCase(planning.breadthStatus ?? "sufficient")} />
           </div>
         </div>
       )}
-      {article.validation.advisories?.length ? (
-        <div className="rounded-md border border-line bg-surface-1 p-3">
-          <PanelTitle title="Advisories" />
-          <ul className="mt-2 space-y-2 text-xs text-ink-muted">
-            {article.validation.advisories.map((advisory) => <li key={advisory} className="rounded-md bg-surface-2 p-2">{advisory}</li>)}
-          </ul>
-        </div>
-      ) : null}
       <div
         ref={warningsRef}
         className={cn(
@@ -5114,14 +5119,13 @@ function ValidationPanel({
           highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
         )}
       >
-        <PanelTitle title="Validation" />
-        {reviewItems.length ? (
+        <PanelTitle title="Validation findings" />
+        {validationGroups.length ? (
           <div className="space-y-2">
-            {reviewItems.map((warning) => (
+            {validationGroups.map((group) => (
               <ValidationIssueCard
-                key={warning}
-                issue={warning}
-                status={article.status === "needs_review" ? "Needs review" : statusLabel(article.status)}
+                key={group.title}
+                group={group}
                 busy={busy}
                 onApprove={onApprove}
                 onRegenerate={onRegenerate}
@@ -5129,22 +5133,37 @@ function ValidationPanel({
             ))}
           </div>
         ) : article.status === "approved" || article.status === "scheduled" || article.status === "published" ? (
-          <div className="rounded-md border border-success/20 bg-success/5 p-3 text-xs text-success">Approved</div>
+          <div className="rounded-md border border-success/20 bg-success/5 p-3 text-xs text-success">This article is ready for publication review.</div>
         ) : <Empty text="No validation warnings." />}
+        {article.validation.advisories?.length ? (
+          <div className="rounded-md border border-line bg-surface-1 p-3">
+            <div className="text-[11px] font-medium text-ink">Editorial notes</div>
+            <ul className="mt-2 space-y-2 text-xs text-ink-muted">
+              {article.validation.advisories.map((advisory) => <li key={advisory} className="rounded-md bg-surface-2 p-2">{advisory}</li>)}
+            </ul>
+          </div>
+        ) : null}
       </div>
+      <ValidationScoreSummary
+        items={[
+          ["Quality", article.validation.qualityScore],
+          ["SEO", article.validation.seoScore],
+          ["Profile Match", article.profileRelevanceScore ?? article.validation.profileRelevanceScore ?? "-"],
+          ["FAQ Coverage", article.validation.faqScore],
+          ["Warnings", article.validation.warnings.length]
+        ]}
+      />
     </div>
   );
 }
 
 function ValidationIssueCard({
-  issue,
-  status,
+  group,
   busy,
   onApprove,
   onRegenerate
 }: {
-  issue: string;
-  status: string;
+  group: ValidationIssueGroup;
   busy: boolean;
   onApprove: () => void;
   onRegenerate: () => void;
@@ -5153,26 +5172,33 @@ function ValidationIssueCard({
     <div className="rounded-md border border-line bg-surface-1 p-3 text-xs">
       <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
         <AlertCircle className="size-4 text-warn" />
-        {validationIssueTitle(issue)}
+        {group.title}
       </div>
-      <div className="mt-3 space-y-2">
-        <ValidationDetail label="Status" value={status} />
-        <ValidationDetail label="Reason" value={validationReason(issue)} />
-        <ValidationDetail label="Recommendation" value={validationRecommendation(issue)} />
+      <div className="mt-1 text-[11px] font-medium text-warn">Needs review</div>
+      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-muted">
+        {group.summary}
+      </p>
+      {group.issues.length > 1 ? (
+        <div className="mt-3">
+          <div className="text-[11px] font-medium text-ink">Issues found</div>
+          <ul className="mt-2 space-y-1 text-[11px] leading-snug text-ink-muted">
+            {group.issues.map((issue) => (
+              <li key={issue} className="flex items-start gap-2">
+                <span className="mt-[5px] size-1 shrink-0 rounded-full bg-warn" />
+                <span>{issue}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="mt-3">
+        <div className="text-[11px] font-medium text-ink">Suggested action</div>
+        <p className="mt-1 text-[11px] leading-snug text-ink-muted">{group.action}</p>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button" disabled={busy} onClick={onApprove} className="rounded-md border border-line bg-background px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface-2 disabled:opacity-50">Approve anyway</button>
         <button type="button" disabled={busy} onClick={onRegenerate} className="inline-flex items-center gap-1 rounded-md border border-line bg-background px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface-2 disabled:opacity-50"><RotateCw className="size-3" />Regenerate</button>
       </div>
-    </div>
-  );
-}
-
-function ValidationDetail({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
-      <div className="mt-0.5 text-ink-muted">{value}</div>
     </div>
   );
 }
@@ -5195,6 +5221,23 @@ function MetricGrid({ items, compact = false }: { items: [string, string | numbe
           <div className={cn("mono mt-1 font-semibold text-ink", compact ? "text-[15px]" : "text-lg")}>{value}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ValidationScoreSummary({ items }: { items: [string, string | number][] }) {
+  return (
+    <div className="rounded-md border border-line bg-surface-1 p-3">
+      <PanelTitle title="Quality scores" />
+      <div className="mt-2 space-y-2">
+        {items.map(([label, value]) => (
+          <div key={label} className="flex items-center gap-2 text-[11px]">
+            <span className="text-ink-muted">{label}</span>
+            <span className="min-w-0 flex-1 border-b border-dotted border-line/80" />
+            <span className="mono font-semibold text-ink">{value}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -5544,21 +5587,43 @@ function validationIssueTitle(issue: string) {
   return "Quality";
 }
 
-function validationReason(issue: string) {
-  if (/below 80%|word target|shorter/i.test(issue)) return "Article is below the configured target length.";
-  if (/faq/i.test(issue)) return "FAQ coverage is missing or needs human review.";
-  if (/heading|h2|section/i.test(issue)) return "Article structure may be thinner than the configured outline.";
-  if (/research-process|source language|leakage/i.test(issue)) return "Article may expose source or research-process language.";
-  return issue;
+interface ValidationIssueGroup {
+  title: string;
+  issues: string[];
+  summary: string;
+  action: string;
 }
 
-function validationRecommendation(issue: string) {
-  if (/below 80%|word target|shorter|complete/i.test(issue)) return "Expand the thin sections and add more concrete coverage of the highest-risk decision points.";
-  if (/faq/i.test(issue)) return "Add or revise concise buyer questions that match the article intent.";
-  if (/heading|h2|section/i.test(issue)) return "Add missing sections or split broad sections into clearer H2 coverage.";
-  if (/research-process|source language|leakage/i.test(issue)) return "Edit out process language and rewrite claims as reader-facing guidance.";
-  if (/profile|format|guide|comparison|how-to|definition/i.test(issue)) return "Add the missing format element required by this content profile.";
-  return "Review the warning, edit if needed, or approve if the article is acceptable as written.";
+function buildValidationIssueGroups(issues: string[]): ValidationIssueGroup[] {
+  const grouped = new Map<string, string[]>();
+  for (const issue of issues) {
+    const title = validationIssueTitle(issue);
+    grouped.set(title, [...(grouped.get(title) ?? []), issue]);
+  }
+  return [...grouped.entries()].map(([title, groupedIssues]) => ({
+    title,
+    issues: groupedIssues,
+    summary: validationGroupSummary(title, groupedIssues),
+    action: validationGroupAction(title)
+  }));
+}
+
+function validationGroupSummary(title: string, issues: string[]) {
+  if (title === "Completeness") return "The article is not yet complete enough for publication and may miss important planned decision points or target depth.";
+  if (title === "FAQ") return "The article is missing some answer-led coverage that helps readers resolve common questions before publishing.";
+  if (title === "Structure") return "The article structure needs another pass so readers can follow the argument more easily from section to section.";
+  if (title === "Research") return "The draft needs a cleaner evidence pass so readers can trust the claims without seeing process or source leakage.";
+  if (title === "Format") return "The article is close, but it is missing one or more format elements expected for this type of piece.";
+  return issues[0] ?? "This article needs a final editorial pass before publishing.";
+}
+
+function validationGroupAction(title: string) {
+  if (title === "Completeness") return "Expand the thin sections, cover the planned decision points more directly, or regenerate the article.";
+  if (title === "FAQ") return "Add concise buyer questions and answers that match the article intent before publishing.";
+  if (title === "Structure") return "Split broad sections, add missing headings, and make the reading flow easier to scan.";
+  if (title === "Research") return "Rewrite the affected lines as reader-facing guidance and remove any process language or unsupported claims.";
+  if (title === "Format") return "Add the missing structural element expected for this content type, or regenerate if the draft is too far off brief.";
+  return "Review the draft carefully, edit where needed, or regenerate if the article is not ready for publication.";
 }
 
 function publishingStatusTone(status: PublishingWorkflowStatus) {

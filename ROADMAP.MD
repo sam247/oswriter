@@ -35,6 +35,29 @@
   - `Recommended` for quality improvements
   - `Optional` for lower-impact project/context enhancements
 - Renamed the bulk action to `Optimise Article` and scoped the inline bulk review to deterministic safe fixes only.
+- Removed the extra `Safe fixes only` note beneath the score summary to keep the header quieter.
+
+### Sidebar Project Summary Polish
+
+- Replaced the duplicated queue and failed counts under the active project name with completed article count so the dropdown summary now reads `X Articles`.
+
+### Validation Sidebar Editorial Pass
+
+- Reframed the Validation tab as an editorial publication review rather than a diagnostics surface.
+- Added a publishing-readiness summary card at the top so the first message is either `Ready to publish` or `Needs review`.
+- Reordered the sidebar hierarchy to read as:
+  - publishing status
+  - article profile snapshot
+  - planning
+  - validation findings
+  - quality scores
+- Merged duplicate validation findings by category so repeated issues such as completeness problems now appear in one combined review card.
+- Rewrote validation finding cards in more editorial language with:
+  - a natural summary of what is wrong
+  - grouped issue bullets when multiple related findings exist
+  - clearer suggested action guidance
+- Renamed planning labels for readability without changing calculations, including `Planned concepts`, `Coverage`, `Coverage status`, and `Plan completed`.
+- Simplified quality scores into a lighter supporting summary instead of a grid of KPI-style tiles.
 - Simplified internal linking review so users can:
   - open suggestions directly from the card
   - keep or remove individual links before insertion

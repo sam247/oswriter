@@ -262,16 +262,13 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
           )}
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
+        <div className="mt-3 border-t border-line pt-3">
           <div>
             <div className="text-[11.5px] font-medium text-ink">
               {totalRemaining ? `${totalRemaining} improvement${totalRemaining === 1 ? "" : "s"} remaining` : "No improvements remaining"}
             </div>
             <div className="mono mt-1 text-[10.5px] text-ink-subtle">Estimated completion: {formatEstimate(estimatedCompletionSeconds)}</div>
           </div>
-          {safeRecommendations.length > 0 ? (
-            <div className="mono text-right text-[10.5px] text-ink-subtle">Safe fixes only</div>
-          ) : null}
         </div>
 
         {hasProgressItems ? (
