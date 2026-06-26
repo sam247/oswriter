@@ -2,6 +2,32 @@
 
 ## Completed
 
+### Pipeline Dashboard Refinement
+
+- Reframed the Pipeline tab into a clearer operational story:
+  - `Current pipeline`
+  - `Performance summary`
+  - `Research summary`
+  - collapsible `Research details` and `Diagnostics`
+- Kept the existing live stage treatment intact so the active stage still pulses and shows in-flight messages while generation is running.
+- Promoted QueueWrite timing strengths by surfacing:
+  - active processing time
+  - queue wait time
+  - end-to-end time
+- Replaced the raw research/source dump at the top of the tab with a concise summary for:
+  - accepted sources
+  - rejected sources
+  - queries generated
+- Reworked rejected-source presentation so the default view explains rejection reasons in grouped human-readable labels instead of leading with raw URLs.
+- Moved verbose technical data behind collapsible panels for:
+  - queries
+  - accepted sources
+  - rejected sources
+  - timing diagnostics
+  - pipeline events
+  - raw execution details
+- Added focused regression coverage for the new dashboard summary logic so timing and research-quality counts remain stable.
+
 ### Editor Toolbar Polish
 
 - Reordered the article editor primary actions to `Export`, `Copy All`, and `Publish`.

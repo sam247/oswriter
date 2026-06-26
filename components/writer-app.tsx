@@ -11,6 +11,7 @@ import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
 import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
+import { rejectionSummaryLabel } from "@/lib/research/source-classification";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
 import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WorkerHealthState, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
@@ -4872,7 +4873,7 @@ function PipelinePanel({
   details,
   selectedStage,
   setSelectedStage,
-  setTab
+  setTab: _setTab
 }: {
   pipeline: ArticleDocument["pipeline"];
   article: ArticleDocument | null;
@@ -4883,54 +4884,207 @@ function PipelinePanel({
   setTab: (tab: InspectorTab) => void;
 }) {
   const selected = pipeline.find((step) => step.stage === selectedStage) ?? pipeline[0];
-  const runtime = calculatePipelineRuntime(pipeline);
+  const dashboard = useMemo(
+    () => buildPipelineDashboardSummary(pipeline, article, job, details.research),
+    [article, details.research, job, pipeline]
+  );
+  const [open, setOpen] = useState({
+    research: false,
+    queries: false,
+    accepted: false,
+    rejected: false,
+    diagnostics: false,
+    timing: false,
+    events: false,
+    raw: false
+  });
+  const debugEvents = details.debug?.events ?? [];
   return (
     <div className="space-y-4">
-      <ol className="relative space-y-2.5 pl-5">
-        <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
-        {pipeline.map((step) => (
-          <li key={step.stage} className="relative">
-            <span className="absolute -left-[18px] top-1 grid size-3 place-items-center bg-surface-2">
-              {pipelineIcon(step.status)}
-            </span>
-            <button
-              onClick={() => {
-                setSelectedStage(step.stage);
-                if (step.stage === "research" && article) setTab("research");
-              }}
-              className={cn(
-                "w-full rounded px-1.5 py-1 text-left hover:bg-surface-3",
-                selected?.stage === step.stage && "bg-surface-1"
-              )}
+      <div className="rounded-md border border-line bg-surface-1 p-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <PanelTitle title="Current pipeline" />
+          {dashboard.activeStageLabel && <span className="mono text-[10.5px] text-ink-subtle">{dashboard.activeStageLabel} live</span>}
+        </div>
+        <ol className="relative space-y-2.5 pl-5">
+          <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
+          {pipeline.map((step) => (
+            <li key={step.stage} className="relative">
+              <span className="absolute -left-[18px] top-1 grid size-3 place-items-center bg-surface-1">
+                {pipelineIcon(step.status)}
+              </span>
+              <button
+                onClick={() => setSelectedStage(step.stage)}
+                className={cn(
+                  "w-full rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:bg-surface-2",
+                  selected?.stage === step.stage && "border-line bg-background"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[12.5px] font-medium text-ink">
+                    {formatPipelineStageLabel(step.stage)}
+                    {step.status === "running" ? "..." : ""}
+                  </span>
+                  <span className="mono ml-auto text-[10.5px] text-ink-subtle">{formatPipelineStepStatus(step)}</span>
+                </div>
+                {step.message && (
+                  <p className={cn(
+                    "mt-1 text-[11px] leading-snug",
+                    step.status === "running" ? "text-info" : "text-ink-muted"
+                  )}>
+                    {step.message}
+                  </p>
+                )}
+                {step.error && <p className="mt-1 text-[11px] leading-snug text-danger">{step.error}</p>}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <div className="rounded-md border border-line bg-surface-1 p-3">
+        <PanelTitle title="Performance summary" />
+        <DashboardMetricCards
+          items={[
+            { label: "Active processing", value: formatOperationalDuration(dashboard.performance.activeProcessingMs) },
+            { label: "Queue wait", value: formatOperationalDuration(dashboard.performance.queueWaitMs) },
+            { label: "End-to-end", value: formatOperationalDuration(dashboard.performance.endToEndMs) }
+          ]}
+        />
+      </div>
+
+      <div className="rounded-md border border-line bg-surface-1 p-3">
+        <PanelTitle title="Research summary" />
+        <DashboardMetricCards
+          items={[
+            { label: "Accepted sources", value: String(dashboard.research.acceptedSources) },
+            { label: "Rejected sources", value: String(dashboard.research.rejectedSources) },
+            { label: "Queries generated", value: String(dashboard.research.queriesGenerated) }
+          ]}
+        />
+        <div className="mt-3 rounded-md border border-line/70 bg-background p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">
+            Rejected source reasons
+          </div>
+          {dashboard.research.rejectedReasonSummary.length ? (
+            <ul className="mt-2 space-y-1 text-[11.5px] leading-snug text-ink-muted">
+              {dashboard.research.rejectedReasonSummary.map((item) => (
+                <li key={item.label}>
+                  {item.label}
+                  {item.count > 1 ? ` (${item.count})` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="mt-2 text-[11.5px] text-ink-subtle">No rejected sources recorded.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <CollapsibleMetricCard
+          title="Research details"
+          summary={`${dashboard.research.queriesGenerated} queries · ${dashboard.research.acceptedSources} accepted · ${dashboard.research.rejectedSources} rejected`}
+          open={open.research}
+          onToggle={() => setOpen((current) => ({ ...current, research: !current.research }))}
+        >
+          <div className="space-y-2">
+            <CollapsibleMetricCard
+              title="Show queries"
+              summary={`${dashboard.research.queriesGenerated} recorded`}
+              open={open.queries}
+              onToggle={() => setOpen((current) => ({ ...current, queries: !current.queries }))}
             >
-              <div className="flex items-baseline gap-2">
-                <span className="text-[12.5px] font-medium capitalize text-ink">{step.stage}</span>
-                <span className="mono ml-auto text-[10.5px] text-ink-subtle">{step.durationMs ? `${(step.durationMs / 1000).toFixed(1)}s` : step.status}</span>
+              {details.research?.queries?.length ? (
+                <ul className="space-y-1 text-xs text-ink-muted">
+                  {details.research.queries.map((query) => <li key={query}>{query}</li>)}
+                </ul>
+              ) : <Empty text="No queries recorded." />}
+            </CollapsibleMetricCard>
+
+            <CollapsibleMetricCard
+              title="Show accepted sources"
+              summary={`${dashboard.research.acceptedSources} recorded`}
+              open={open.accepted}
+              onToggle={() => setOpen((current) => ({ ...current, accepted: !current.accepted }))}
+            >
+              <SourceList sources={dashboard.research.acceptedSourceList} />
+            </CollapsibleMetricCard>
+
+            <CollapsibleMetricCard
+              title="Show rejected sources"
+              summary={`${dashboard.research.rejectedSources} recorded`}
+              open={open.rejected}
+              onToggle={() => setOpen((current) => ({ ...current, rejected: !current.rejected }))}
+            >
+              {dashboard.research.rejectedSourceList.length ? (
+                <SourceList sources={dashboard.research.rejectedSourceList} rejected />
+              ) : <Empty text="No rejected sources recorded." />}
+            </CollapsibleMetricCard>
+          </div>
+        </CollapsibleMetricCard>
+
+        <CollapsibleMetricCard
+          title="Diagnostics"
+          summary={`${debugEvents.length} events · ${selected ? formatPipelineStageLabel(selected.stage) : "No stage"} detail`}
+          open={open.diagnostics}
+          onToggle={() => setOpen((current) => ({ ...current, diagnostics: !current.diagnostics }))}
+        >
+          <div className="space-y-2">
+            <CollapsibleMetricCard
+              title="Timing diagnostics"
+              summary={`${formatOperationalDuration(dashboard.performance.activeProcessingMs)} active · ${formatOperationalDuration(dashboard.performance.endToEndMs)} end-to-end`}
+              open={open.timing}
+              onToggle={() => setOpen((current) => ({ ...current, timing: !current.timing }))}
+            >
+              <PipelineTimingDiagnostics timing={dashboard.timing} />
+            </CollapsibleMetricCard>
+
+            <CollapsibleMetricCard
+              title="Pipeline events"
+              summary={debugEvents.length ? `${debugEvents.length} recorded` : "No events yet"}
+              open={open.events}
+              onToggle={() => setOpen((current) => ({ ...current, events: !current.events }))}
+            >
+              <DebugPanel debug={details.debug} />
+            </CollapsibleMetricCard>
+
+            <CollapsibleMetricCard
+              title="Raw execution details"
+              summary={selected ? `${formatPipelineStageLabel(selected.stage)} selected` : "No stage selected"}
+              open={open.raw}
+              onToggle={() => setOpen((current) => ({ ...current, raw: !current.raw }))}
+            >
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {pipeline.map((step) => (
+                    <button
+                      key={step.stage}
+                      type="button"
+                      onClick={() => setSelectedStage(step.stage)}
+                      className={cn(
+                        "rounded-md border border-line px-2 py-1 text-[11px] text-ink-muted hover:bg-surface-2",
+                        selected?.stage === step.stage && "bg-background text-ink"
+                      )}
+                    >
+                      {formatPipelineStageLabel(step.stage)}
+                    </button>
+                  ))}
+                </div>
+                {selected ? <StageDetails step={selected} article={article} details={details} /> : <Empty text="No stage selected." />}
               </div>
-              {step.error && <p className="mt-1 text-[11px] leading-snug text-danger">{step.error}</p>}
-              {step.message && <p className="mt-1 text-[11px] leading-snug text-ink-muted">{step.message}</p>}
-            </button>
-        </li>
-      ))}
-    </ol>
-      {selected && <StageDetails step={selected} article={article} details={details} />}
-      <MetricGrid compact items={[
-        ["Active total", formatDuration(runtime.totalMs)],
-        ["Research", formatDuration(runtime.researchMs)],
-        ["Generation", formatDuration(runtime.generationMs)],
-        ["Validation", formatDuration(runtime.validationMs)],
-        ["Save", formatDuration(runtime.saveMs)]
-      ]} />
-      <PipelineTimingDiagnostics pipeline={pipeline} article={article} job={job} />
+            </CollapsibleMetricCard>
+          </div>
+        </CollapsibleMetricCard>
+      </div>
     </div>
   );
 }
 
-function PipelineTimingDiagnostics({ pipeline, article, job }: { pipeline: ArticleDocument["pipeline"]; article: ArticleDocument | null; job: QueueJob | null }) {
-  const timing = calculateTimingDiagnostics(pipeline, article, job);
+function PipelineTimingDiagnostics({ timing }: { timing: ReturnType<typeof calculateTimingDiagnostics> }) {
   if (!timing) return null;
   return (
-    <div className="rounded-md border border-line bg-surface-1 p-3">
+    <div className="rounded-md border border-line bg-background p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
         <PanelTitle title="Timing diagnostics" />
         <span className="mono text-[10.5px] text-ink-subtle">Existing timestamps</span>
@@ -4939,12 +5093,14 @@ function PipelineTimingDiagnostics({ pipeline, article, job }: { pipeline: Artic
         ["Queued", formatTime(timing.queuedAt)],
         ["Started", formatTime(timing.startedAt)],
         ["Generated", formatTime(timing.generatedAt)],
-        ["Pipeline active", formatDuration(timing.pipelineDurationMs)],
-        ["End-to-end", formatDuration(timing.endToEndMs)],
+        ["Pipeline active", formatOperationalDuration(timing.pipelineDurationMs)],
+        ["Queue wait", formatOperationalDuration(timing.queueWaitMs)],
+        ["End-to-end", formatOperationalDuration(timing.endToEndMs)],
         ["Waiting / visibility", formatDuration(timing.waitingMs)]
       ]} />
       <div className="mt-3 space-y-1.5 text-[11.5px] leading-snug text-ink-muted">
         <div>Active time is the sum of recorded stage durations.</div>
+        <div>Queue wait runs from queue creation to the first recorded pipeline start.</div>
         <div>End-to-end runs from queue creation to generated article visibility in saved state.</div>
         {timing.waitingMs > 0 && <div>Difference includes queue wait, cron cadence gaps, storage/list freshness, and UI polling delay.</div>}
       </div>
@@ -4957,6 +5113,30 @@ function pipelineIcon(status: ArticleDocument["pipeline"][number]["status"]) {
   if (status === "failed") return <AlertCircle className="size-3 text-danger" />;
   if (status === "running") return <Search className="size-3 animate-pulse text-info" />;
   return <span className="size-2 rounded-full border border-line-strong bg-surface-2" />;
+}
+
+function DashboardMetricCards({ items }: { items: Array<{ label: string; value: string }> }) {
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+      {items.map((item) => (
+        <div key={item.label} className="rounded-md border border-line/70 bg-background p-3">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{item.label}</div>
+          <div className="mono mt-2 text-xl font-semibold text-ink">{item.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatPipelineStageLabel(stage: ArticleDocument["pipeline"][number]["stage"]) {
+  return stage.charAt(0).toUpperCase() + stage.slice(1);
+}
+
+function formatPipelineStepStatus(step: ArticleDocument["pipeline"][number]) {
+  if (step.status === "done" || step.status === "failed") return formatOperationalDuration(step.durationMs ?? 0);
+  if (step.status === "running") return "Live";
+  if (step.status === "skipped") return "Skipped";
+  return "Pending";
 }
 
 function StageDetails({ step, article, details }: { step: ArticleDocument["pipeline"][number]; article: ArticleDocument | null; details: Details }) {
@@ -5206,7 +5386,7 @@ function ValidationIssueCard({
 function DebugPanel({ debug }: { debug: DebugDocument | null }) {
   if (!debug) return <Empty text="No debug record yet." />;
   return (
-    <pre className="mono whitespace-pre-wrap rounded-md bg-surface-1 p-3 text-[11px] leading-relaxed text-ink-muted">
+    <pre className="mono whitespace-pre-wrap rounded-md bg-background p-3 text-[11px] leading-relaxed text-ink-muted">
       {debug.events.map((event) => `[${event.at}] ${event.level.toUpperCase()} ${event.stage}: ${event.message}${event.data ? `\n${JSON.stringify(event.data, null, 2)}` : ""}`).join("\n\n")}
     </pre>
   );
@@ -6391,17 +6571,30 @@ function calculateTimingDiagnostics(pipeline: ArticleDocument["pipeline"], artic
   const startedAt = earliestTimestamp(pipeline.map((step) => step.startedAt));
   const generatedAt = article?.updatedAt ?? completedGeneratedJobAt(job);
   if (!queuedAt && !startedAt && !generatedAt) return null;
-  const pipelineDurationMs = calculatePipelineRuntime(pipeline).totalMs;
-  const endToEndMs = queuedAt && generatedAt ? Math.max(0, new Date(generatedAt).getTime() - new Date(queuedAt).getTime()) : null;
+  const pipelineDurationMs = calculateActivePipelineRuntime(pipeline);
+  const queueWaitMs = queuedAt && startedAt ? Math.max(0, new Date(startedAt).getTime() - new Date(queuedAt).getTime()) : null;
+  const endReferenceAt = generatedAt ?? (job?.status === "queued" || job?.status === "processing" ? new Date().toISOString() : null);
+  const endToEndMs = queuedAt && endReferenceAt ? Math.max(0, new Date(endReferenceAt).getTime() - new Date(queuedAt).getTime()) : null;
   const waitingMs = endToEndMs !== null ? Math.max(0, endToEndMs - pipelineDurationMs) : null;
   return {
     queuedAt,
     startedAt,
     generatedAt,
     pipelineDurationMs,
+    queueWaitMs,
     endToEndMs,
     waitingMs: waitingMs ?? 0
   };
+}
+
+function calculateActivePipelineRuntime(pipeline: ArticleDocument["pipeline"]) {
+  return pipeline.reduce((sum, step) => {
+    if (step.durationMs) return sum + step.durationMs;
+    if (step.status === "running" && step.startedAt) {
+      return sum + Math.max(0, Date.now() - new Date(step.startedAt).getTime());
+    }
+    return sum;
+  }, 0);
 }
 
 function completedGeneratedJobAt(job: QueueJob | null) {
@@ -6436,6 +6629,63 @@ function formatDuration(ms: number | null) {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatOperationalDuration(ms: number | null | undefined) {
+  if (ms === null || ms === undefined) return "-";
+  if (ms <= 0) return "0s";
+  return formatDuration(ms);
+}
+
+type RejectionSummaryItem = { label: string; count: number };
+
+export function buildPipelineDashboardSummary(
+  pipeline: ArticleDocument["pipeline"],
+  article: ArticleDocument | null,
+  job: QueueJob | null,
+  research: ResearchPack | null
+) {
+  const timing = calculateTimingDiagnostics(pipeline, article, job);
+  const acceptedSourceList = research?.sources ?? article?.sources ?? [];
+  const rejectedSourceList = research?.rejectedSources ?? [];
+  const rejectedFromSummary = research?.researchSummary?.rejected
+    ? Object.entries(research.researchSummary.rejected).reduce((sum, [, count]) => sum + count, 0)
+    : 0;
+  const rejectedReasonSummary = summarizeRejectedSourceReasons(research);
+  return {
+    activeStageLabel: pipeline.find((step) => step.status === "running")?.stage ? formatPipelineStageLabel(pipeline.find((step) => step.status === "running")!.stage) : null,
+    timing,
+    performance: {
+      activeProcessingMs: timing?.pipelineDurationMs ?? calculatePipelineRuntime(pipeline).totalMs,
+      queueWaitMs: timing?.queueWaitMs ?? null,
+      endToEndMs: timing?.endToEndMs ?? null
+    },
+    research: {
+      acceptedSources: research?.researchSummary?.accepted ?? acceptedSourceList.length,
+      rejectedSources: rejectedSourceList.length || rejectedFromSummary,
+      queriesGenerated: research?.queries.length ?? 0,
+      acceptedSourceList,
+      rejectedSourceList,
+      rejectedReasonSummary
+    }
+  };
+}
+
+function summarizeRejectedSourceReasons(research: ResearchPack | null): RejectionSummaryItem[] {
+  const sourceCounts = new Map<string, number>();
+  for (const source of research?.rejectedSources ?? []) {
+    const label = rejectionSummaryLabel(source.rejectionReason);
+    sourceCounts.set(label, (sourceCounts.get(label) ?? 0) + 1);
+  }
+  if (sourceCounts.size > 0) {
+    return [...sourceCounts.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }
+  const summaryCounts = research?.researchSummary?.rejected ?? {};
+  return Object.entries(summaryCounts)
+    .map(([reason, count]) => ({ label: rejectionSummaryLabel(reason), count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 function formatEstimatedRuntime(ms: number) {
