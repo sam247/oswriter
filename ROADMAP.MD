@@ -2,6 +2,30 @@
 
 ## Completed
 
+### SEO Assistant Panel Refinement
+
+- Reframed the right-hand SEO tab from a stack of separate tools into a calmer optimisation checklist with one consistent interaction model.
+- Kept the `Article Score` card at the top while clarifying available upside with:
+  - `Current` and `Potential` score states
+  - a remaining-improvements count
+  - an estimated completion time
+  - preserved red-circle to green-tick progress tracking for the active checklist
+- Replaced duplicated `Preview` / `Apply` controls on recommendation cards with inline expansion so each optimisation now flows as:
+  - issue detected
+  - expand in place
+  - review current and suggested text
+  - accept or cancel
+- Regrouped recommendations into clearer working sections:
+  - `Critical` for required pre-publish fixes
+  - `Recommended` for quality improvements
+  - `Optional` for lower-impact project/context enhancements
+- Renamed the bulk action to `Optimise Article` and scoped the inline bulk review to deterministic safe fixes only.
+- Simplified internal linking review so users can:
+  - open suggestions directly from the card
+  - keep or remove individual links before insertion
+  - insert only the selected links instead of auto-applying everything
+- Added focused regression coverage proving reviewed internal-link subsets insert only the retained links.
+
 ### Neon Cost Visibility Telemetry
 
 - Assessed the available Neon integration surface and confirmed:

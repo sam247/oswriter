@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { applySeoRecommendations, buildSeoDecisionEngine } from "@/lib/seo/decision-engine";
+import { applySeoRecommendations, applySelectedInternalLinks, buildSeoDecisionEngine } from "@/lib/seo/decision-engine";
 import { createDefaultProjectProfile } from "@/lib/project/profile";
 import type { ArticleDocument, ResearchPack, SiteKnowledgePageDocument, ProjectSiteProfileDocument } from "@/lib/types";
 
@@ -283,6 +283,35 @@ describe("SEO decision engine", () => {
     assert.ok(recommendation);
     const updated = recommendation.apply(article.markdown);
     assert.equal((updated.match(/\]\(\/services\//g) ?? []).length, 5);
+  });
+
+  it("inserts only the reviewed internal links that remain selected", () => {
+    const article = {
+      ...articleFixture(),
+      sources: [],
+      markdown: "# Groundworks Planning\n\nGroundworks shape the programme before excavation, piling, and drainage begin."
+    };
+    const recommendation = buildSeoDecisionEngine({
+      article,
+      markdown: article.markdown,
+      sitePages: [
+        sitePage("https://example.com/services/groundworks", "Groundworks"),
+        sitePage("https://example.com/services/excavation", "Excavation"),
+        sitePage("https://example.com/services/piling", "Piling"),
+        sitePage("https://example.com/services/drainage", "Drainage")
+      ],
+      siteProfile: siteProfile({ services: ["Groundworks", "Excavation", "Piling", "Drainage"] })
+    }).recommendations.find((item) => item.id === "suggest-internal-links");
+
+    assert.ok(recommendation);
+    const opportunities = (recommendation.metadata?.internalLinkOpportunities ?? []) as Array<{ anchorText: string; url: string }>;
+    const selected = opportunities.filter((item) => /groundworks|drainage/i.test(item.anchorText));
+    const updated = applySelectedInternalLinks(article.markdown, selected);
+
+    assert.match(updated, /\[Groundworks\]\(\/services\/groundworks\) shape/i);
+    assert.match(updated, /\[drainage\]\(\/services\/drainage\) begin/i);
+    assert.doesNotMatch(updated, /\]\(\/services\/excavation\)/i);
+    assert.doesNotMatch(updated, /\]\(\/services\/piling\)/i);
   });
 });
 

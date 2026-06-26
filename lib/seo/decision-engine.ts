@@ -2,6 +2,15 @@ import type { ArticleDocument, ProjectProfile, ProjectSiteProfileDocument, Resea
 
 export type SeoRecommendationSection = "fix" | "improve" | "project";
 
+export interface SeoInternalLinkOpportunity {
+  url: string;
+  title: string;
+  anchorText: string;
+  reason: string;
+  confidence: number;
+  matchType: "topic" | "service" | "location" | "partial";
+}
+
 export interface SeoRecommendation {
   id: string;
   section: SeoRecommendationSection;
@@ -34,16 +43,8 @@ interface SeoDecisionInput {
 }
 
 type FaqCoverageStatus = "missing" | "partial" | "complete";
-type LinkOpportunityMatchType = "topic" | "service" | "location" | "partial";
-
-interface InternalLinkOpportunity {
-  url: string;
-  title: string;
-  anchorText: string;
-  reason: string;
-  confidence: number;
-  matchType: LinkOpportunityMatchType;
-}
+type LinkOpportunityMatchType = SeoInternalLinkOpportunity["matchType"];
+type InternalLinkOpportunity = SeoInternalLinkOpportunity;
 
 const RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.7;
 
@@ -67,6 +68,10 @@ export function buildSeoDecisionEngine({ article, markdown, research, profile, s
 
 export function applySeoRecommendations(markdown: string, recommendations: SeoRecommendation[]) {
   return recommendations.reduce((next, recommendation) => recommendation.apply(next), markdown);
+}
+
+export function applySelectedInternalLinks(markdown: string, opportunities: SeoInternalLinkOpportunity[]) {
+  return insertInternalLinks(markdown, opportunities).markdown;
 }
 
 function buildFixRecommendations(article: ArticleDocument, markdown: string, profile?: ProjectProfile | null) {
@@ -720,7 +725,7 @@ function buildInternalLinkRecommendations(markdown: string, sitePages: SiteKnowl
     section: "project" as const,
     title: `${selected.length} internal linking ${selected.length === 1 ? "opportunity" : "opportunities"} detected`,
     reason: top ? `${top.title}: ${top.reason}` : "Imported Website Intelligence pages match topics in this article.",
-    actionLabel: "Suggest Links",
+    actionLabel: "Generate Suggestions",
     impact: Math.min(5, Math.max(2, selected.length)),
     priority: 84,
     currentText: "No suggested internal links have been inserted for these opportunities.",
