@@ -90,7 +90,10 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
     [decision.recommendations]
   );
   const internalLinkRecommendation = decision.recommendations.find((item) => item.id === "suggest-internal-links") ?? null;
-  const internalLinkOpportunities = extractInternalLinkOpportunities(internalLinkRecommendation);
+  const internalLinkOpportunities = useMemo(
+    () => dedupeInternalLinkOpportunities(extractInternalLinkOpportunities(internalLinkRecommendation)),
+    [internalLinkRecommendation]
+  );
   const selectedInternalLinkOpportunities = internalLinkOpportunities.filter((item) => selectedInternalLinks[internalLinkKey(item)] ?? true);
 
   useEffect(() => {
@@ -200,7 +203,7 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
       return;
     }
     if (!(selectedRecommendations[recommendation.id] ?? true)) {
-      onNotify?.("Select the change to apply");
+      onNotify?.("Tick the change to apply");
       return;
     }
     setRunningActionId(recommendation.id);
@@ -246,7 +249,7 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-subtle">Article Score</div>
-            <div className="mono mt-1 text-3xl font-semibold leading-none text-ink">{decision.score}</div>
+            <div className="mono mt-1 text-3xl font-semibold leading-none text-ink">{decision.score} <span className="text-ink-subtle">→</span> {decision.targetScore}</div>
           </div>
           {safeRecommendations.length > 0 && (
             <button
@@ -257,11 +260,6 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
               Optimise Article
             </button>
           )}
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <ScoreMetric label="Current" value={decision.score} />
-          <ScoreMetric label="Potential" value={decision.targetScore} />
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
@@ -397,7 +395,6 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
                           <div className="grid gap-3">
                             {recommendation.id === "suggest-internal-links" ? (
                               <>
-                                <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{internalLinks.length} opportunities found</div>
                                 <div className="space-y-2">
                                   {internalLinks.map((opportunity) => {
                                     const selected = selectedInternalLinks[internalLinkKey(opportunity)] ?? true;
@@ -417,9 +414,12 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
                                             className="mt-0.5 size-4 accent-ink"
                                           />
                                           <div className="min-w-0">
-                                            <div className="text-[11.5px] font-semibold text-ink">{opportunity.anchorText}</div>
+                                            <div className="flex items-start justify-between gap-2">
+                                              <div className="text-[11.5px] font-semibold text-ink">{opportunity.title || opportunity.anchorText}</div>
+                                              <ConfidencePill confidence={opportunity.confidence} />
+                                            </div>
                                             <div className="mono mt-1 text-[10px] text-ink-subtle">{opportunity.url}</div>
-                                            <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{opportunity.reason}</div>
+                                            <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">{editorialInternalLinkReason(opportunity)}</div>
                                           </div>
                                         </div>
                                       </label>
@@ -439,7 +439,7 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
                                     />
                                     <div className="min-w-0">
                                       <div className="text-[11.5px] font-semibold text-ink">{recommendation.actionLabel}</div>
-                                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">Include this change when applying.</div>
+                                      <div className="mt-1 text-[10.5px] leading-snug text-ink-muted">Include this change in the update.</div>
                                     </div>
                                   </div>
                                 </label>
@@ -448,16 +448,23 @@ export function SeoDecisionPanel({ article, markdown, research, profile, project
                               </>
                             )}
                             <div className="rounded-md border border-line bg-background px-3 py-2.5">
-                              <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">Why it matters</div>
+                              <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">Why this helps</div>
                               <p className="mt-1 text-[11px] leading-snug text-ink-muted">{recommendation.reason}</p>
                             </div>
                           </div>
 
-                          <div className="mt-3 border-t border-line pt-3">
-                            <div className="mono text-[10px] text-ink-subtle">
-                              {recommendation.id === "suggest-internal-links"
-                                ? `${selectedCount} of ${internalLinks.length} selected`
-                                : `${(isSelected ? 1 : 0)} of 1 selected`}
+                          <div className="sticky bottom-0 mt-3 border-t border-line bg-surface-1 pt-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="mono text-[10px] text-ink-subtle">
+                                  {recommendation.id === "suggest-internal-links"
+                                    ? `${selectedCount} of ${internalLinks.length} selected`
+                                    : `${(isSelected ? 1 : 0)} of 1 selected`}
+                                </div>
+                                <div className="mono mt-1 text-[10px] text-ink-subtle">
+                                  Estimated gain: +{estimatedSelectedImpact(recommendation, selectedCount, internalLinks.length, isSelected)} points
+                                </div>
+                              </div>
                             </div>
                             <button
                               type="button"
@@ -573,13 +580,12 @@ function sameLinkSelection(left: Record<string, boolean>, right: Record<string, 
   return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
-function ScoreMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-line bg-background px-2.5 py-2">
-      <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
-      <div className="mono mt-1 text-xl font-semibold leading-none text-ink">{value}</div>
-    </div>
-  );
+function estimatedSelectedImpact(recommendation: SeoRecommendation, selectedCount: number, total: number, selectedSingle: boolean) {
+  if (recommendation.id === "suggest-internal-links") {
+    if (!selectedCount) return 0;
+    return Math.max(1, Math.round((recommendation.impact * selectedCount) / Math.max(1, total)));
+  }
+  return selectedSingle ? recommendation.impact : 0;
 }
 
 function PreviewBlock({ label, text }: { label: string; text: string }) {
@@ -589,4 +595,62 @@ function PreviewBlock({ label, text }: { label: string; text: string }) {
       <pre className="mono mt-1 max-h-44 overflow-auto whitespace-pre-wrap rounded-md bg-background p-2.5 text-[10.5px] leading-relaxed text-ink-muted">{text}</pre>
     </div>
   );
+}
+
+function dedupeInternalLinkOpportunities(opportunities: SeoInternalLinkOpportunity[]) {
+  const buckets = new Map<string, SeoInternalLinkOpportunity>();
+  for (const opportunity of opportunities) {
+    const key = internalLinkIntentKey(opportunity);
+    const existing = buckets.get(key);
+    if (!existing || opportunity.confidence > existing.confidence) {
+      buckets.set(key, opportunity);
+    }
+  }
+  return [...buckets.values()].sort((left, right) => right.confidence - left.confidence);
+}
+
+function internalLinkIntentKey(opportunity: SeoInternalLinkOpportunity) {
+  const url = opportunity.url.split("?")[0]?.split("#")[0] ?? opportunity.url;
+  const path = url.replace(/\/+$/g, "");
+  const lastSegment = path.split("/").filter(Boolean).at(-1) ?? path;
+  return normalizeIntentText(`${opportunity.title} ${lastSegment}`);
+}
+
+function normalizeIntentText(value: string) {
+  const stop = new Set(["services", "service", "contractor", "contractors", "company", "companies", "near", "me", "the", "and", "for", "with", "from"]);
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((term) => term.length > 2 && !stop.has(term))
+    .slice(0, 6)
+    .join(" ");
+}
+
+function confidenceLabel(confidence: number) {
+  if (confidence >= 0.85) return "High confidence";
+  if (confidence >= 0.72) return "Medium confidence";
+  return "Low confidence";
+}
+
+function ConfidencePill({ confidence }: { confidence: number }) {
+  const label = confidenceLabel(confidence);
+  const tone = label.startsWith("High")
+    ? "border-success/20 bg-success/10 text-success"
+    : label.startsWith("Medium")
+      ? "border-line bg-surface-2 text-ink-muted"
+      : "border-danger/20 bg-danger/10 text-danger";
+  return (
+    <span className={cn("mono shrink-0 rounded-full border px-2 py-0.5 text-[9.5px] tracking-[0.14em]", tone)}>
+      {label}
+    </span>
+  );
+}
+
+function editorialInternalLinkReason(opportunity: SeoInternalLinkOpportunity) {
+  if (opportunity.matchType === "service") return "Relevant service page for this topic.";
+  if (opportunity.matchType === "location") return "Relevant local page for this topic.";
+  if (opportunity.matchType === "topic") return "Relevant page for this topic.";
+  return "A related page that strengthens topical coverage.";
 }

@@ -17,7 +17,7 @@
 
 - Reframed the right-hand SEO tab from a stack of separate tools into a calmer optimisation checklist with one consistent interaction model.
 - Kept the `Article Score` card at the top while clarifying available upside with:
-  - `Current` and `Potential` score states
+  - a single `current → potential` score journey
   - a remaining-improvements count
   - an estimated completion time
   - preserved red-circle to green-tick progress tracking for the active checklist
@@ -29,6 +29,7 @@
 - Refined the interaction model so expanded cards behave as the preview:
   - internal links use a checkbox list (unchecked = rejected) with a single footer action
   - other optimisations allow selection and apply from one bottom action instead of scattered buttons
+  - internal link suggestions are deduplicated for near-identical destinations and include confidence labels
 - Regrouped recommendations into clearer working sections:
   - `Critical` for required pre-publish fixes
   - `Recommended` for quality improvements
