@@ -21,7 +21,7 @@ const METRIC_LABELS: Record<BillingMetric, string> = {
 
 export default async function BillingSettingsPage() {
   if (!await isAuthed()) redirect("/login");
-  const store = await createWorkspaceStore();
+  const store = createWorkspaceStore();
   const snapshot = await new BillingService(new WorkspaceUsageProvider(store)).getSnapshot("default-workspace");
 
   return (
