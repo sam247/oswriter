@@ -2,6 +2,13 @@
 
 ## Completed
 
+### Homepage Refinement Pass
+
+- Removed the homepage `Trusted by` logo strip so visitors now move directly from the hero into the QueueWrite workflow narrative.
+- Tightened the hero-to-workflow transition to reduce the dead space created by removing that section while keeping the existing visual style and spacing system intact.
+- Widened the workflow section layout so `Research → Generate → Review → Optimise → Publish.` has more horizontal presence and reads as a stronger product story without changing the wording.
+- Preserved the homepage hero, queue animation, KPI section, pricing cards, CTA section, navigation, colour palette, and typography system as-is.
+
 ### Public Site Frontend And Dashboard Split
 
 - Ported the public marketing frontend from `SITE_DESIGN` into the Next.js App Router so QueueWrite now serves a dedicated public website at:

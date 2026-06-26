@@ -11,7 +11,6 @@ export default function HomePage() {
     <div className="min-h-screen bg-[#f5f5f7] font-sans text-[#0a0a0a] antialiased [color-scheme:light]">
       <Nav />
       <Hero />
-      <TrustedBy />
       <ProcessSteps />
       <ResearchVisual />
       <QueueShowcase />
@@ -63,7 +62,7 @@ function Nav() {
 /* ---------- Hero ---------- */
 function Hero() {
   return (
-    <section className="px-4 pt-16 pb-20 lg:pt-24">
+    <section className="px-4 pt-16 pb-14 lg:pt-24 lg:pb-16">
       <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-[1.05fr_1fr] lg:gap-16">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11.5px] font-medium tracking-tight text-[#3a3a3a] ring-1 ring-black/5">
@@ -511,29 +510,6 @@ function SummaryStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-
-
-/* ---------- Trusted by ---------- */
-function TrustedBy() {
-  const logos = ["Northwind", "Acme", "Vercel", "Linear", "Stripe", "Notion"];
-  return (
-    <section className="px-4 pb-12">
-      <div className="mx-auto max-w-6xl">
-        <p className="text-center text-[12px] font-medium uppercase tracking-[0.18em] text-[#6a6a6a]">
-          Trusted by content operations at
-        </p>
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-4 opacity-70">
-          {logos.map((l) => (
-            <span key={l} className="text-[16px] font-semibold tracking-tight text-[#3a3a3a]">
-              {l}
-            </span>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 /* ---------- Process Steps ---------- */
 function ProcessSteps() {
   const steps = [
@@ -544,21 +520,23 @@ function ProcessSteps() {
     { n: "05", t: "Publish", d: "Push to WordPress as draft or live, or export to your CMS. Nothing ships without a review pass." },
   ];
   return (
-    <section id="process" className="px-4 py-24 lg:py-32">
+    <section id="process" className="px-4 py-20 lg:py-28">
       <div className="mx-auto max-w-6xl">
-        <div className="mx-auto max-w-3xl text-center">
-          <div className="text-[12px] font-medium uppercase tracking-[0.18em] text-[#6a6a6a]">
-            The workflow
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,0.7fr)] lg:items-end lg:gap-10">
+          <div>
+            <div className="text-[12px] font-medium uppercase tracking-[0.18em] text-[#6a6a6a]">
+              The workflow
+            </div>
+            <h2 className="mt-4 max-w-4xl text-balance text-[42px] font-semibold leading-[1.02] tracking-[-0.04em] lg:text-[68px]">
+              Research → Generate → Review → Optimise → Publish.
+            </h2>
           </div>
-          <h2 className="mt-4 text-balance text-[40px] font-semibold leading-[1.02] tracking-[-0.035em] lg:text-[64px]">
-            Research → Generate → Review → Optimise → Publish.
-          </h2>
-          <p className="mx-auto mt-5 max-w-xl text-[16px] leading-[1.55] text-[#4a4a4a]">
+          <p className="max-w-md text-[16px] leading-[1.6] text-[#4a4a4a] lg:justify-self-end">
             A single editorial pipeline, not a writing tool. Every article moves through the same stages — and nothing publishes without passing them.
           </p>
         </div>
 
-        <div className="relative mt-20 grid gap-12 md:grid-cols-5 md:gap-6">
+        <div className="relative mt-16 grid gap-12 md:grid-cols-5 md:gap-8 lg:mt-20">
           {/* connector */}
           <div className="absolute left-0 right-0 top-[22px] hidden md:block">
             <div className="mx-auto h-px max-w-[88%] bg-gradient-to-r from-transparent via-black/15 to-transparent" />
@@ -569,7 +547,7 @@ function ProcessSteps() {
                 {s.n}
               </div>
               <h3 className="mt-6 text-[22px] font-semibold tracking-[-0.02em]">{s.t}</h3>
-              <p className="mt-2 max-w-[20ch] text-[14px] leading-relaxed text-[#4a4a4a]">
+              <p className="mt-2 max-w-[24ch] text-[14px] leading-relaxed text-[#4a4a4a]">
                 {s.d}
               </p>
             </div>
