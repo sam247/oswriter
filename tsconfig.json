@@ -36,6 +36,7 @@
   ],
   "exclude": [
     "node_modules",
-    "VITE_UI_DESIGN"
+    "VITE_UI_DESIGN",
+    "SITE_DESIGN"
   ]
 }

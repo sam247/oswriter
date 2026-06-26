@@ -180,7 +180,10 @@ describe("telemetry Google Sheets export", () => {
     assert.ok(operationsSheet);
     assert.ok(attributionSheet);
     assert.equal(usageSheet.rows[1][2], "purple-fire-64344998");
-    assert.equal(operationsSheet.rows[1][2], "article_generation");
+    const articleOperation = operationsSheet.rows.find((row) => row[2] === "article_generation");
+    const batchOperation = operationsSheet.rows.find((row) => row[2] === "batch_generation_run");
+    assert.equal(articleOperation?.[2], "article_generation");
+    assert.equal(batchOperation?.[2], "batch_generation_run");
     const articleAttribution = attributionSheet.rows.find((row) => row[1] === "article_generation");
     const batchSummary = attributionSheet.rows.find((row) => row[1] === "batch_generation_run" && row[2] === "batch_summary");
     assert.equal(articleAttribution?.[12], 0.42);

@@ -2,6 +2,26 @@
 
 ## Completed
 
+### Public Site Frontend And Dashboard Split
+
+- Ported the public marketing frontend from `SITE_DESIGN` into the Next.js App Router so QueueWrite now serves a dedicated public website at:
+  - `/`
+  - `/features`
+  - `/pricing`
+  - `/contact`
+  - `/blog`
+  - `/blog/[slug]`
+- Preserved the real QueueWrite workspace as the authoritative application experience and moved its entry point to `/dashboard` instead of replacing it with the Lovable demo shell.
+- Kept the existing password-auth flow intact on `/dashboard` so unauthenticated users still see the current login gate and authenticated users enter the unchanged workspace.
+- Preserved the existing billing implementation at `/settings/billing` and updated route handoff so authenticated users return to `/dashboard`.
+- Added Playwright coverage for the critical public/app split:
+  - public marketing navigation
+  - public blog article access
+  - protected dashboard access
+  - protected billing access
+  - authenticated billing round-trip back to the workspace
+- Added explicit in-memory storage support for local Playwright runs so browser verification can execute without Blob credentials.
+
 ### Pipeline Dashboard Refinement
 
 - Reframed the Pipeline tab into a clearer operational story:

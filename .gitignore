@@ -4,6 +4,8 @@ node_modules/
 out/
 dist/
 coverage/
+test-results/
+.trae/documents/
 *.tsbuildinfo
 .DS_Store
 

@@ -48,12 +48,22 @@ npm install
 npm run dev
 ```
 
+## Route Responsibilities
+
+- `/` serves the public QueueWrite marketing homepage.
+- `/features`, `/pricing`, `/contact`, `/blog`, and `/blog/[slug]` are public marketing and content routes.
+- `/dashboard` is the protected QueueWrite workspace entry and keeps the existing password login flow.
+- `/settings/billing` remains the protected billing page for authenticated workspace users.
+
 ## Verification
 
 ```bash
 npm run test
 npm run build
+npm run test:e2e
 ```
+
+Playwright starts the app with `STORAGE_BACKEND=memory` so route/auth/billing coverage can run locally without Blob credentials.
 
 ## Background Queue Execution
 
