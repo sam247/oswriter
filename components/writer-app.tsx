@@ -2769,6 +2769,15 @@ function SettingsPanel({
                   <span className={cn("mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", tavilyKeyConfigured ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
                     {tavilyKeyConfigured ? "Connected" : "Not configured"}
                   </span>
+                  {tavilyKeyConfigured && !tavilyManageOpen && (
+                    <button
+                      type="button"
+                      onClick={() => { updateDraft({ aiProvider: { researchApiKey: "", researchKeyEnabled: false, researchKeyStatus: "not_configured", researchProvider: "queuewrite" } }); setTavilyManageOpen(false); }}
+                      className="h-7 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 hover:bg-surface-2"
+                    >
+                      Disconnect
+                    </button>
+                  )}
                   {!tavilyManageOpen ? (
                     <button type="button" onClick={() => setTavilyManageOpen(true)} className={cn("h-7 rounded-md px-3 text-[12px] font-medium", tavilyKeyConfigured ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
                       {tavilyKeyConfigured ? "Manage" : "Connect"}
@@ -2781,7 +2790,7 @@ function SettingsPanel({
                 </div>
               </div>
               {tavilyManageOpen && (
-                <div className="mt-3 space-y-2">
+                <div className="mt-3">
                   <SettingsSecretInput
                     label="Tavily API Key"
                     saved={tavilyKeyConfigured}
@@ -2790,18 +2799,10 @@ function SettingsPanel({
                         researchApiKey,
                         researchKeyEnabled: true,
                         researchKeyStatus: "configured",
+                        researchProvider: "byok",
                         byokResearchProvider: "tavily"
                       }
                     })}
-                  />
-                  <SettingsSelect
-                    label="Research provider"
-                    value={draft.aiProvider.researchProvider ?? "queuewrite"}
-                    options={[
-                      { key: "queuewrite", label: "QueueWrite Research (default)" },
-                      ...(tavilyKeyConfigured ? [{ key: "byok", label: "Tavily (BYOK)" }] : [])
-                    ]}
-                    onChange={(researchProvider) => updateDraft({ aiProvider: { researchProvider: researchProvider as "queuewrite" | "byok" } })}
                   />
                 </div>
               )}
