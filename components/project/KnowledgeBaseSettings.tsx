@@ -200,87 +200,25 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
-            <div className="mono mt-0.5 text-[10px] text-ink-subtle">{siteProfile ? `${siteProfile.pageCount} knowledge pages analysed` : "Import a sitemap to learn this business"}</div>
+            <div className="mono mt-0.5 text-[10px] text-ink-subtle">
+              {siteProfile ? "Website understood" : "Import a sitemap to learn this business"}
+            </div>
           </div>
           <ChevronDown className="size-4 shrink-0 text-ink-subtle transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
 
         <div className="border-t border-line px-4 pb-4 pt-3">
-          <p className="text-[11.5px] leading-relaxed text-ink-muted">Import a sitemap so QueueWrite can learn services, brands, categories, audiences, locations, CTAs, and writing signals directly from the website.</p>
+          {siteProfile && siteSummary.status === "ready" ? (
+            <>
+              {/* Primary: what QueueWrite has understood */}
+              <WebsiteUnderstandingCard profile={siteProfile} insights={websiteInsights} />
 
-          <div className="mt-4 rounded-md border border-line bg-surface-2 p-3">
-            <div className="text-[13px] font-semibold text-ink">Website Intelligence</div>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">This profile becomes the foundation for generation, SEO suggestions, internal links, entity detection, topical authority, and CTA recommendations. If sitemap access is unavailable, QueueWrite falls back to website discovery mode.</p>
-
-            <label className="mt-3 block text-[12px] text-ink-muted">
-              <span>Website Type</span>
-              <select
-                value={selectedBusinessType}
-                disabled={businessTypeBusy || siteBusy || forgetting || Boolean(disabledReason)}
-                title={disabledReason ?? "Website Intelligence business type"}
-                onChange={(event) => void updateBusinessType(event.currentTarget.value)}
-                className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none focus:border-ink disabled:opacity-50"
-              >
-                {BUSINESS_TYPE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
-              </select>
-            </label>
-            <div className="mt-1 text-[10.5px] text-ink-subtle">Current strategy: {businessTypeLabel}</div>
-
-            <label className="mt-3 block text-[12px] text-ink-muted">
-              <span>Sitemap URL</span>
-              <input
-                value={sitemapUrl}
-                onChange={(event) => setSitemapUrl(event.currentTarget.value)}
-                placeholder="https://example.com/sitemap.xml"
-                className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-subtle focus:border-ink"
-              />
-            </label>
-            <div className="mt-1 text-[10.5px] text-ink-subtle">Example: `https://example.com/sitemap.xml` or `https://example.com`</div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={siteBusy || siteLoading || forgetting || Boolean(disabledReason)}
-                title={disabledReason ?? (hasSiteKnowledge ? "Reanalyse priority pages from this sitemap" : "Import site pages from this sitemap")}
-                onClick={() => void importSite()}
-                className="inline-flex h-8 items-center gap-1 rounded-md bg-ink px-3 text-[11.5px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {siteBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                {siteBusy ? "Importing..." : hasSiteKnowledge ? "Reanalyse Site" : "Import Site"}
-              </button>
-              <button
-                type="button"
-                disabled={siteBusy || forgetting || (siteSummary.pagesIndexed === 0 && pages.length === 0)}
-                onClick={() => void openPages()}
-                className="h-8 rounded-md border border-line bg-background px-3 text-[11.5px] font-medium text-ink disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                View Pages
-              </button>
-              {hasSiteKnowledge && (
-                <button
-                  type="button"
-                  disabled={siteBusy || forgetting || Boolean(disabledReason)}
-                  title={disabledReason ?? "Forget imported website intelligence"}
-                  onClick={() => setForgetOpen(true)}
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-danger/40 bg-danger/10 px-3 text-[11.5px] font-medium text-danger disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {forgetting ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                  Forget Site
-                </button>
-              )}
-            </div>
-
-            <div className="mt-3 rounded-md border border-line bg-background px-3 py-2.5">
-              <div className="mono text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Knowledge Import</div>
-              {siteLoading ? (
-                <div className="mt-2 text-[12px] text-ink-muted">Loading...</div>
-              ) : siteSummary.status === "not_configured" && !siteSummary.lastImportedAt ? (
-                <div className="mt-2 text-[12px] text-ink">Not Configured</div>
-              ) : (
-                <div className="mt-2 space-y-1 text-[12px] text-ink-muted">
+              {/* Secondary: import metadata */}
+              {!siteLoading && siteSummary.lastImportedAt && (
+                <div className="mt-3 space-y-1 rounded-md border border-line bg-surface-2 px-3 py-2.5 text-[12px] text-ink-muted">
                   <div className="flex items-center justify-between gap-4">
-                    <span>{siteSummary.status === "importing" ? "Import Progress" : "Last analysed"}</span>
-                    <span className="text-right text-ink">{siteSummary.status === "importing" ? `${siteSummary.processedPages}/${Math.max(siteSummary.totalDiscoveredUrls, siteSummary.processedPages || 0, 1)}` : formatDateTime(siteSummary.lastImportedAt)}</span>
+                    <span>Last analysed</span>
+                    <span className="text-right text-ink">{formatDateTime(siteSummary.lastImportedAt)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <span>Pages analysed</span>
@@ -292,21 +230,159 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
                       <span className="text-right text-ink">{formatDuration(siteSummary.startedAt, siteSummary.completedAt)}</span>
                     </div>
                   )}
-                  {siteSummary.status === "importing" && siteSummary.currentUrl && (
-                    <div className="border-t border-line pt-2 text-[11px] text-ink-subtle">{siteSummary.currentUrl}</div>
-                  )}
                 </div>
               )}
-            </div>
 
-            {discoveryModeActive && siteSummary.status === "ready" && (
-              <div className="mt-3 text-[11px] text-ink">Website Intelligence completed using website discovery mode.</div>
-            )}
-            {displayedSiteError && <div className="mt-3 text-[11px] text-warn">{displayedSiteError}</div>}
-            {siteProfile && siteSummary.status === "ready" && (
-              <WebsiteUnderstandingCard profile={siteProfile} insights={websiteInsights} />
-            )}
-          </div>
+              {/* Import controls — de-emphasised when already understood */}
+              <div className="mt-3 rounded-md border border-line bg-surface-2 p-3">
+                <div className="mono mb-2 text-[10px] uppercase tracking-[0.14em] text-ink-subtle">Reanalyse or manage</div>
+                <label className="block text-[12px] text-ink-muted">
+                  <span>Website Type</span>
+                  <select
+                    value={selectedBusinessType}
+                    disabled={businessTypeBusy || siteBusy || forgetting || Boolean(disabledReason)}
+                    title={disabledReason ?? "Website Intelligence business type"}
+                    onChange={(event) => void updateBusinessType(event.currentTarget.value)}
+                    className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none focus:border-ink disabled:opacity-50"
+                  >
+                    {BUSINESS_TYPE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="mt-2 block text-[12px] text-ink-muted">
+                  <span>Sitemap URL</span>
+                  <input
+                    value={sitemapUrl}
+                    onChange={(event) => setSitemapUrl(event.currentTarget.value)}
+                    placeholder="https://example.com/sitemap.xml"
+                    className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-subtle focus:border-ink"
+                  />
+                </label>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={siteBusy || siteLoading || forgetting || Boolean(disabledReason)}
+                    title={disabledReason ?? "Reanalyse priority pages from this sitemap"}
+                    onClick={() => void importSite()}
+                    className="inline-flex h-8 items-center gap-1 rounded-md bg-ink px-3 text-[11.5px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {siteBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    {siteBusy ? "Importing…" : "Reanalyse Site"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={siteBusy || forgetting || pages.length === 0}
+                    onClick={() => void openPages()}
+                    className="h-8 rounded-md border border-line bg-background px-3 text-[11.5px] font-medium text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    View Pages
+                  </button>
+                  <button
+                    type="button"
+                    disabled={siteBusy || forgetting || Boolean(disabledReason)}
+                    title={disabledReason ?? "Forget imported website intelligence"}
+                    onClick={() => setForgetOpen(true)}
+                    className="inline-flex h-8 items-center gap-1 rounded-md border border-danger/40 bg-danger/10 px-3 text-[11.5px] font-medium text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {forgetting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    Forget Site
+                  </button>
+                </div>
+                {displayedSiteError && <div className="mt-2 text-[11px] text-warn">{displayedSiteError}</div>}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* No profile yet — show full import form */}
+              <p className="text-[11.5px] leading-relaxed text-ink-muted">Import a sitemap so QueueWrite can learn services, brands, categories, audiences, locations, CTAs, and writing signals directly from the website.</p>
+
+              <div className="mt-4 rounded-md border border-line bg-surface-2 p-3">
+                <p className="text-[11.5px] leading-relaxed text-ink-muted">This profile becomes the foundation for generation, SEO suggestions, internal links, entity detection, topical authority, and CTA recommendations. If sitemap access is unavailable, QueueWrite falls back to website discovery mode.</p>
+
+                <label className="mt-3 block text-[12px] text-ink-muted">
+                  <span>Website Type</span>
+                  <select
+                    value={selectedBusinessType}
+                    disabled={businessTypeBusy || siteBusy || forgetting || Boolean(disabledReason)}
+                    title={disabledReason ?? "Website Intelligence business type"}
+                    onChange={(event) => void updateBusinessType(event.currentTarget.value)}
+                    className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none focus:border-ink disabled:opacity-50"
+                  >
+                    {BUSINESS_TYPE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                  </select>
+                </label>
+                <div className="mt-1 text-[10.5px] text-ink-subtle">Current strategy: {businessTypeLabel}</div>
+
+                <label className="mt-3 block text-[12px] text-ink-muted">
+                  <span>Sitemap URL</span>
+                  <input
+                    value={sitemapUrl}
+                    onChange={(event) => setSitemapUrl(event.currentTarget.value)}
+                    placeholder="https://example.com/sitemap.xml"
+                    className="mt-1 h-9 w-full rounded border border-line bg-background px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-subtle focus:border-ink"
+                  />
+                </label>
+                <div className="mt-1 text-[10.5px] text-ink-subtle">Example: `https://example.com/sitemap.xml` or `https://example.com`</div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={siteBusy || siteLoading || forgetting || Boolean(disabledReason)}
+                    title={disabledReason ?? "Import site pages from this sitemap"}
+                    onClick={() => void importSite()}
+                    className="inline-flex h-8 items-center gap-1 rounded-md bg-ink px-3 text-[11.5px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {siteBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    {siteBusy ? "Importing…" : "Import Site"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={siteBusy || forgetting || (siteSummary.pagesIndexed === 0 && pages.length === 0)}
+                    onClick={() => void openPages()}
+                    className="h-8 rounded-md border border-line bg-background px-3 text-[11.5px] font-medium text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    View Pages
+                  </button>
+                </div>
+
+                {siteSummary.status === "importing" && (
+                  <div className="mt-3 rounded-md border border-line bg-background px-3 py-2.5">
+                    <div className="mono text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Importing</div>
+                    <div className="mt-2 space-y-1 text-[12px] text-ink-muted">
+                      <div className="flex items-center justify-between gap-4">
+                        <span>Progress</span>
+                        <span className="text-right text-ink">{siteSummary.processedPages}/{Math.max(siteSummary.totalDiscoveredUrls, siteSummary.processedPages || 0, 1)}</span>
+                      </div>
+                      {siteSummary.currentUrl && (
+                        <div className="border-t border-line pt-2 text-[11px] text-ink-subtle">{siteSummary.currentUrl}</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {!siteLoading && siteSummary.lastImportedAt && siteSummary.status !== "importing" && (
+                  <div className="mt-3 space-y-1 rounded-md border border-line bg-background px-3 py-2.5 text-[12px] text-ink-muted">
+                    <div className="flex items-center justify-between gap-4">
+                      <span>Last analysed</span>
+                      <span className="text-right text-ink">{formatDateTime(siteSummary.lastImportedAt)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <span>Pages analysed</span>
+                      <span className="text-right text-ink">{siteSummary.pagesIndexed}</span>
+                    </div>
+                    {siteSummary.startedAt && siteSummary.completedAt && (
+                      <div className="flex items-center justify-between gap-4">
+                        <span>Import duration</span>
+                        <span className="text-right text-ink">{formatDuration(siteSummary.startedAt, siteSummary.completedAt)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {discoveryModeActive && <div className="mt-3 text-[11px] text-ink">Website Intelligence completed using website discovery mode.</div>}
+                {displayedSiteError && <div className="mt-3 text-[11px] text-warn">{displayedSiteError}</div>}
+              </div>
+            </>
+          )}
 
           {disabledReason && <div className="mt-3 text-[11px] text-warn">{disabledReason}</div>}
         </div>

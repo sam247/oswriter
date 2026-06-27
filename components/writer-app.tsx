@@ -2627,21 +2627,37 @@ function SettingsPanel({
   onUpdatePreferences: (patch: WorkspacePreferencePatch) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState(state.preferences);
-  const [dirty, setDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
+  const [tavilyManageOpen, setTavilyManageOpen] = useState(false);
+  const [writerManageOpen, setWriterManageOpen] = useState(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftRef = useRef(draft);
+  const onUpdateRef = useRef(onUpdatePreferences);
+  useEffect(() => { draftRef.current = draft; }, [draft]);
+  useEffect(() => { onUpdateRef.current = onUpdatePreferences; }, [onUpdatePreferences]);
+
   const writerKeyEnabled = draft.aiProvider.writerKeyEnabled;
   const tavilyKeyConfigured = draft.aiProvider.researchKeyStatus === "configured";
+
+  const scheduleSave = useCallback(() => {
+    setSaveStatus("saving");
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      const d = draftRef.current;
+      await onUpdateRef.current({
+        account: d.account,
+        notifications: { enabled: d.notifications.enabled },
+        aiProvider: d.aiProvider
+      });
+      setSaveStatus("saved");
+    }, 1000);
+  }, []);
+
   const updateDraft = (patch: WorkspacePreferencePatch) => {
     setDraft((current) => mergeWorkspacePreferences(current, patch));
-    setDirty(true);
+    scheduleSave();
   };
-  const save = async () => {
-    const saved = await onUpdatePreferences({
-      account: draft.account,
-      notifications: { enabled: draft.notifications.enabled },
-      aiProvider: draft.aiProvider
-    });
-    if (saved) setDirty(false);
-  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
@@ -2649,99 +2665,162 @@ function SettingsPanel({
         <div className="mt-1 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-[24px] font-semibold leading-tight tracking-tight text-ink">Settings</h1>
-            <div className="mono mt-2 text-[11px] text-ink-muted">QueueWrite Research</div>
+            <div className="mono mt-2 text-[11px] text-ink-muted">{draft.account.workspaceName || "QueueWrite"}</div>
           </div>
           <button onClick={onClose} className="h-8 rounded-md px-3 text-[12px] text-ink-muted hover:bg-surface-3 hover:text-ink">Close</button>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
-        <div className="w-full max-w-none">
-          <SettingsSection title="Settings">
+        <div className="w-full max-w-none space-y-2.5">
+
+          <CollapsibleSettingsSection title="Workspace" defaultOpen>
             <SettingsTextInput label="Name" value={draft.account.name} onSave={(name) => updateDraft({ account: { name } })} />
             <SettingsTextInput label="Email address" value={draft.account.email} type="email" onSave={(email) => updateDraft({ account: { email } })} />
             <SettingsTextInput label="Workspace Name" value={draft.account.workspaceName} onSave={(workspaceName) => updateDraft({ account: { workspaceName } })} />
+          </CollapsibleSettingsSection>
 
-            <a href="/settings/billing" className="mt-3 flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3 text-sm text-ink hover:border-line-strong hover:bg-surface-3">
-              <span>
-                <span className="block font-medium">Billing</span>
-                <span className="mt-0.5 block text-xs text-ink-muted">Current plan, usage, limits and upgrades</span>
-              </span>
+          <CollapsibleSettingsSection title="Subscription">
+            <a href="/settings/billing" className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3 text-sm text-ink hover:border-line-strong hover:bg-surface-3">
+              <div>
+                <div className="font-medium">Billing</div>
+                <div className="mt-0.5 text-xs text-ink-muted">Current plan, usage, limits and upgrades</div>
+              </div>
               <ChevronRight className="size-4 text-ink-subtle" />
             </a>
+          </CollapsibleSettingsSection>
 
-            <div className="my-3 h-px bg-line" />
+          <CollapsibleSettingsSection title="API Keys" defaultOpen>
+            <p className="text-[12px] text-ink-muted">Connect research and writing providers. Keys are encrypted before storage and never shown again.</p>
 
-            <SettingsToggle
-              label="Notifications"
-              checked={draft.notifications.enabled}
-              onChange={(enabled) => updateDraft({ notifications: { enabled } })}
-            />
-
-            <div className="my-3 h-px bg-line" />
-
-            <SettingsToggle
-              label="BYOK Writer Key"
-              checked={writerKeyEnabled}
-              onChange={(writerKeyEnabled) => updateDraft({
-                aiProvider: {
-                  writerKeyEnabled,
-                  writerApiKey: writerKeyEnabled ? draft.aiProvider.writerApiKey : ""
-                }
-              })}
-              note="Optional. Platform AI remains the fallback until personal keys are wired into generation."
-            />
-            {writerKeyEnabled && (
-              <SettingsSecretInput
-                label="Writer API key"
-                saved={draft.aiProvider.writerKeyStatus === "configured"}
-                onSave={(writerApiKey) => writerApiKey && updateDraft({ aiProvider: { writerApiKey, writerKeyEnabled: true } })}
-              />
-            )}
-
-            <div className="my-3 h-px bg-line" />
-
-            <SettingsSecretInput
-              label="Tavily API Key"
-              saved={tavilyKeyConfigured}
-              onSave={(researchApiKey) => researchApiKey && updateDraft({
-                aiProvider: {
-                  researchApiKey,
-                  researchKeyEnabled: true,
-                  researchKeyStatus: "configured",
-                  byokResearchProvider: "tavily"
-                }
-              })}
-            />
-            <div className="mt-3">
-              <SettingsSelect
-                label="Research provider"
-                value={draft.aiProvider.researchProvider ?? "queuewrite"}
-                options={[
-                  { key: "queuewrite", label: "QueueWrite Research" },
-                  ...(tavilyKeyConfigured ? [{ key: "byok", label: "BYOK Experimental (Tavily)" }] : [])
-                ]}
-                onChange={(researchProvider) => updateDraft({ aiProvider: { researchProvider: researchProvider as "queuewrite" | "byok" } })}
-              />
+            {/* Tavily */}
+            <div className="rounded-md border border-line bg-surface-1 px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-semibold text-ink">Tavily Research</div>
+                  <div className="mt-0.5 text-[11.5px] text-ink-muted">BYOK source discovery and evidence extraction.</div>
+                </div>
+                <span className={cn("mono shrink-0 rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", tavilyKeyConfigured ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
+                  {tavilyKeyConfigured ? "Connected" : "Not configured"}
+                </span>
+              </div>
+              {tavilyManageOpen && (
+                <div className="mt-3 space-y-2">
+                  <SettingsSecretInput
+                    label="Tavily API Key"
+                    saved={tavilyKeyConfigured}
+                    onSave={(researchApiKey) => researchApiKey && updateDraft({
+                      aiProvider: {
+                        researchApiKey,
+                        researchKeyEnabled: true,
+                        researchKeyStatus: "configured",
+                        byokResearchProvider: "tavily"
+                      }
+                    })}
+                  />
+                  <SettingsSelect
+                    label="Research provider"
+                    value={draft.aiProvider.researchProvider ?? "queuewrite"}
+                    options={[
+                      { key: "queuewrite", label: "QueueWrite Research" },
+                      ...(tavilyKeyConfigured ? [{ key: "byok", label: "BYOK Experimental (Tavily)" }] : [])
+                    ]}
+                    onChange={(researchProvider) => updateDraft({ aiProvider: { researchProvider: researchProvider as "queuewrite" | "byok" } })}
+                  />
+                </div>
+              )}
+              <div className="mt-3 flex justify-end">
+                {!tavilyManageOpen ? (
+                  <button type="button" onClick={() => setTavilyManageOpen(true)} className={cn("h-8 rounded-md px-3 text-[12px] font-medium", tavilyKeyConfigured ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
+                    {tavilyKeyConfigured ? "Manage" : "Connect"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setTavilyManageOpen(false)} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
+                    Done
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
+            {/* QueueWrite Research (platform default) */}
+            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-2.5">
               <div>
                 <div className="text-[12px] font-medium text-ink">QueueWrite Research</div>
                 <div className="mt-0.5 text-[11px] text-ink-muted">Managed source discovery and evidence extraction.</div>
               </div>
-              <span className="mono text-[10px] uppercase tracking-[0.14em] text-success">Active</span>
+              <span className="mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em] bg-success/10 text-success">Active</span>
             </div>
-            <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
-              <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
-              <button onClick={save} disabled={!dirty} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save settings</button>
+
+            {/* Writer API Key */}
+            <div className="rounded-md border border-line bg-surface-1 px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-semibold text-ink">Writer API Key</div>
+                  <div className="mt-0.5 text-[11.5px] text-ink-muted">Optional. Platform AI is the fallback until a personal key is configured.</div>
+                </div>
+                <span className={cn("mono shrink-0 rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", writerKeyEnabled ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
+                  {writerKeyEnabled ? "Connected" : "Not configured"}
+                </span>
+              </div>
+              {writerManageOpen && (
+                <div className="mt-3">
+                  <SettingsSecretInput
+                    label="Writer API key"
+                    saved={draft.aiProvider.writerKeyStatus === "configured"}
+                    onSave={(writerApiKey) => writerApiKey && updateDraft({ aiProvider: { writerApiKey, writerKeyEnabled: true } })}
+                  />
+                </div>
+              )}
+              <div className="mt-3 flex justify-end gap-2">
+                {writerKeyEnabled && !writerManageOpen && (
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ aiProvider: { writerKeyEnabled: false, writerApiKey: "" } })}
+                    className="h-8 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 hover:bg-surface-2"
+                  >
+                    Disconnect
+                  </button>
+                )}
+                {!writerManageOpen ? (
+                  <button type="button" onClick={() => setWriterManageOpen(true)} className={cn("h-8 rounded-md px-3 text-[12px] font-medium", writerKeyEnabled ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
+                    {writerKeyEnabled ? "Manage" : "Connect"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setWriterManageOpen(false)} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
+                    Done
+                  </button>
+                )}
+              </div>
             </div>
-          </SettingsSection>
+          </CollapsibleSettingsSection>
+
+          <CollapsibleSettingsSection title="Notifications" defaultOpen>
+            <div className="rounded-md border border-line bg-surface-2 px-3 py-2.5">
+              <SettingsToggle
+                label="Email notifications"
+                checked={draft.notifications.enabled}
+                onChange={(enabled) => updateDraft({ notifications: { enabled } })}
+              />
+            </div>
+          </CollapsibleSettingsSection>
+
+          <div className="flex justify-end px-1 pt-1">
+            <span className="text-[11px] text-ink-subtle">
+              {saveStatus === "saving" ? "Saving…" : "✓ All changes saved"}
+            </span>
+          </div>
+
         </div>
       </div>
     </div>
   );
 }
+
+const EDITORIAL_GROUPS = [
+  { label: "Content", keys: ["practical_examples", "include_faqs", "include_internal_links", "actionable_recommendations"] },
+  { label: "Style", keys: ["balanced_neutral_tone", "avoid_marketing_cliches", "explain_technical_concepts"] },
+  { label: "Evidence", keys: ["evidence_first", "cite_statistics", "challenge_assumptions"] }
+] as const;
 
 function ProjectSettingsPanel({
   project,
@@ -2763,9 +2842,13 @@ function ProjectSettingsPanel({
   const initialProfile = normalizeProjectProfile(project.profile, fallbackTargetWords);
   const savedWordPress = project.publishing?.wordpress;
   const savedShopify = project.publishing?.shopify;
+
   const [profile, setProfile] = useState(initialProfile);
   const [contentProfile, setContentProfile] = useState<ContentProfile>(project.defaultContentProfile ?? "industry_explainer");
-  const [dirty, setDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
+  const [wordpressFormOpen, setWordpressFormOpen] = useState(false);
+  const [shopifyConnectFormOpen, setShopifyConnectFormOpen] = useState(false);
+
   const [wordpress, setWordpress] = useState<WordPressConnectionDraft>({
     siteUrl: savedWordPress?.siteUrl ?? "",
     username: savedWordPress?.username ?? "",
@@ -2777,23 +2860,48 @@ function ProjectSettingsPanel({
   const [wordpressLastError, setWordpressLastError] = useState<string | null>(savedWordPress?.lastError ?? null);
   const [wordpressLastValidatedAt, setWordpressLastValidatedAt] = useState<string | null>(savedWordPress?.lastValidatedAt ?? null);
   const [wordpressBusy, setWordpressBusy] = useState<"idle" | "testing" | "saving">("idle");
+
   const [shopifyDomainDraft, setShopifyDomainDraft] = useState(savedShopify?.shopDomain ?? "");
   const [shopifyStatus, setShopifyStatus] = useState<ShopifyConnectionStatus>(savedShopify?.connectionStatus ?? "not_connected");
   const [shopifyLastError, setShopifyLastError] = useState<string | null>(savedShopify?.lastError ?? null);
   const [shopifyLastValidatedAt, setShopifyLastValidatedAt] = useState<string | null>(savedShopify?.lastValidatedAt ?? null);
   const [shopifyBusy, setShopifyBusy] = useState<"idle" | "checking" | "disconnecting">("idle");
+
+  // Autosave refs — always hold the latest values so the timer callback avoids stale closures
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const profileRef = useRef(profile);
+  const contentProfileRef = useRef(contentProfile);
+  const onSaveRef = useRef(onSaveProjectSettings);
+  useEffect(() => { profileRef.current = profile; });
+  useEffect(() => { contentProfileRef.current = contentProfile; });
+  useEffect(() => { onSaveRef.current = onSaveProjectSettings; });
+
+  const scheduleSave = useCallback(() => {
+    setSaveStatus("saving");
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      const ok = await onSaveRef.current(profileRef.current, contentProfileRef.current);
+      if (ok) setSaveStatus("saved");
+    }, 1200);
+  }, []);
+
   const updateProfile = (patch: ProjectProfilePatch) => {
     setProfile((current) => normalizeProjectProfile({ ...current, ...patch }, fallbackTargetWords));
-    setDirty(true);
+    scheduleSave();
   };
-  const save = async () => {
-    if (await onSaveProjectSettings(profile, contentProfile)) setDirty(false);
+
+  const updateContentProfile = (next: ContentProfile) => {
+    setContentProfile(next);
+    scheduleSave();
   };
+
   const savedPasswordConfigured = savedWordPress?.applicationPasswordConfigured ?? false;
   const canSubmitWordPress = Boolean(wordpress.siteUrl.trim() && wordpress.username.trim() && (wordpress.applicationPassword.trim() || savedPasswordConfigured));
+
   const updateWordpress = (patch: Partial<WordPressConnectionDraft>) => {
     setWordpress((current) => ({ ...current, ...patch }));
   };
+
   const testWordPress = async () => {
     setWordpressBusy("testing");
     const ok = await onTestWordPressConnection(wordpress);
@@ -2806,6 +2914,7 @@ function ProjectSettingsPanel({
       setWordpressLastError("Most recent WordPress connection check failed.");
     }
   };
+
   const saveWordPress = async () => {
     setWordpressBusy("saving");
     const ok = await onSaveWordPressConnection(wordpress);
@@ -2818,12 +2927,15 @@ function ProjectSettingsPanel({
     setWordpress((current) => ({ ...current, applicationPassword: "" }));
     setWordpressLastError(null);
     setWordpressLastValidatedAt(new Date().toISOString());
+    setWordpressFormOpen(false);
   };
+
   const connectShopify = () => {
     const domain = shopifyDomainDraft.trim();
     if (!domain || !project.id) return;
     window.location.href = `/api/project/shopify/connect?projectId=${encodeURIComponent(project.id)}&shop=${encodeURIComponent(domain)}`;
   };
+
   const checkShopifyHealth = async () => {
     setShopifyBusy("checking");
     try {
@@ -2847,6 +2959,7 @@ function ProjectSettingsPanel({
     }
     setShopifyBusy("idle");
   };
+
   const disconnectShopify = async () => {
     setShopifyBusy("disconnecting");
     try {
@@ -2862,6 +2975,7 @@ function ProjectSettingsPanel({
     }
     setShopifyBusy("idle");
   };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="hairline-b px-6 pb-4 pt-5 lg:px-8">
@@ -2877,11 +2991,13 @@ function ProjectSettingsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-4 sm:px-6 lg:px-8 xl:px-10">
         <div className="w-full max-w-none space-y-2.5">
-          <CollapsibleSettingsSection title="Project Settings" defaultOpen>
-            <div className="rounded-md border border-line bg-surface-2 p-3">
-              <div className="text-[13px] font-medium text-ink">Generation context</div>
-              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {profile.languageLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
+
+          {/* ── Generation ── */}
+          <CollapsibleSettingsSection title="Generation" defaultOpen>
+            <div className="rounded-md border border-line bg-surface-2 px-3 py-2.5">
+              <div className="mono text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {profile.languageLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
             </div>
+
             <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => updateProfile({ regionKey })} />
             <SettingsSelect
               label="Industry"
@@ -2890,7 +3006,12 @@ function ProjectSettingsPanel({
               onChange={(industryKey) => updateProfile({ industryKey, audienceKey: defaultAudienceForIndustry(industryKey) })}
             />
             <SettingsSelect label="Audience" value={profile.audienceKey} options={audienceOptionsForIndustry(profile.industryKey)} onChange={(audienceKey) => updateProfile({ audienceKey })} />
-            <SettingsSelect label="Default content profile" value={contentProfile} options={PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => ({ key: option.value, label: option.label }))} onChange={(value) => { setContentProfile(value as ContentProfile); setDirty(true); }} />
+            <SettingsSelect
+              label="Content profile"
+              value={contentProfile}
+              options={PROJECT_CONTENT_PROFILE_OPTIONS.map((option) => ({ key: option.value, label: option.label }))}
+              onChange={(value) => updateContentProfile(value as ContentProfile)}
+            />
             <label className="flex items-center justify-between gap-3 py-2 text-[13px]">
               <span className="text-ink-muted">Default target words</span>
               <input
@@ -2911,17 +3032,44 @@ function ProjectSettingsPanel({
               options={LANGUAGE_OPTIONS}
               onChange={(languageKey) => updateProfile({ languageKey })}
             />
+
+            {/* Generation Preferences — grouped editorial standards */}
             <div className="rounded-md border border-line bg-surface-2 p-3">
-              <div className="text-[13px] font-medium text-ink">Editorial Standards</div>
-              <div className="mt-1 text-[11px] leading-snug text-ink-muted">Choose the editorial preferences QueueWrite should apply consistently during generation, validation, and SEO review.</div>
-              <div className="mt-3">
-                <SettingsPillMultiSelect
-                  options={EDITORIAL_STANDARD_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
-                  value={profile.editorialStandards}
-                  onChange={(editorialStandards) => updateProfile({ editorialStandards })}
-                />
-              </div>
+              <div className="text-[13px] font-medium text-ink">Generation Preferences</div>
+              <div className="mt-1 text-[11px] leading-snug text-ink-muted">Applied consistently during generation, validation, and SEO review.</div>
+              {EDITORIAL_GROUPS.map((group) => {
+                const groupOptions = EDITORIAL_STANDARD_OPTIONS.filter((opt) => (group.keys as readonly string[]).includes(opt.key));
+                return (
+                  <div key={group.label} className="mt-3">
+                    <div className="mono mb-2 text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{group.label}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {groupOptions.map((option) => {
+                        const active = profile.editorialStandards.includes(option.key);
+                        return (
+                          <button
+                            key={option.key}
+                            type="button"
+                            onClick={() => {
+                              const next = active
+                                ? profile.editorialStandards.filter((k) => k !== option.key)
+                                : [...profile.editorialStandards, option.key];
+                              updateProfile({ editorialStandards: next });
+                            }}
+                            className={cn(
+                              "rounded-full border px-3 py-1.5 text-[12px] transition-colors",
+                              active ? "border-ink bg-ink text-white" : "border-line bg-background text-ink-muted hover:border-line-strong hover:text-ink"
+                            )}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+
             <label className="block text-[12px] text-ink-muted">
               <span>Additional Guidance</span>
               <textarea
@@ -2929,20 +3077,24 @@ function ProjectSettingsPanel({
                 rows={3}
                 maxLength={MAX_ADDITIONAL_GUIDANCE_LENGTH}
                 onChange={(event) => updateProfile({ additionalGuidance: event.currentTarget.value })}
-                placeholder="Optional"
+                placeholder="Optional — anything unique about your business or writing style"
                 className="mt-1 min-h-[84px] w-full resize-none rounded border border-line bg-background px-2 py-2 text-[13px] text-ink outline-none focus:border-ink"
               />
               <div className="mt-1 flex items-start justify-between gap-3 text-[10.5px] text-ink-subtle">
-                <span>Anything unique about your business or writing style that cannot be expressed using the settings above.</span>
+                <span />
                 <span className="mono shrink-0">{profile.additionalGuidance.length}/{MAX_ADDITIONAL_GUIDANCE_LENGTH}</span>
               </div>
             </label>
+
             {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
-            <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
-              <span className="text-[11px] text-ink-subtle">{dirty ? "Unsaved changes" : "All changes saved"}</span>
-              <button onClick={save} disabled={!dirty || Boolean(settingsBlockedReason)} className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40">Save project settings</button>
+            <div className="flex justify-end pt-1">
+              <span className="text-[11px] text-ink-subtle">
+                {saveStatus === "saving" ? "Saving…" : "✓ All changes saved"}
+              </span>
             </div>
           </CollapsibleSettingsSection>
+
+          {/* ── Website Intelligence ── */}
           <KnowledgeBaseSettings
             projectId={project.id}
             businessTypeKey={profile.businessTypeKey}
@@ -2954,136 +3106,190 @@ function ProjectSettingsPanel({
             }}
             disabledReason={settingsBlockedReason}
           />
+
+          {/* ── Publishing Destinations ── */}
           <CollapsibleSettingsSection title="Publishing Destinations">
             <p className="text-[12px] text-ink-muted">
-              Connect the platforms QueueWrite can publish to for this project. Destinations are project-specific, allowing different projects to publish to different websites or stores.
+              Connect the platforms QueueWrite can publish to for this project. Destinations are project-specific.
             </p>
 
             {/* WordPress Site */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
-                <div>
-                  <div className="text-[13px] font-medium text-ink">WordPress Site</div>
-                  <div className="mt-0.5 text-[11px] text-ink-muted">Publish articles to a self-hosted or WordPress.com site.</div>
+            <div className="overflow-hidden rounded-md border border-line bg-surface-1">
+              <div className="px-4 py-3">
+                {wordpressStatus !== "not_connected" && savedWordPress?.siteUrl ? (
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+                      <div className="min-w-0">
+                        <div className="truncate text-[13px] font-semibold text-ink">{savedWordPress.siteUrl}</div>
+                        <div className="mt-0.5 text-[11.5px] text-ink-muted">
+                          {savedWordPress.defaultPostStatus === "draft" ? "Draft mode" : "Publish mode"}
+                        </div>
+                      </div>
+                    </div>
+                    <WordPressConnectionStatusBadge status={wordpressStatus} />
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[13px] font-semibold text-ink">WordPress Site</div>
+                      <div className="mt-0.5 text-[11.5px] text-ink-muted">Publish directly to WordPress.</div>
+                    </div>
+                    <WordPressConnectionStatusBadge status={wordpressStatus} />
+                  </div>
+                )}
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setWordpressFormOpen(!wordpressFormOpen)}
+                    className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2"
+                  >
+                    {wordpressFormOpen ? "Done" : wordpressStatus !== "not_connected" ? "Manage" : "Connect"}
+                  </button>
                 </div>
-                <WordPressConnectionStatusBadge status={wordpressStatus} />
               </div>
-              <label className="block text-[12px] text-ink-muted">
-                <span>Site URL</span>
-                <input
-                  type="url"
-                  value={wordpress.siteUrl}
-                  onChange={(event) => updateWordpress({ siteUrl: event.currentTarget.value })}
-                  placeholder="https://example.com"
-                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-                />
-              </label>
-              <label className="block text-[12px] text-ink-muted">
-                <span>Username</span>
-                <input
-                  type="text"
-                  value={wordpress.username}
-                  onChange={(event) => updateWordpress({ username: event.currentTarget.value })}
-                  placeholder="wordpress-username"
-                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-                />
-              </label>
-              <label className="block rounded-md border border-line bg-surface-2 p-3 text-[12px] text-ink-muted">
-                <span>Application Password</span>
-                <input
-                  type="password"
-                  value={wordpress.applicationPassword}
-                  onChange={(event) => updateWordpress({ applicationPassword: event.currentTarget.value })}
-                  placeholder={savedPasswordConfigured ? "Saved. Enter a new password to replace it." : "Enter application password"}
-                  autoComplete="off"
-                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-                />
-                <div className="mt-1 text-[10.5px] text-ink-subtle">Saved passwords are encrypted and never shown again.</div>
-              </label>
-              <SettingsSelect
-                label="Default post status"
-                value={wordpress.defaultPostStatus}
-                options={[
-                  { key: "draft", label: "Draft" },
-                  { key: "publish", label: "Publish" }
-                ]}
-                onChange={(value) => updateWordpress({ defaultPostStatus: value as WordPressPostStatus })}
-              />
-              <label className="block text-[12px] text-ink-muted">
-                <span>Default Category</span>
-                <input
-                  type="text"
-                  value={wordpress.defaultCategory}
-                  onChange={(event) => updateWordpress({ defaultCategory: event.currentTarget.value })}
-                  placeholder="Optional, for a later phase"
-                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-                />
-              </label>
-              {wordpressLastValidatedAt && (
-                <div className="text-[11px] text-ink-subtle">Last validated {formatDate(wordpressLastValidatedAt)}</div>
+
+              {wordpressFormOpen && (
+                <div className="space-y-2 border-t border-line bg-surface-2 px-4 py-3">
+                  <label className="block text-[12px] text-ink-muted">
+                    <span>Site URL</span>
+                    <input
+                      type="url"
+                      value={wordpress.siteUrl}
+                      onChange={(event) => updateWordpress({ siteUrl: event.currentTarget.value })}
+                      placeholder="https://example.com"
+                      className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                    />
+                  </label>
+                  <label className="block text-[12px] text-ink-muted">
+                    <span>Username</span>
+                    <input
+                      type="text"
+                      value={wordpress.username}
+                      onChange={(event) => updateWordpress({ username: event.currentTarget.value })}
+                      placeholder="wordpress-username"
+                      className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                    />
+                  </label>
+                  <label className="block rounded-md border border-line bg-background p-3 text-[12px] text-ink-muted">
+                    <span>Application Password</span>
+                    <input
+                      type="password"
+                      value={wordpress.applicationPassword}
+                      onChange={(event) => updateWordpress({ applicationPassword: event.currentTarget.value })}
+                      placeholder={savedPasswordConfigured ? "Saved. Enter a new password to replace it." : "Enter application password"}
+                      autoComplete="off"
+                      className="mt-1 h-8 w-full rounded border border-line bg-surface-1 px-2 text-[13px] text-ink outline-none focus:border-ink"
+                    />
+                    <div className="mt-1 text-[10.5px] text-ink-subtle">Saved passwords are encrypted and never shown again.</div>
+                  </label>
+                  <SettingsSelect
+                    label="Default post status"
+                    value={wordpress.defaultPostStatus}
+                    options={[
+                      { key: "draft", label: "Draft" },
+                      { key: "publish", label: "Publish" }
+                    ]}
+                    onChange={(value) => updateWordpress({ defaultPostStatus: value as WordPressPostStatus })}
+                  />
+                  <label className="block text-[12px] text-ink-muted">
+                    <span>Default Category</span>
+                    <input
+                      type="text"
+                      value={wordpress.defaultCategory}
+                      onChange={(event) => updateWordpress({ defaultCategory: event.currentTarget.value })}
+                      placeholder="Optional"
+                      className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                    />
+                  </label>
+                  {wordpressLastValidatedAt && (
+                    <div className="text-[11px] text-ink-subtle">Last validated {formatDate(wordpressLastValidatedAt)}</div>
+                  )}
+                  {wordpressStatus === "failed" && (
+                    <div className="text-[11px] text-danger">{wordpressLastError ?? "Most recent WordPress connection check failed."}</div>
+                  )}
+                  <div className="flex items-center justify-end gap-2 border-t border-line pt-3">
+                    <button
+                      onClick={() => void testWordPress()}
+                      disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
+                      className="h-8 rounded-md border border-line bg-background px-3 text-[12px] font-medium text-ink disabled:opacity-40"
+                    >
+                      {wordpressBusy === "testing" ? "Testing…" : "Test Connection"}
+                    </button>
+                    <button
+                      onClick={() => void saveWordPress()}
+                      disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
+                      className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                    >
+                      {wordpressBusy === "saving" ? "Saving…" : "Save Connection"}
+                    </button>
+                  </div>
+                </div>
               )}
-              {wordpressStatus === "failed" && (
-                <div className="text-[11px] text-danger">{wordpressLastError ?? "Most recent WordPress connection check failed."}</div>
-              )}
-              <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
-                <button
-                  onClick={() => void testWordPress()}
-                  disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
-                  className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
-                >
-                  {wordpressBusy === "testing" ? "Testing..." : "Test Connection"}
-                </button>
-                <button
-                  onClick={() => void saveWordPress()}
-                  disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
-                  className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-                >
-                  {wordpressBusy === "saving" ? "Saving..." : "Save Connection"}
-                </button>
-              </div>
             </div>
 
             {/* Shopify Store */}
-            <div className="space-y-2 border-t border-line pt-3">
-              <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
-                <div>
-                  <div className="text-[13px] font-medium text-ink">Shopify Store</div>
-                  <div className="mt-0.5 text-[11px] text-ink-muted">Publish articles to a Shopify blog.</div>
+            <div className="overflow-hidden rounded-md border border-line bg-surface-1">
+              <div className="px-4 py-3">
+                {shopifyStatus !== "not_connected" && savedShopify ? (
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+                      <div className="min-w-0">
+                        <div className="truncate text-[13px] font-semibold text-ink">{savedShopify.shopName ?? savedShopify.shopDomain}</div>
+                        <div className="mono mt-0.5 text-[11px] text-ink-subtle">{savedShopify.shopDomain}</div>
+                      </div>
+                    </div>
+                    <ShopifyConnectionStatusBadge status={shopifyStatus} />
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[13px] font-semibold text-ink">Shopify Store</div>
+                      <div className="mt-0.5 text-[11.5px] text-ink-muted">Publish articles to a Shopify blog.</div>
+                    </div>
+                    <ShopifyConnectionStatusBadge status={shopifyStatus} />
+                  </div>
+                )}
+
+                <div className="mt-3 flex justify-end gap-2">
+                  {shopifyStatus !== "not_connected" && savedShopify ? (
+                    <>
+                      {shopifyLastValidatedAt && (
+                        <span className="self-center text-[11px] text-ink-subtle mr-auto">Last validated {formatDate(shopifyLastValidatedAt)}</span>
+                      )}
+                      <button
+                        onClick={() => void checkShopifyHealth()}
+                        disabled={shopifyBusy !== "idle"}
+                        className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40 hover:bg-surface-2"
+                      >
+                        {shopifyBusy === "checking" ? "Checking…" : "Check Health"}
+                      </button>
+                      <button
+                        onClick={() => void disconnectShopify()}
+                        disabled={shopifyBusy !== "idle"}
+                        className="h-8 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 disabled:opacity-40 hover:bg-surface-2"
+                      >
+                        {shopifyBusy === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShopifyConnectFormOpen(!shopifyConnectFormOpen)}
+                      className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white"
+                    >
+                      {shopifyConnectFormOpen ? "Cancel" : "Connect"}
+                    </button>
+                  )}
                 </div>
-                <ShopifyConnectionStatusBadge status={shopifyStatus} />
+                {shopifyStatus === "failed" && savedShopify && (
+                  <div className="mt-2 text-[11px] text-danger">{shopifyLastError ?? "Most recent connection check failed."}</div>
+                )}
               </div>
-              {shopifyStatus !== "not_connected" && savedShopify ? (
-                <div className="space-y-2">
-                  <div className="rounded-md border border-line bg-surface-2 px-3 py-2.5">
-                    <div className="mono text-[11px] text-ink-muted">Connected store</div>
-                    <div className="mt-0.5 text-[13px] font-medium text-ink">{savedShopify.shopName ?? savedShopify.shopDomain}</div>
-                    <div className="mono mt-0.5 text-[11px] text-ink-subtle">{savedShopify.shopDomain}</div>
-                  </div>
-                  {shopifyLastValidatedAt && (
-                    <div className="text-[11px] text-ink-subtle">Last validated {formatDate(shopifyLastValidatedAt)}</div>
-                  )}
-                  {shopifyStatus === "failed" && (
-                    <div className="text-[11px] text-danger">{shopifyLastError ?? "Most recent connection check failed."}</div>
-                  )}
-                  <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
-                    <button
-                      onClick={() => void checkShopifyHealth()}
-                      disabled={shopifyBusy !== "idle"}
-                      className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
-                    >
-                      {shopifyBusy === "checking" ? "Checking..." : "Check Connection"}
-                    </button>
-                    <button
-                      onClick={() => void disconnectShopify()}
-                      disabled={shopifyBusy !== "idle"}
-                      className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-danger disabled:opacity-40"
-                    >
-                      {shopifyBusy === "disconnecting" ? "Disconnecting..." : "Disconnect"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
+
+              {shopifyConnectFormOpen && shopifyStatus === "not_connected" && (
+                <div className="space-y-2 border-t border-line bg-surface-2 px-4 py-3">
                   <label className="block text-[12px] text-ink-muted">
                     <span>Store domain</span>
                     <input
@@ -3094,13 +3300,10 @@ function ProjectSettingsPanel({
                       className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
                     />
                   </label>
-                  {shopifyStatus === "failed" && (
-                    <div className="text-[11px] text-danger">{shopifyLastError ?? "Connection failed."}</div>
-                  )}
-                  <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
+                  <div className="flex justify-end border-t border-line pt-3">
                     <button
                       onClick={connectShopify}
-                      disabled={!shopifyDomainDraft.trim() || shopifyBusy !== "idle"}
+                      disabled={!shopifyDomainDraft.trim()}
                       className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
                     >
                       Connect Shopify Store
