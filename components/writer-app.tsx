@@ -2954,152 +2954,172 @@ function ProjectSettingsPanel({
             }}
             disabledReason={settingsBlockedReason}
           />
-          <CollapsibleSettingsSection title="Publishing">
-            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
-              <div>
-                <div className="text-[13px] font-medium text-ink">WordPress Connection</div>
-                <div className="mt-0.5 text-[11px] text-ink-muted">Store the publishing destination on this project only.</div>
-              </div>
-              <WordPressConnectionStatusBadge status={wordpressStatus} />
-            </div>
-            <label className="block text-[12px] text-ink-muted">
-              <span>Site URL</span>
-              <input
-                type="url"
-                value={wordpress.siteUrl}
-                onChange={(event) => updateWordpress({ siteUrl: event.currentTarget.value })}
-                placeholder="https://example.com"
-                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-              />
-            </label>
-            <label className="block text-[12px] text-ink-muted">
-              <span>Username</span>
-              <input
-                type="text"
-                value={wordpress.username}
-                onChange={(event) => updateWordpress({ username: event.currentTarget.value })}
-                placeholder="wordpress-username"
-                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-              />
-            </label>
-            <label className="block rounded-md border border-line bg-surface-2 p-3 text-[12px] text-ink-muted">
-              <span>Application Password</span>
-              <input
-                type="password"
-                value={wordpress.applicationPassword}
-                onChange={(event) => updateWordpress({ applicationPassword: event.currentTarget.value })}
-                placeholder={savedPasswordConfigured ? "Saved. Enter a new password to replace it." : "Enter application password"}
-                autoComplete="off"
-                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-              />
-              <div className="mt-1 text-[10.5px] text-ink-subtle">Saved passwords are encrypted and never shown again.</div>
-            </label>
-            <SettingsSelect
-              label="Default post status"
-              value={wordpress.defaultPostStatus}
-              options={[
-                { key: "draft", label: "Draft" },
-                { key: "publish", label: "Publish" }
-              ]}
-              onChange={(value) => updateWordpress({ defaultPostStatus: value as WordPressPostStatus })}
-            />
-            <label className="block text-[12px] text-ink-muted">
-              <span>Default Category</span>
-              <input
-                type="text"
-                value={wordpress.defaultCategory}
-                onChange={(event) => updateWordpress({ defaultCategory: event.currentTarget.value })}
-                placeholder="Optional, for a later phase"
-                className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-              />
-            </label>
-            {wordpressLastValidatedAt && (
-              <div className="text-[11px] text-ink-subtle">Last validated {formatDate(wordpressLastValidatedAt)}</div>
-            )}
-            {wordpressStatus === "failed" && (
-              <div className="text-[11px] text-danger">{wordpressLastError ?? "Most recent WordPress connection check failed."}</div>
-            )}
-            <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
-              <button
-                onClick={() => void testWordPress()}
-                disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
-                className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
-              >
-                {wordpressBusy === "testing" ? "Testing..." : "Test Connection"}
-              </button>
-              <button
-                onClick={() => void saveWordPress()}
-                disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
-                className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-              >
-                {wordpressBusy === "saving" ? "Saving..." : "Save Connection"}
-              </button>
-            </div>
-          </CollapsibleSettingsSection>
-          <CollapsibleSettingsSection title="Shopify">
-            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
-              <div>
-                <div className="text-[13px] font-medium text-ink">Shopify Publishing Destination</div>
-                <div className="mt-0.5 text-[11px] text-ink-muted">Connect a Shopify store to enable article publishing.</div>
-              </div>
-              <ShopifyConnectionStatusBadge status={shopifyStatus} />
-            </div>
-            {shopifyStatus !== "not_connected" && savedShopify ? (
-              <div className="space-y-2">
-                <div className="rounded-md border border-line bg-surface-2 px-3 py-2.5">
-                  <div className="mono text-[11px] text-ink-muted">Connected store</div>
-                  <div className="mt-0.5 text-[13px] font-medium text-ink">{savedShopify.shopName ?? savedShopify.shopDomain}</div>
-                  <div className="mono mt-0.5 text-[11px] text-ink-subtle">{savedShopify.shopDomain}</div>
+          <CollapsibleSettingsSection title="Publishing Destinations">
+            <p className="text-[12px] text-ink-muted">
+              Connect the platforms QueueWrite can publish to for this project. Destinations are project-specific, allowing different projects to publish to different websites or stores.
+            </p>
+
+            {/* WordPress Site */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
+                <div>
+                  <div className="text-[13px] font-medium text-ink">WordPress Site</div>
+                  <div className="mt-0.5 text-[11px] text-ink-muted">Publish articles to a self-hosted or WordPress.com site.</div>
                 </div>
-                {shopifyLastValidatedAt && (
-                  <div className="text-[11px] text-ink-subtle">Last validated {formatDate(shopifyLastValidatedAt)}</div>
-                )}
-                {shopifyStatus === "failed" && (
-                  <div className="text-[11px] text-danger">{shopifyLastError ?? "Most recent connection check failed."}</div>
-                )}
-                <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
-                  <button
-                    onClick={() => void checkShopifyHealth()}
-                    disabled={shopifyBusy !== "idle"}
-                    className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
-                  >
-                    {shopifyBusy === "checking" ? "Checking..." : "Check Connection"}
-                  </button>
-                  <button
-                    onClick={() => void disconnectShopify()}
-                    disabled={shopifyBusy !== "idle"}
-                    className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-danger disabled:opacity-40"
-                  >
-                    {shopifyBusy === "disconnecting" ? "Disconnecting..." : "Disconnect"}
-                  </button>
-                </div>
+                <WordPressConnectionStatusBadge status={wordpressStatus} />
               </div>
-            ) : (
-              <div className="space-y-2">
-                <label className="block text-[12px] text-ink-muted">
-                  <span>Store domain</span>
-                  <input
-                    type="text"
-                    value={shopifyDomainDraft}
-                    onChange={(event) => setShopifyDomainDraft(event.currentTarget.value)}
-                    placeholder="your-store.myshopify.com"
-                    className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
-                  />
-                </label>
-                {shopifyStatus === "failed" && (
-                  <div className="text-[11px] text-danger">{shopifyLastError ?? "Connection failed."}</div>
-                )}
-                <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
-                  <button
-                    onClick={connectShopify}
-                    disabled={!shopifyDomainDraft.trim() || shopifyBusy !== "idle"}
-                    className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
-                  >
-                    Connect Shopify Store
-                  </button>
-                </div>
+              <label className="block text-[12px] text-ink-muted">
+                <span>Site URL</span>
+                <input
+                  type="url"
+                  value={wordpress.siteUrl}
+                  onChange={(event) => updateWordpress({ siteUrl: event.currentTarget.value })}
+                  placeholder="https://example.com"
+                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                />
+              </label>
+              <label className="block text-[12px] text-ink-muted">
+                <span>Username</span>
+                <input
+                  type="text"
+                  value={wordpress.username}
+                  onChange={(event) => updateWordpress({ username: event.currentTarget.value })}
+                  placeholder="wordpress-username"
+                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                />
+              </label>
+              <label className="block rounded-md border border-line bg-surface-2 p-3 text-[12px] text-ink-muted">
+                <span>Application Password</span>
+                <input
+                  type="password"
+                  value={wordpress.applicationPassword}
+                  onChange={(event) => updateWordpress({ applicationPassword: event.currentTarget.value })}
+                  placeholder={savedPasswordConfigured ? "Saved. Enter a new password to replace it." : "Enter application password"}
+                  autoComplete="off"
+                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                />
+                <div className="mt-1 text-[10.5px] text-ink-subtle">Saved passwords are encrypted and never shown again.</div>
+              </label>
+              <SettingsSelect
+                label="Default post status"
+                value={wordpress.defaultPostStatus}
+                options={[
+                  { key: "draft", label: "Draft" },
+                  { key: "publish", label: "Publish" }
+                ]}
+                onChange={(value) => updateWordpress({ defaultPostStatus: value as WordPressPostStatus })}
+              />
+              <label className="block text-[12px] text-ink-muted">
+                <span>Default Category</span>
+                <input
+                  type="text"
+                  value={wordpress.defaultCategory}
+                  onChange={(event) => updateWordpress({ defaultCategory: event.currentTarget.value })}
+                  placeholder="Optional, for a later phase"
+                  className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                />
+              </label>
+              {wordpressLastValidatedAt && (
+                <div className="text-[11px] text-ink-subtle">Last validated {formatDate(wordpressLastValidatedAt)}</div>
+              )}
+              {wordpressStatus === "failed" && (
+                <div className="text-[11px] text-danger">{wordpressLastError ?? "Most recent WordPress connection check failed."}</div>
+              )}
+              <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
+                <button
+                  onClick={() => void testWordPress()}
+                  disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
+                  className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
+                >
+                  {wordpressBusy === "testing" ? "Testing..." : "Test Connection"}
+                </button>
+                <button
+                  onClick={() => void saveWordPress()}
+                  disabled={!canSubmitWordPress || wordpressBusy !== "idle"}
+                  className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                >
+                  {wordpressBusy === "saving" ? "Saving..." : "Save Connection"}
+                </button>
               </div>
-            )}
+            </div>
+
+            {/* Shopify Store */}
+            <div className="space-y-2 border-t border-line pt-3">
+              <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
+                <div>
+                  <div className="text-[13px] font-medium text-ink">Shopify Store</div>
+                  <div className="mt-0.5 text-[11px] text-ink-muted">Publish articles to a Shopify blog.</div>
+                </div>
+                <ShopifyConnectionStatusBadge status={shopifyStatus} />
+              </div>
+              {shopifyStatus !== "not_connected" && savedShopify ? (
+                <div className="space-y-2">
+                  <div className="rounded-md border border-line bg-surface-2 px-3 py-2.5">
+                    <div className="mono text-[11px] text-ink-muted">Connected store</div>
+                    <div className="mt-0.5 text-[13px] font-medium text-ink">{savedShopify.shopName ?? savedShopify.shopDomain}</div>
+                    <div className="mono mt-0.5 text-[11px] text-ink-subtle">{savedShopify.shopDomain}</div>
+                  </div>
+                  {shopifyLastValidatedAt && (
+                    <div className="text-[11px] text-ink-subtle">Last validated {formatDate(shopifyLastValidatedAt)}</div>
+                  )}
+                  {shopifyStatus === "failed" && (
+                    <div className="text-[11px] text-danger">{shopifyLastError ?? "Most recent connection check failed."}</div>
+                  )}
+                  <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
+                    <button
+                      onClick={() => void checkShopifyHealth()}
+                      disabled={shopifyBusy !== "idle"}
+                      className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
+                    >
+                      {shopifyBusy === "checking" ? "Checking..." : "Check Connection"}
+                    </button>
+                    <button
+                      onClick={() => void disconnectShopify()}
+                      disabled={shopifyBusy !== "idle"}
+                      className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-danger disabled:opacity-40"
+                    >
+                      {shopifyBusy === "disconnecting" ? "Disconnecting..." : "Disconnect"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="block text-[12px] text-ink-muted">
+                    <span>Store domain</span>
+                    <input
+                      type="text"
+                      value={shopifyDomainDraft}
+                      onChange={(event) => setShopifyDomainDraft(event.currentTarget.value)}
+                      placeholder="your-store.myshopify.com"
+                      className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                    />
+                  </label>
+                  {shopifyStatus === "failed" && (
+                    <div className="text-[11px] text-danger">{shopifyLastError ?? "Connection failed."}</div>
+                  )}
+                  <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
+                    <button
+                      onClick={connectShopify}
+                      disabled={!shopifyDomainDraft.trim() || shopifyBusy !== "idle"}
+                      className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                    >
+                      Connect Shopify Store
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Coming Soon */}
+            <div className="border-t border-line pt-3">
+              <div className="mono mb-2 text-[10px] uppercase tracking-[0.14em] text-ink-subtle">Coming Soon</div>
+              <div className="flex flex-wrap gap-1.5">
+                {["Ghost", "Webflow", "Contentful", "Sanity"].map((name) => (
+                  <span key={name} className="rounded border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-subtle">{name}</span>
+                ))}
+              </div>
+            </div>
+
           </CollapsibleSettingsSection>
         </div>
       </div>
