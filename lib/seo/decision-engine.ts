@@ -53,7 +53,7 @@ export function buildSeoDecisionEngine({ article, markdown, research, profile, s
     ...buildFixRecommendations(article, markdown, profile),
     ...buildImproveRecommendations(article, markdown, research, profile),
     ...buildProjectRecommendations(markdown, profile),
-    ...buildInternalLinkRecommendations(markdown, sitePages, siteProfile)
+    ...buildInternalLinkRecommendations(markdown, sitePages, siteProfile, profile)
   ].sort((left, right) => right.priority - left.priority || right.impact - left.impact);
   const score = Math.max(0, 100 - recommendations.reduce((sum, item) => sum + item.impact, 0));
   const estimatedImpact = recommendations.slice(0, 3).reduce((sum, item) => sum + item.impact, 0);
@@ -78,6 +78,7 @@ function buildFixRecommendations(article: ArticleDocument, markdown: string, pro
   const recommendations: SeoRecommendation[] = [];
   const topic = article.title.replace(/[?.!]+$/, "");
   const faqCoverage = classifyFaqCoverage(markdown);
+  const editorialStandards = new Set(profile?.editorialStandards ?? []);
 
   if (faqCoverage.status !== "complete" && faqCoverage.confidence >= RECOMMENDATION_CONFIDENCE_THRESHOLD) {
     const block = `## FAQ\n\n### What should readers know first about ${topic}?\nThe most important starting point is to understand the practical constraints, evidence, and decisions that shape the outcome.\n\n### What commonly causes problems with ${topic}?\nProblems usually arise when assumptions are not checked early, responsibilities are unclear, or evidence is considered too late.\n\n### What should readers do next?\nReview the current requirements, verify the supporting evidence, and turn the findings into a clear next action.`;
@@ -87,10 +88,12 @@ function buildFixRecommendations(article: ArticleDocument, markdown: string, pro
       title: faqCoverage.status === "partial" ? "FAQ coverage could be expanded" : "No FAQ section detected",
       reason: faqCoverage.status === "partial"
         ? `${faqCoverage.questionHeadingCount} question-style heading${faqCoverage.questionHeadingCount === 1 ? " is" : "s are"} present, but the article needs a fuller answer-ready FAQ cluster.`
-        : "A focused FAQ adds answer-ready coverage for long-tail searches and featured snippets.",
+        : editorialStandards.has("include_faqs")
+          ? "Project editorial standards call for an FAQ section when appropriate, and none is currently present."
+          : "A focused FAQ adds answer-ready coverage for long-tail searches and featured snippets.",
       actionLabel: "Apply FAQ",
       impact: faqCoverage.status === "partial" ? 2 : 4,
-      priority: faqCoverage.status === "partial" ? 88 : 100,
+      priority: faqCoverage.status === "partial" ? 88 : editorialStandards.has("include_faqs") ? 100 : 96,
       markdown,
       block
     }));
@@ -103,10 +106,12 @@ function buildFixRecommendations(article: ArticleDocument, markdown: string, pro
       id: "add-cta",
       section: "fix",
       title: "No clear next action detected",
-      reason: "The article explains the topic but does not tell the reader what to do after reading it.",
+      reason: editorialStandards.has("actionable_recommendations")
+        ? "Project editorial standards call for actionable recommendations, but the draft does not finish with a clear next step."
+        : "The article explains the topic but does not tell the reader what to do after reading it.",
       actionLabel: "Apply CTA",
       impact: 3,
-      priority: 95,
+      priority: editorialStandards.has("actionable_recommendations") ? 97 : 95,
       markdown,
       block
     }));
@@ -184,13 +189,19 @@ function buildImproveRecommendations(article: ArticleDocument, markdown: string,
   const unusedFacts = (research?.usefulFacts ?? []).filter((fact) => !containsFact(markdown, fact));
   const unusedStatistics = unusedFacts.filter(isQuantifiedFinding);
   const unusedFindings = unusedFacts.filter((fact) => !isQuantifiedFinding(fact));
+  const editorialStandards = new Set(profile?.editorialStandards ?? []);
 
   if (unusedStatistics.length > 0) {
-    recommendations.push(createStatisticRecommendation({
+    const recommendation = createStatisticRecommendation({
       article,
       markdown,
       statistics: unusedStatistics
-    }));
+    });
+    recommendations.push({
+      ...recommendation,
+      priority: editorialStandards.has("cite_statistics") ? 86 : recommendation.priority,
+      impact: editorialStandards.has("cite_statistics") ? recommendation.impact + 1 : recommendation.impact
+    });
   }
 
   if (unusedFindings.length > 0) {
@@ -203,11 +214,16 @@ function buildImproveRecommendations(article: ArticleDocument, markdown: string,
   }
 
   if (!hasPracticalExample(markdown)) {
-    recommendations.push(createExampleRecommendation({
+    const recommendation = createExampleRecommendation({
       article,
       markdown,
       profile
-    }));
+    });
+    recommendations.push({
+      ...recommendation,
+      priority: editorialStandards.has("practical_examples") ? 82 : recommendation.priority,
+      impact: editorialStandards.has("practical_examples") ? recommendation.impact + 1 : recommendation.impact
+    });
   }
 
   if (article.validation.seoScore < 75 && article.sources.length > 0 && hasOutboundCitation(markdown)) {
@@ -663,6 +679,7 @@ function createInlineDifference(currentText: string, proposedText: string) {
 function buildProjectRecommendations(markdown: string, profile?: ProjectProfile | null) {
   if (!profile) return [];
   const recommendations: SeoRecommendation[] = [];
+  const editorialStandards = new Set(profile.editorialStandards ?? []);
 
   if (profile.regionKey !== "global" && !containsProfileTerm(markdown, profile.regionKey, profile.regionLabel)) {
     const block = `## ${profile.regionLabel} Context\n\nFor readers in ${profile.regionLabel}, the practical position depends on current local requirements, market conditions, and guidance. Confirm the latest regional rules before acting on this article.`;
@@ -709,12 +726,28 @@ function buildProjectRecommendations(markdown: string, profile?: ProjectProfile 
     }));
   }
 
+  if ((editorialStandards.has("avoid_marketing_cliches") || editorialStandards.has("balanced_neutral_tone")) && containsMarketingCliches(markdown)) {
+    const block = `## Editorial Tone Check\n\nRemove generic promotional phrases, keep claims specific, and present the guidance in a balanced, neutral voice grounded in evidence and practical trade-offs.`;
+    recommendations.push(createAppendRecommendation({
+      id: "tone-down-cliches",
+      section: "project",
+      title: "Editorial tone needs tightening",
+      reason: "The draft uses generic marketing phrasing that conflicts with the project's editorial standards.",
+      actionLabel: "Add Tone Check",
+      impact: 2,
+      priority: 68,
+      markdown,
+      block
+    }));
+  }
+
   return recommendations.slice(0, 3);
 }
 
-function buildInternalLinkRecommendations(markdown: string, sitePages: SiteKnowledgePageDocument[], siteProfile?: ProjectSiteProfileDocument | null) {
+function buildInternalLinkRecommendations(markdown: string, sitePages: SiteKnowledgePageDocument[], siteProfile?: ProjectSiteProfileDocument | null, profile?: ProjectProfile | null) {
   const opportunities = findInternalLinkOpportunities(markdown, sitePages, siteProfile);
   if (!opportunities.length) return [];
+  const editorialStandards = new Set(profile?.editorialStandards ?? []);
 
   const selected = opportunities.slice(0, 5);
   const preview = selected.map((item) => `${item.anchorText} -> ${displayInternalUrl(item.url)}`).join("\n");
@@ -727,7 +760,7 @@ function buildInternalLinkRecommendations(markdown: string, sitePages: SiteKnowl
     reason: top ? `${top.title}: ${top.reason}` : "Imported Website Intelligence pages match topics in this article.",
     actionLabel: "Generate Suggestions",
     impact: Math.min(5, Math.max(2, selected.length)),
-    priority: 84,
+    priority: editorialStandards.has("include_internal_links") ? 90 : 84,
     currentText: "No suggested internal links have been inserted for these opportunities.",
     proposedText: preview,
     difference: preview.split("\n").map((line) => `+ ${line}`).join("\n"),
@@ -1077,4 +1110,8 @@ function cleanFact(value: string) {
 
 function normalizeText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function containsMarketingCliches(markdown: string) {
+  return /\b(?:cutting edge|game changer|world class|best in class|industry leading|revolutionary|unlock your potential|next level|seamless solution)\b/i.test(markdown);
 }

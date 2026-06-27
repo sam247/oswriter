@@ -9,7 +9,16 @@ import { SourceFavicon } from "@/components/research/SourceFavicon";
 import type { ProjectAnalytics } from "@/lib/analytics/project";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { describePostGenerationAction, getArticlePublishingStatus } from "@/lib/publishing/status";
-import { audienceOptionsForIndustry, defaultAudienceForIndustry, INDUSTRY_OPTIONS, normalizeProjectProfile, REGION_OPTIONS } from "@/lib/project/profile";
+import {
+  audienceOptionsForIndustry,
+  defaultAudienceForIndustry,
+  EDITORIAL_STANDARD_OPTIONS,
+  INDUSTRY_OPTIONS,
+  LANGUAGE_OPTIONS,
+  MAX_ADDITIONAL_GUIDANCE_LENGTH,
+  normalizeProjectProfile,
+  REGION_OPTIONS
+} from "@/lib/project/profile";
 import type { QueueCostProjection } from "@/lib/queue/projection";
 import { rejectionSummaryLabel } from "@/lib/research/source-classification";
 import { toArticleSummary } from "@/lib/articles/summary";
@@ -2802,7 +2811,7 @@ function ProjectSettingsPanel({
           <CollapsibleSettingsSection title="Project Settings" defaultOpen>
             <div className="rounded-md border border-line bg-surface-2 p-3">
               <div className="text-[13px] font-medium text-ink">Generation context</div>
-              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
+              <div className="mono mt-1 text-[10.5px] text-ink-subtle">{profile.regionLabel} · {profile.industryLabel} · {profile.audienceLabel} · {profile.languageLabel} · {formatNumber(profile.defaultTargetWords)} words</div>
             </div>
             <SettingsSelect label="Region" value={profile.regionKey} options={REGION_OPTIONS} onChange={(regionKey) => updateProfile({ regionKey })} />
             <SettingsSelect
@@ -2826,6 +2835,38 @@ function ProjectSettingsPanel({
                 onChange={(event) => updateProfile({ defaultTargetWords: Number(event.currentTarget.value) })}
                 className="mono h-8 w-28 rounded border border-line bg-surface-1 px-2 text-right text-xs text-ink outline-none focus:border-ink disabled:opacity-50"
               />
+            </label>
+            <SettingsSelect
+              label="Language"
+              value={profile.languageKey}
+              options={LANGUAGE_OPTIONS}
+              onChange={(languageKey) => updateProfile({ languageKey })}
+            />
+            <div className="rounded-md border border-line bg-surface-2 p-3">
+              <div className="text-[13px] font-medium text-ink">Editorial Standards</div>
+              <div className="mt-1 text-[11px] leading-snug text-ink-muted">Choose the editorial preferences QueueWrite should apply consistently during generation, validation, and SEO review.</div>
+              <div className="mt-3">
+                <SettingsPillMultiSelect
+                  options={EDITORIAL_STANDARD_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
+                  value={profile.editorialStandards}
+                  onChange={(editorialStandards) => updateProfile({ editorialStandards })}
+                />
+              </div>
+            </div>
+            <label className="block text-[12px] text-ink-muted">
+              <span>Additional Guidance</span>
+              <textarea
+                value={profile.additionalGuidance}
+                rows={3}
+                maxLength={MAX_ADDITIONAL_GUIDANCE_LENGTH}
+                onChange={(event) => updateProfile({ additionalGuidance: event.currentTarget.value })}
+                placeholder="Optional"
+                className="mt-1 min-h-[84px] w-full resize-none rounded border border-line bg-background px-2 py-2 text-[13px] text-ink outline-none focus:border-ink"
+              />
+              <div className="mt-1 flex items-start justify-between gap-3 text-[10.5px] text-ink-subtle">
+                <span>Anything unique about your business or writing style that cannot be expressed using the settings above.</span>
+                <span className="mono shrink-0">{profile.additionalGuidance.length}/{MAX_ADDITIONAL_GUIDANCE_LENGTH}</span>
+              </div>
             </label>
             {settingsBlockedReason && <div className="text-[11px] text-warn">{settingsBlockedReason}</div>}
             <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
@@ -3010,6 +3051,40 @@ function SettingsSelect({ label, value, options, onChange }: {
         {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
       </select>
     </label>
+  );
+}
+
+function SettingsPillMultiSelect({
+  options,
+  value,
+  onChange
+}: {
+  options: readonly { key: string; label: string }[];
+  value: string[];
+  onChange: (value: string[]) => void;
+}) {
+  const selected = new Set(value);
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => {
+        const active = selected.has(option.key);
+        return (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => {
+              onChange(active ? value.filter((item) => item !== option.key) : [...value, option.key]);
+            }}
+            className={cn(
+              "rounded-full border px-3 py-1.5 text-[12px] transition-colors",
+              active ? "border-ink bg-ink text-white" : "border-line bg-background text-ink-muted hover:border-line-strong hover:text-ink"
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

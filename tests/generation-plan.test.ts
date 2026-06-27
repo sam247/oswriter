@@ -22,7 +22,10 @@ describe("article generation planning", () => {
     const profileSnapshot = snapshotProjectProfile(normalizeProjectProfile({
       industryKey: "construction",
       audienceKey: "procurement_teams",
-      defaultTargetWords: 2400
+      defaultTargetWords: 2400,
+      languageKey: "english_us",
+      editorialStandards: ["evidence_first", "include_faqs", "avoid_marketing_cliches"],
+      additionalGuidance: "Prefer a measured editorial voice."
     }));
     const plan = buildArticleGenerationPlan({ ...DEFAULT_CONTROLS, lengthTargetWords: 1200 }, profileSnapshot);
 
@@ -30,7 +33,11 @@ describe("article generation planning", () => {
     assert.ok(plan.h2SectionCount >= 7);
     assert.equal(plan.expectedDepth, "deep");
     assert.equal(plan.h3SectionCount, plan.h2SectionCount * 2);
-    assert.deepEqual(plan.planningPriorities, ["costs", "supplier selection", "procurement strategy", "compliance", "risk", "lead times"]);
+    assert.ok(plan.editorialDirectives.includes("Prioritise supported claims over opinion."));
+    assert.ok(plan.editorialDirectives.includes("Generate an FAQ section when it fits the article naturally."));
+    assert.ok(plan.editorialDirectives.includes("Suppress generic marketing language and empty promotional claims."));
+    assert.ok(plan.planningPriorities.includes("costs"));
+    assert.ok(plan.planningPriorities.includes("Prioritise supported claims over opinion."));
   });
 
   it("biases SaaS CTO planning towards strategic architecture decisions", () => {
@@ -187,6 +194,30 @@ Short section.`,
     assert.deepEqual(plan.websiteEntityRecommendations?.brands.slice(0, 3), ["Inis", "Elizabeth Scarlett", "Joules"]);
     assert.ok(plan.knowledgeContext?.some((value) => value.includes("Recommended website brands for this article: Inis")));
     assert.match(prompt, /Recommended website brands for this article: Inis, Elizabeth Scarlett/);
+  });
+
+  it("includes language and editorial directives in generation prompts", () => {
+    const profileSnapshot = snapshotProjectProfile(normalizeProjectProfile({
+      regionKey: "united_kingdom",
+      industryKey: "saas",
+      audienceKey: "technical_decision_makers",
+      languageKey: "english_australia",
+      editorialStandards: ["evidence_first", "explain_technical_concepts", "challenge_assumptions"],
+      additionalGuidance: "Avoid unnecessary hype."
+    }));
+    const prompt = buildGenerationPrompt({
+      title: "API Gateway Security Patterns",
+      controls: DEFAULT_CONTROLS,
+      research: researchPack(),
+      profileSnapshot
+    });
+
+    assert.match(prompt, /Language: English \(Australia\)/);
+    assert.match(prompt, /Editorial directives:/);
+    assert.match(prompt, /Prioritise supported claims over opinion\./);
+    assert.match(prompt, /Briefly explain specialist terminology before building on it\./);
+    assert.match(prompt, /Challenge common assumptions when the evidence justifies it\./);
+    assert.match(prompt, /Additional guidance: Avoid unnecessary hype\./);
   });
 });
 

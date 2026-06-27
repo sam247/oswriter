@@ -10,6 +10,9 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   const h2Count = (markdown.match(/^## /gm) ?? []).length;
   const hasFaq = /faq|frequently asked/i.test(markdown);
   const hasLeakage = /according to (the|this) source|research process|sources say/i.test(markdown);
+  const hasPracticalExample = /^##\s+.*(?:Example|Case Study)\b/im.test(markdown) || /^Example:\s+/im.test(markdown);
+  const hasStatistic = /(?:\d+(?:\.\d+)?\s?%|\b\d{1,3}(?:,\d{3})+\b|\b\d+(?:\.\d+)?\s?(?:million|billion|survey|respondents|companies|organizations|organisations|customers|users|workers|projects|market|revenue|cost|growth)\b)/i.test(markdown);
+  const hasInternalLink = /\[[^\]]+\]\((?!https?:\/\/)[^)]+\)/i.test(markdown);
   const wordCount = markdown.trim().split(/\s+/).filter(Boolean).length;
   const plan = controls ? buildArticleGenerationPlan(controls, profileSnapshot, null, contentProfile) : null;
   const contentDefinition = CONTENT_PROFILES[contentProfile];
@@ -17,6 +20,7 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   const minimumWords = effectiveTargetWords ? Math.round(effectiveTargetWords * 0.8) : 650;
   const expectedH2Count = plan?.h2SectionCount ?? 4;
   const planningDiagnostics = plan ? buildPlanningDiagnostics(plan, markdown, research) : null;
+  const editorialStandards = new Set(profileSnapshot?.editorialStandards ?? []);
 
   if (research.warnings.length) {
     warnings.push(...research.warnings);
@@ -26,7 +30,12 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
     warnings.push(`Article has fewer than ${expectedH2Count} H2 sections.`);
     needsReviewReasons.push("Heading structure may be thin.");
   }
-  if (!hasFaq) {
+  if ((controls?.includeFaq ?? false) || editorialStandards.has("include_faqs")) {
+    if (!hasFaq) {
+      warnings.push("FAQ section missing or not clearly labelled.");
+      needsReviewReasons.push("FAQ quality needs review.");
+    }
+  } else if (!hasFaq) {
     warnings.push("FAQ section missing or not clearly labelled.");
     needsReviewReasons.push("FAQ quality needs review.");
   }
@@ -37,6 +46,17 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   if (wordCount < minimumWords) {
     warnings.push(effectiveTargetWords ? `Article is below 80% of the ${effectiveTargetWords}-word target.` : "Article is shorter than expected.");
     needsReviewReasons.push("Completeness needs review.");
+  }
+  if (editorialStandards.has("practical_examples") && !hasPracticalExample) {
+    warnings.push("Editorial standards call for practical examples, but none were detected.");
+    needsReviewReasons.push("Practical examples need review.");
+  }
+  if (editorialStandards.has("cite_statistics") && research.usefulFacts.some(isStatisticLike) && !hasStatistic) {
+    warnings.push("Editorial standards call for supported statistics where relevant, but none were detected.");
+    needsReviewReasons.push("Evidence usage needs review.");
+  }
+  if (editorialStandards.has("include_internal_links") && !hasInternalLink) {
+    advisories.push("Internal linking opportunity may be missing.");
   }
   const missingProfileRequirements = profileRequirementWarnings(contentProfile, markdown);
   for (const warning of missingProfileRequirements) {
@@ -73,6 +93,10 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
     faqScore,
     seoScore
   };
+}
+
+function isStatisticLike(value: string) {
+  return /(?:\d+(?:\.\d+)?\s?%|\b\d{1,3}(?:,\d{3})+\b|\b\d+(?:\.\d+)?\s?(?:million|billion|survey|respondents|companies|organizations|organisations|customers|users|workers|projects|market|revenue|cost|growth)\b)/i.test(value);
 }
 
 function profileRequirementWarnings(profile: ValidationInput["contentProfile"], markdown: string) {

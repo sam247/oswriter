@@ -143,6 +143,9 @@ export function buildGenerationPrompt({ title, research, controls, profileSnapsh
   const projectContext = profileContextLines(profileSnapshot);
   const knowledgeContext = siteProfile ? siteProfileContextLines(siteProfile) : projectKnowledgeContextLines(knowledgeBase);
   const projectContextBlock = projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : "";
+  const editorialDirectivesBlock = plan.editorialDirectives.length
+    ? `\nEditorial directives:\n${plan.editorialDirectives.map((instruction) => `- ${instruction}`).join("\n")}`
+    : "";
   const knowledgeContextLabel = siteProfile
     ? "Website intelligence (learned from the imported sitemap; use during planning, outline construction, and writing; do not force irrelevant mentions)"
     : "Knowledge Base (use during planning, outline construction, and writing; do not force irrelevant mentions)";
@@ -161,7 +164,7 @@ Non-negotiable:
 - Write a complete article. Do not stop mid-sentence.
 
 Title: ${title}
-${projectContextBlock}${knowledgeContextBlock}${websiteEntityBlock}
+${projectContextBlock}${editorialDirectivesBlock}${knowledgeContextBlock}${websiteEntityBlock}
 Content profile: ${contentDefinition.label}
 Purpose: ${contentDefinition.purpose}
 Required outline pattern: ${contentDefinition.outline.join(" -> ")}
@@ -214,6 +217,9 @@ Return only the improved Markdown.`;
 function buildValidationPrompt({ title, markdown, research, profileSnapshot, contentProfile = "industry_explainer" }: ValidationInput) {
   const projectContext = profileContextLines(profileSnapshot);
   const contentDefinition = CONTENT_PROFILES[contentProfile];
+  const editorialDirectives = profileSnapshot?.editorialStandards?.length ? [
+    ...new Set(projectContext.filter((line) => line.startsWith("Editorial preference: ")).map((line) => line.replace("Editorial preference: ", "")))
+  ] : [];
   return `Validate this article. Validation is advisory and must never block saving.
 
 Return strict JSON with:
@@ -231,6 +237,7 @@ Return strict JSON with:
 Check research quality, intent match, heading quality, FAQ quality, duplicate sections, duplicate FAQs, source leakage, research-process language, repetition, readability, completeness, and SEO basics.
 For this ${contentDefinition.label} profile, also check: ${contentDefinition.validation.join(", ")}.
 Use project context to judge relevance and expected complexity without contaminating the core quality score.
+${editorialDirectives.length ? `Editorial standards to enforce:\n${editorialDirectives.map((line) => `- ${line}`).join("\n")}\n` : ""}
 
 Title: ${title}
 ${projectContext.length ? `\nProject context:\n${projectContext.map((line) => `- ${line}`).join("\n")}` : ""}

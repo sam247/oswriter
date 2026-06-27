@@ -2,6 +2,33 @@
 
 ## Completed
 
+### Project Settings Editorial Standards
+
+- Extended the existing `Project Settings` card so it now stores:
+  - `Language`
+  - `Editorial Standards`
+  - `Additional Guidance`
+- Kept the existing page structure intact:
+  - no new top-level accordion
+  - Website Intelligence and Publishing unchanged
+- Added structured editorial-standard selection instead of relying on free-form prompt text, covering:
+  - evidence-first writing
+  - practical examples
+  - FAQs
+  - internal links
+  - technical explanations
+  - marketing-cliche suppression
+  - neutral tone
+  - actionable recommendations
+  - supported statistics
+  - evidence-based assumption challenging
+- Added a compact optional `Additional Guidance` textarea with helper copy for business- or voice-specific instructions that do not fit the structured controls.
+- Wired the new project-level settings into the shared generation profile so they now influence:
+  - generation prompting
+  - validation prompting and heuristics
+  - SEO recommendation prioritisation
+- Kept persistence project-scoped by extending the existing project workspace document shape only; no separate account preference and no database migration required.
+
 ### Website Understanding Summary
 
 - Replaced the website import diagnostic summary with a clearer `Knowledge Import` section and a new `Website Understanding` summary in project settings.

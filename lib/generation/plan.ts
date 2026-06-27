@@ -1,4 +1,4 @@
-import { clampTargetWords, planningPrioritiesForProfile } from "@/lib/project/profile";
+import { clampTargetWords, editorialDirectivesForStandards, planningPrioritiesForProfile } from "@/lib/project/profile";
 import { knowledgeBasePlanningPriorities, projectKnowledgeContextLines } from "@/lib/project/knowledge-base";
 import { siteProfileContextLines, siteProfileEntityRecommendations, siteProfilePlanningPriorities, type SiteEntityRecommendations } from "@/lib/site-profile";
 import type { ContentControls, ProjectKnowledgeBase, ProjectProfileSnapshot, ProjectSiteProfileDocument, ResearchPack } from "@/lib/types";
@@ -20,6 +20,7 @@ export interface ArticleGenerationPlan {
   wordsPerSection: number;
   maxOutputTokens: number;
   planningPriorities: string[];
+  editorialDirectives: string[];
   knowledgeContext?: string[];
   websiteEntityRecommendations?: SiteEntityRecommendations;
 }
@@ -59,6 +60,7 @@ export function buildArticleGenerationPlan(
   const siteProfile = isProjectSiteProfile(projectIntelligence) ? projectIntelligence : null;
   const knowledgeBase = siteProfile ? null : projectIntelligence as ProjectKnowledgeBase | null | undefined;
   const websiteEntityRecommendations = siteProfile && title ? siteProfileEntityRecommendations(siteProfile, title) : null;
+  const editorialDirectives = editorialDirectivesForStandards(profileSnapshot?.editorialStandards);
   const knowledgeContext = siteProfile
     ? [...siteProfileContextLines(siteProfile), ...(websiteEntityRecommendations?.contextLines ?? [])]
     : projectKnowledgeContextLines(knowledgeBase);
@@ -71,6 +73,7 @@ export function buildArticleGenerationPlan(
     expectedDepth,
     wordsPerSection: Math.max(120, Math.round(targetWords / h2SectionCount)),
     maxOutputTokens: clamp(Math.ceil(targetWords * 2), MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS),
+    editorialDirectives,
     planningPriorities: [
       ...(contentProfile ? [
         `Use the ${contentDefinition.label} format`,
@@ -78,6 +81,7 @@ export function buildArticleGenerationPlan(
         ...contentDefinition.writingInstructions
       ] : []),
       ...planningPrioritiesForProfile(profileSnapshot),
+      ...editorialDirectives,
       ...(siteProfile ? siteProfilePlanningPriorities(siteProfile) : knowledgeBasePlanningPriorities(knowledgeBase)),
       ...(websiteEntityRecommendations?.priorityLines ?? [])
     ],

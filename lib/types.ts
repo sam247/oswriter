@@ -27,6 +27,10 @@ export interface ProjectProfile {
   businessTypeKey: string;
   businessTypeLabel: string;
   defaultTargetWords: number;
+  languageKey: string;
+  languageLabel: string;
+  editorialStandards: string[];
+  additionalGuidance: string;
 }
 
 export interface ProjectProfileSnapshot {
@@ -41,6 +45,11 @@ export interface ProjectProfileSnapshot {
   businessTypeLabel: string;
   profileKey: string;
   targetWords: number;
+  language: string;
+  languageLabel: string;
+  editorialStandards: string[];
+  editorialStandardLabels: string[];
+  additionalGuidance: string;
   regionAwarenessActive: boolean;
   industryAwarenessActive: boolean;
   audienceAwarenessActive: boolean;

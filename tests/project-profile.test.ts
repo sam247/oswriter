@@ -3,15 +3,18 @@ import { describe, it } from "node:test";
 import { audienceOptionsForIndustry, createDefaultProjectProfile, normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
 
 describe("project profile", () => {
-  it("defaults to stable v2 controlled values", () => {
+  it("defaults to stable v3 controlled values", () => {
     const profile = createDefaultProjectProfile();
 
-    assert.equal(profile.profileVersion, 2);
+    assert.equal(profile.profileVersion, 3);
     assert.equal(profile.regionKey, "global");
     assert.equal(profile.industryKey, "general");
     assert.equal(profile.audienceKey, "general_audience");
     assert.equal(profile.businessTypeKey, "auto_detect");
     assert.equal(profile.defaultTargetWords, 1400);
+    assert.equal(profile.languageKey, "english_uk");
+    assert.deepEqual(profile.editorialStandards, []);
+    assert.equal(profile.additionalGuidance, "");
   });
 
   it("normalizes invalid saved combinations to the industry default", () => {
@@ -28,6 +31,7 @@ describe("project profile", () => {
     assert.equal(profile.audienceLabel, "Practice Managers");
     assert.equal(profile.businessTypeKey, "auto_detect");
     assert.equal(profile.defaultTargetWords, 5000);
+    assert.equal(profile.languageKey, "english_uk");
   });
 
   it("creates immutable generation snapshots with awareness flags", () => {
@@ -35,7 +39,10 @@ describe("project profile", () => {
       regionKey: "united_kingdom",
       industryKey: "construction",
       audienceKey: "procurement_teams",
-      defaultTargetWords: 2500
+      defaultTargetWords: 2500,
+      languageKey: "english_canada",
+      editorialStandards: ["evidence_first", "include_faqs", "include_faqs", "invalid_standard"],
+      additionalGuidance: "Use a calm editorial voice."
     }));
 
     assert.deepEqual({
@@ -45,16 +52,24 @@ describe("project profile", () => {
       audience: snapshot.audience,
       businessType: snapshot.businessType,
       targetWords: snapshot.targetWords,
+      language: snapshot.language,
+      editorialStandards: snapshot.editorialStandards,
+      editorialStandardLabels: snapshot.editorialStandardLabels,
+      additionalGuidance: snapshot.additionalGuidance,
       regionAwarenessActive: snapshot.regionAwarenessActive,
       industryAwarenessActive: snapshot.industryAwarenessActive,
       audienceAwarenessActive: snapshot.audienceAwarenessActive
     }, {
-      profileVersion: 2,
+      profileVersion: 3,
       region: "united_kingdom",
       industry: "construction",
       audience: "procurement_teams",
       businessType: "auto_detect",
       targetWords: 2500,
+      language: "english_canada",
+      editorialStandards: ["evidence_first", "include_faqs"],
+      editorialStandardLabels: ["Evidence-first writing", "Include FAQs"],
+      additionalGuidance: "Use a calm editorial voice.",
       regionAwarenessActive: true,
       industryAwarenessActive: true,
       audienceAwarenessActive: true

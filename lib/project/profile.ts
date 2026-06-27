@@ -1,7 +1,8 @@
 import type { ContentControls, ProjectProfile, ProjectProfileSnapshot, ResearchPack, ResearchSource } from "@/lib/types";
 
-export const PROFILE_VERSION = 2;
+export const PROFILE_VERSION = 3;
 export const DEFAULT_TARGET_WORDS = 1400;
+export const MAX_ADDITIONAL_GUIDANCE_LENGTH = 320;
 
 export const REGION_OPTIONS = [
   { key: "global", label: "Global" },
@@ -60,15 +61,39 @@ export const BUSINESS_TYPE_OPTIONS = [
   { key: "charity", label: "Charity" }
 ] as const;
 
+export const LANGUAGE_OPTIONS = [
+  { key: "english_uk", label: "English (UK)" },
+  { key: "english_us", label: "English (US)" },
+  { key: "english_australia", label: "English (Australia)" },
+  { key: "english_canada", label: "English (Canada)" }
+] as const;
+
+export const EDITORIAL_STANDARD_OPTIONS = [
+  { key: "evidence_first", label: "Evidence-first writing", instruction: "Prioritise supported claims over opinion." },
+  { key: "practical_examples", label: "Practical examples", instruction: "Use practical examples to make recommendations easier to apply." },
+  { key: "include_faqs", label: "Include FAQs", instruction: "Generate an FAQ section when it fits the article naturally." },
+  { key: "include_internal_links", label: "Include internal links where relevant", instruction: "Include relevant internal links when they improve navigation or next-step relevance." },
+  { key: "explain_technical_concepts", label: "Explain technical concepts", instruction: "Briefly explain specialist terminology before building on it." },
+  { key: "avoid_marketing_cliches", label: "Avoid marketing cliches", instruction: "Suppress generic marketing language and empty promotional claims." },
+  { key: "balanced_neutral_tone", label: "Balanced, neutral tone", instruction: "Keep the tone balanced, neutral, and decision-oriented." },
+  { key: "actionable_recommendations", label: "Include actionable recommendations", instruction: "Turn the conclusions into clear next actions or decision steps." },
+  { key: "cite_statistics", label: "Cite statistics where appropriate", instruction: "Include relevant statistics when supported evidence is available." },
+  { key: "challenge_assumptions", label: "Challenge common assumptions where evidence supports it", instruction: "Challenge common assumptions when the evidence justifies it." }
+] as const;
+
 export type RegionKey = typeof REGION_OPTIONS[number]["key"];
 export type AudienceKey = typeof AUDIENCE_OPTIONS[number]["key"];
 export type IndustryKey = typeof INDUSTRY_OPTIONS[number]["key"];
 export type BusinessTypeKey = typeof BUSINESS_TYPE_OPTIONS[number]["key"];
+export type LanguageKey = typeof LANGUAGE_OPTIONS[number]["key"];
+export type EditorialStandardKey = typeof EDITORIAL_STANDARD_OPTIONS[number]["key"];
 
 const REGION_LABELS = new Map(REGION_OPTIONS.map((item) => [item.key, item.label]));
 const AUDIENCE_LABELS = new Map(AUDIENCE_OPTIONS.map((item) => [item.key, item.label]));
 const INDUSTRY_LABELS = new Map(INDUSTRY_OPTIONS.map((item) => [item.key, item.label]));
 const BUSINESS_TYPE_LABELS = new Map(BUSINESS_TYPE_OPTIONS.map((item) => [item.key, item.label]));
+const LANGUAGE_LABELS = new Map(LANGUAGE_OPTIONS.map((item) => [item.key, item.label]));
+const EDITORIAL_STANDARD_DEFINITIONS = new Map(EDITORIAL_STANDARD_OPTIONS.map((item) => [item.key, item]));
 
 export const INDUSTRY_AUDIENCES: Record<IndustryKey, readonly AudienceKey[]> = {
   construction: ["procurement_teams", "project_managers", "site_managers", "contractors", "commercial_managers"],
@@ -102,6 +127,8 @@ export function normalizeProjectProfile(input: Partial<ProjectProfile> | null | 
   const requestedAudience = optionKey(input?.audienceKey, AUDIENCE_LABELS, defaultAudienceForIndustry(industryKey));
   const audienceKey = INDUSTRY_AUDIENCES[industryKey].includes(requestedAudience) ? requestedAudience : defaultAudienceForIndustry(industryKey);
   const businessTypeKey = optionKey(input?.businessTypeKey, BUSINESS_TYPE_LABELS, "auto_detect");
+  const languageKey = optionKey(input?.languageKey, LANGUAGE_LABELS, "english_uk");
+  const editorialStandards = normalizeEditorialStandards(input?.editorialStandards);
   return {
     profileVersion: PROFILE_VERSION,
     regionKey,
@@ -112,12 +139,17 @@ export function normalizeProjectProfile(input: Partial<ProjectProfile> | null | 
     audienceLabel: AUDIENCE_LABELS.get(audienceKey) ?? "General Audience",
     businessTypeKey,
     businessTypeLabel: BUSINESS_TYPE_LABELS.get(businessTypeKey) ?? "Auto Detect",
-    defaultTargetWords: clampTargetWords(input?.defaultTargetWords ?? fallbackTargetWords)
+    defaultTargetWords: clampTargetWords(input?.defaultTargetWords ?? fallbackTargetWords),
+    languageKey,
+    languageLabel: LANGUAGE_LABELS.get(languageKey) ?? "English (UK)",
+    editorialStandards,
+    additionalGuidance: normalizeAdditionalGuidance(input?.additionalGuidance)
   };
 }
 
 export function snapshotProjectProfile(profile: ProjectProfile): ProjectProfileSnapshot {
   const normalized = normalizeProjectProfile(profile);
+  const editorialStandardLabels = editorialStandardLabelsFor(normalized.editorialStandards);
   return {
     profileVersion: normalized.profileVersion,
     region: normalized.regionKey,
@@ -130,6 +162,11 @@ export function snapshotProjectProfile(profile: ProjectProfile): ProjectProfileS
     businessTypeLabel: normalized.businessTypeLabel,
     profileKey: profileKeyFor(normalized.industryKey, normalized.audienceKey),
     targetWords: normalized.defaultTargetWords,
+    language: normalized.languageKey,
+    languageLabel: normalized.languageLabel,
+    editorialStandards: normalized.editorialStandards,
+    editorialStandardLabels,
+    additionalGuidance: normalized.additionalGuidance,
     regionAwarenessActive: normalized.regionKey !== "global",
     industryAwarenessActive: normalized.industryKey !== "general",
     audienceAwarenessActive: normalized.audienceKey !== "general_audience"
@@ -158,6 +195,20 @@ export function planningPrioritiesForProfile(snapshot?: ProjectProfileSnapshot |
   return PROFILE_PLANNING_PRIORITIES[profileKeyFor(snapshot.industry, snapshot.audience)]
     ?? AUDIENCE_PLANNING_PRIORITIES[snapshot.audience]
     ?? [];
+}
+
+export function editorialDirectivesForStandards(standards?: string[] | null) {
+  return normalizeEditorialStandards(standards).flatMap((key) => {
+    const definition = EDITORIAL_STANDARD_DEFINITIONS.get(key as EditorialStandardKey);
+    return definition ? [definition.instruction] : [];
+  });
+}
+
+export function editorialStandardLabelsFor(standards?: string[] | null) {
+  return normalizeEditorialStandards(standards).flatMap((key) => {
+    const definition = EDITORIAL_STANDARD_DEFINITIONS.get(key as EditorialStandardKey);
+    return definition ? [definition.label] : [];
+  });
 }
 
 export function projectProfileFromControls(profile: ProjectProfile | undefined, controls: ContentControls): ProjectProfile {
@@ -197,12 +248,17 @@ export function profileSourcePreference(source: ResearchSource, snapshot?: Proje
 export function profileContextLines(snapshot?: ProjectProfileSnapshot | null) {
   if (!snapshot) return [];
   const planningPriorities = planningPrioritiesForProfile(snapshot);
+  const editorialPreferences = editorialDirectivesForStandards(snapshot.editorialStandards);
   return [
     `Region: ${snapshot.regionLabel}`,
     `Industry: ${snapshot.industryLabel}`,
     `Audience: ${snapshot.audienceLabel}`,
     `Business type: ${snapshot.businessTypeLabel}`,
     `Target words: ${snapshot.targetWords}`,
+    `Language: ${snapshot.languageLabel}`,
+    ...(snapshot.editorialStandardLabels.length ? [`Editorial standards: ${snapshot.editorialStandardLabels.join("; ")}`] : []),
+    ...editorialPreferences.map((instruction) => `Editorial preference: ${instruction}`),
+    ...(snapshot.additionalGuidance ? [`Additional guidance: ${snapshot.additionalGuidance}`] : []),
     ...(planningPriorities.length ? [`Planning priorities: ${planningPriorities.join(", ")}`] : []),
     `Preference: use sources, terminology, examples and standards that fit the region, industry and audience.`
   ];
@@ -215,6 +271,26 @@ export function clampTargetWords(value: unknown) {
 
 function optionKey<T extends string>(value: unknown, labels: Map<T, string>, fallback: T): T {
   return typeof value === "string" && labels.has(value as T) ? value as T : fallback;
+}
+
+function normalizeEditorialStandards(value: unknown): EditorialStandardKey[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<EditorialStandardKey>();
+  const standards: EditorialStandardKey[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    if (!EDITORIAL_STANDARD_DEFINITIONS.has(item as EditorialStandardKey)) continue;
+    const key = item as EditorialStandardKey;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    standards.push(key);
+  }
+  return standards;
+}
+
+function normalizeAdditionalGuidance(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, MAX_ADDITIONAL_GUIDANCE_LENGTH);
 }
 
 function normalizeKey(value: unknown, fallback: string) {
@@ -258,7 +334,11 @@ const PROFILE_SIGNALS: Record<string, string[]> = {
   project_managers: ["programme", "delivery", "sequence", "schedule", "resource"],
   ctos: ["scalability", "strategy", "architecture", "risk", "business impact"],
   practice_managers: ["operations", "patient experience", "compliance", "staffing", "efficiency"],
-  business_leaders: ["commercial impact", "risk", "cash flow", "strategy"]
+  business_leaders: ["commercial impact", "risk", "cash flow", "strategy"],
+  english_uk: ["uk english", "british english", "organisation", "optimise"],
+  english_us: ["us english", "american english", "organization", "optimize"],
+  english_australia: ["australian english", "organisation", "optimise", "labour"],
+  english_canada: ["canadian english", "organisation", "optimise", "labour"]
 };
 
 const PROFILE_PLANNING_PRIORITIES: Record<string, string[]> = {

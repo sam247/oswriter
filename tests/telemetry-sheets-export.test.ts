@@ -286,7 +286,7 @@ function sampleArticle(overrides: Partial<ArticleDocument> & { researchScore?: n
     wordCount: 700,
     targetWords: 1000,
     profileSnapshot: {
-      profileVersion: 1,
+      profileVersion: 3,
       region: "united_kingdom",
       regionLabel: "United Kingdom",
       industry: "utilities",
@@ -297,6 +297,11 @@ function sampleArticle(overrides: Partial<ArticleDocument> & { researchScore?: n
       businessTypeLabel: "Auto Detect",
       profileKey: "utilities_procurement_teams",
       targetWords: 1000,
+      language: "english_uk",
+      languageLabel: "English (UK)",
+      editorialStandards: ["evidence_first"],
+      editorialStandardLabels: ["Evidence-first writing"],
+      additionalGuidance: "",
       regionAwarenessActive: true,
       industryAwarenessActive: true,
       audienceAwarenessActive: true
