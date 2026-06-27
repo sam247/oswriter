@@ -14,7 +14,7 @@ import type { QueueCostProjection } from "@/lib/queue/projection";
 import { rejectionSummaryLabel } from "@/lib/research/source-classification";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WorkerHealthState, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -1812,11 +1812,6 @@ function Workbench() {
                 )}
               </div>
             )}
-            {(stats.queued > 0 || stats.processing > 0 || workerStatus?.remaining) && workerStatus && (
-              <div className="mt-3">
-                <WorkerStatusCard status={workerStatus} />
-              </div>
-            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -3167,28 +3162,6 @@ function DashboardStat({ label, value, detail, warn = false, danger = false }: {
       <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">{label}</div>
       <div className={cn("mono mt-2 text-2xl font-semibold text-ink", warn && "text-warn", danger && "text-danger")}>{value}</div>
       <div className="mt-1 truncate text-xs text-ink-muted">{detail}</div>
-    </div>
-  );
-}
-
-function WorkerStatusCard({ status }: { status: WorkerStatusSnapshot }) {
-  const ready = status.health === "ready";
-
-  return (
-    <div className={cn("rounded-md border px-3 py-2.5", workerHealthTone(status.health))}>
-      <div className="flex items-start gap-2">
-        <span className={cn("mt-1 inline-flex h-2.5 w-2.5 rounded-full", workerHealthDot(status.health))} />
-        <div>
-          <div className="text-[12px] font-semibold text-ink">
-            Worker {ready ? "Ready" : "Offline"}
-          </div>
-          <div className="mt-1 text-[11px] leading-snug text-ink-muted">
-            {ready
-              ? "Queued work is waiting for the next worker poll."
-              : "Background worker has not observed this queue yet. Starting..."}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -6084,36 +6057,6 @@ function filterLabel(filter: Filter) {
     failed: "Failed",
     skipped: "Skipped"
   }[filter];
-}
-
-function workerHealthLabel(health: WorkerHealthState) {
-  return {
-    ready: "Ready",
-    busy: "Busy",
-    offline: "Offline",
-    recovering: "Recovering",
-    blocked: "Blocked"
-  }[health];
-}
-
-function workerHealthTone(health: WorkerHealthState) {
-  return {
-    ready: "border-success/25 bg-success/5",
-    busy: "border-info/25 bg-info/5",
-    offline: "border-danger/25 bg-danger/5",
-    recovering: "border-warn/25 bg-warn/5",
-    blocked: "border-danger/25 bg-danger/5"
-  }[health];
-}
-
-function workerHealthDot(health: WorkerHealthState) {
-  return {
-    ready: "bg-success",
-    busy: "bg-info",
-    offline: "bg-danger",
-    recovering: "bg-warn",
-    blocked: "bg-danger"
-  }[health];
 }
 
 function queueMutationBlockReason(state: AppState | null, jobs: QueueJob[]) {

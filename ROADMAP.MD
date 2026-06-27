@@ -6,11 +6,10 @@
 
 - Fixed the app-root workspace entry to pass `initialAuthed` into `WriterApp`, matching the current workspace shell contract and unblocking Vercel production builds.
 
-### Queue Worker Status Simplification
+### Queue Worker Status Removal
 
-- Simplified the queue worker status box to the two user-facing states `Worker Ready` and `Worker Offline`.
-- Replaced the detailed lease, diagnostics, and next-job metadata with the shorter queue-status copy for readiness and startup.
-- Disabled the `Generate` control while the worker is offline or still starting, and restored the black active state once the worker reports ready.
+- Removed the worker ready/offline status section from the workspace queue panel so the UI no longer shows a second color-coded state alongside the pipeline.
+- Kept the broader queue and worker behavior intact while removing the dedicated worker status presentation block.
 
 ### Pipeline Dashboard Refinement
 
