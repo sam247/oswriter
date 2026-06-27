@@ -2,6 +2,11 @@
 
 ## Completed
 
+### Resend Dependency Restore
+
+- Restored the missing `resend` package to the committed production dependency set after Vercel removed it during install and failed the auth/mail build path.
+- Regenerated the lockfile so deployment now resolves the Resend-backed mail service used by OTP and queue completion emails.
+
 ### Marketing Navigation Simplification
 
 - Removed `Workflow`, `Integrations`, `Blog`, and `Contact` from the header navigation across the marketing site so the top-level nav now stays focused on `Features` and `Pricing`.
