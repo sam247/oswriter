@@ -2,6 +2,13 @@
 
 ## Completed
 
+### Marketing Navigation Simplification
+
+- Removed `Workflow`, `Integrations`, `Blog`, and `Contact` from the header navigation across the marketing site so the top-level nav now stays focused on `Features` and `Pricing`.
+- Renamed the homepage header label from `Platform` to `Features` so navigation terminology now stays consistent across all public pages.
+- Moved `Blog` and `Contact` into the marketing footers where needed, keeping those destinations available without crowding the header.
+- Reworked the blog archive into a card grid that shows three posts per row on large screens while preserving the existing filters and search controls.
+
 ### QueueWrite Authentication And Application Split
 
 - Split QueueWrite into two explicit surfaces:

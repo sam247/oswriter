@@ -210,8 +210,6 @@ function Nav() {
         <nav className="ml-4 hidden items-center gap-6 text-[13.5px] text-[#3a3a3a] md:flex">
           <Link to="/features" className="hover:text-black">Features</Link>
           <Link to="/pricing" className="hover:text-black">Pricing</Link>
-          <Link to="/blog" className="text-black">Blog</Link>
-          <Link to="/contact" className="hover:text-black">Contact</Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <Link to={appUrl("/login")} className="hidden text-[13.5px] text-[#3a3a3a] hover:text-black sm:inline">

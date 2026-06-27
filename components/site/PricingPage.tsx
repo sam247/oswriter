@@ -30,12 +30,8 @@ function Nav() {
           QueueWrite
         </Link>
         <nav className="ml-4 hidden items-center gap-6 text-[13.5px] text-[#3a3a3a] md:flex">
-          <Link to="/" hash="process" className="hover:text-black">Process</Link>
           <Link to="/features" className="hover:text-black">Features</Link>
-          <Link to="/" hash="apps" className="hover:text-black">Integrations</Link>
           <Link to="/pricing" className="text-black">Pricing</Link>
-          <Link to="/blog" className="hover:text-black">Blog</Link>
-          <Link to="/contact" className="hover:text-black">Contact</Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <Link to={appUrl("/login")} className="hidden text-[13.5px] text-[#3a3a3a] hover:text-black sm:inline">
@@ -389,7 +385,10 @@ function Footer() {
           <span className="ml-2 text-[#4a4a4a]">© 2026</span>
         </div>
         <div className="flex items-center gap-5">
+          <Link to="/features" className="hover:text-black">Features</Link>
           <Link to="/pricing" className="hover:text-black">Pricing</Link>
+          <Link to="/blog" className="hover:text-black">Blog</Link>
+          <Link to="/contact" className="hover:text-black">Contact</Link>
           <a href="#" className="hover:text-black">Privacy</a>
           <a href="#" className="hover:text-black">Terms</a>
           <a href="#" className="hover:text-black">Changelog</a>

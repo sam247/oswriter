@@ -45,7 +45,7 @@ export default function BlogIndexPage() {
       </section>
 
       <section className="px-4">
-        <div className="mx-auto max-w-5xl">
+        <div className="mx-auto max-w-6xl">
           <div className="flex flex-col gap-4 rounded-2xl bg-white p-4 ring-1 ring-black/5 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative w-full sm:max-w-xs">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#9a9a9a]" />
@@ -78,19 +78,19 @@ export default function BlogIndexPage() {
       </section>
 
       <section className="px-4 py-10">
-        <div className="mx-auto max-w-5xl">
+        <div className="mx-auto max-w-6xl">
           {posts.length === 0 ? (
             <div className="rounded-2xl bg-white p-10 text-center ring-1 ring-black/5">
               <p className="text-[14px] text-[#3a3a3a]">No posts match that filter yet.</p>
             </div>
           ) : (
-            <ul className="flex flex-col gap-3">
+            <ul className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
               {posts.map((p) => (
-                <li key={p.slug}>
+                <li key={p.slug} className="h-full">
                   <Link
                     to="/blog/$slug"
                     params={{ slug: p.slug }}
-                    className="group flex flex-col gap-3 rounded-2xl bg-white p-6 ring-1 ring-black/5 transition hover:ring-black/15 sm:flex-row sm:items-center sm:gap-6 sm:p-7"
+                    className="group flex h-full flex-col rounded-2xl bg-white p-6 ring-1 ring-black/5 transition hover:ring-black/15 sm:p-7"
                   >
                     <div className="flex-1">
                       <div className="flex items-center gap-3 text-[11.5px] text-[#6a6a6a]">
@@ -104,11 +104,11 @@ export default function BlogIndexPage() {
                       <h2 className="mt-3 text-[22px] font-semibold leading-[1.15] tracking-[-0.02em] text-[#0a0a0a] sm:text-[24px]">
                         {p.title}
                       </h2>
-                      <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-[#3a3a3a]">
+                      <p className="mt-2 text-[14px] leading-relaxed text-[#3a3a3a]">
                         {p.description}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1 text-[13px] font-medium text-[#0a0a0a] sm:self-end">
+                    <div className="mt-6 flex items-center gap-1 text-[13px] font-medium text-[#0a0a0a]">
                       Read
                       <ArrowRight className="size-3.5 transition group-hover:translate-x-0.5" />
                     </div>
@@ -136,8 +136,6 @@ function Nav() {
         <nav className="ml-4 hidden items-center gap-6 text-[13.5px] text-[#3a3a3a] md:flex">
           <Link to="/features" className="hover:text-black">Features</Link>
           <Link to="/pricing" className="hover:text-black">Pricing</Link>
-          <Link to="/blog" className="text-black">Blog</Link>
-          <Link to="/contact" className="hover:text-black">Contact</Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <Link to={appUrl("/login")} className="hidden text-[13.5px] text-[#3a3a3a] hover:text-black sm:inline">
