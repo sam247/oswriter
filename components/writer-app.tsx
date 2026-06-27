@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Pin, Play, RotateCw, Search, Settings, SkipForward, Sparkles, Trash2, Unlink, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bold, CheckCircle2, ChevronsDown, ChevronsUp, ChevronDown, ChevronRight, Copy, Download, ExternalLink, FileArchive, FileCode, FileJson, FileText, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Loader2, PanelLeft, PanelRight, Pin, Play, RotateCw, Search, Settings, SkipForward, Sparkles, Trash2, Undo2, Unlink, Upload } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { UsageIndicator } from "@/components/usage/UsageIndicator";
 import { SeoDecisionPanel } from "@/components/seo/SeoDecisionPanel";
@@ -221,6 +221,7 @@ function Workbench() {
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
   const [globalMenuOpen, setGlobalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -250,6 +251,9 @@ function Workbench() {
   const generateMenuRef = useRef<HTMLDivElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const saveRevisionRef = useRef(0);
+  const undoStackRef = useRef<Map<string, string[]>>(new Map());
+  const undoCheckpointTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingUndoSnapshotRef = useRef<Map<string, string>>(new Map());
   const warningsRef = useRef<HTMLDivElement | null>(null);
   const visibleRecordedRef = useRef<Set<string>>(new Set());
   const visibilityBaselineRef = useRef<Set<string> | null>(null);
@@ -273,11 +277,33 @@ function Workbench() {
     [jobs, selectedArticle?.jobId, selectedArticleId]
   );
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
+  // Keep a ref to the current markdown so undo checkpoints can capture it without being in useCallback deps
+  const selectedMarkdownRef = useRef(selectedMarkdown);
+  selectedMarkdownRef.current = selectedMarkdown;
   const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
   const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? null;
   const handleSelectedMarkdownChange = useCallback((markdown: string) => {
     if (!selectedArticle) return;
-    updateArticleDraft(selectedArticle.id, { markdown });
+    const articleId = selectedArticle.id;
+    // Capture the "before" snapshot on the first change in a new editing batch (debounced)
+    if (!pendingUndoSnapshotRef.current.has(articleId)) {
+      pendingUndoSnapshotRef.current.set(articleId, selectedMarkdownRef.current);
+    }
+    if (undoCheckpointTimerRef.current) clearTimeout(undoCheckpointTimerRef.current);
+    undoCheckpointTimerRef.current = setTimeout(() => {
+      const before = pendingUndoSnapshotRef.current.get(articleId);
+      pendingUndoSnapshotRef.current.delete(articleId);
+      if (before !== undefined && before !== selectedMarkdownRef.current) {
+        const stack = undoStackRef.current.get(articleId) ?? [];
+        if (stack[stack.length - 1] !== before) {
+          stack.push(before);
+          if (stack.length > 50) stack.shift();
+          undoStackRef.current.set(articleId, stack);
+          setCanUndo(true);
+        }
+      }
+    }, 1500);
+    updateArticleDraft(articleId, { markdown });
   }, [selectedArticle, updateArticleDraft]);
   const displayJobs = useMemo(() => jobs.map((job) => {
     const article = articles.find((item) => item.id === job.articleId);
@@ -1434,6 +1460,18 @@ function Workbench() {
 
   function applyFormat(command: FormatCommand) {
     if (!selectedArticle) return;
+    const articleId = selectedArticle.id;
+    const currentMarkdown = selectedMarkdownRef.current;
+    // Push an immediate snapshot before every explicit format command
+    const stack = undoStackRef.current.get(articleId) ?? [];
+    if (stack[stack.length - 1] !== currentMarkdown) {
+      stack.push(currentMarkdown);
+      if (stack.length > 50) stack.shift();
+      undoStackRef.current.set(articleId, stack);
+      setCanUndo(true);
+    }
+    if (undoCheckpointTimerRef.current) clearTimeout(undoCheckpointTimerRef.current);
+    pendingUndoSnapshotRef.current.delete(articleId);
     if (articleViewMode === "rich") {
       applyRichFormat(command);
       return;
@@ -1447,6 +1485,23 @@ function Workbench() {
     window.requestAnimationFrame(() => {
       editorRef.current?.focus();
       editorRef.current?.setSelectionRange(next.selectionStart, next.selectionEnd);
+    });
+  }
+
+  function undoLastChange() {
+    if (!selectedArticle) return;
+    const articleId = selectedArticle.id;
+    // Cancel any pending checkpoint — we are undoing, not starting a new batch
+    if (undoCheckpointTimerRef.current) clearTimeout(undoCheckpointTimerRef.current);
+    pendingUndoSnapshotRef.current.delete(articleId);
+    const stack = undoStackRef.current.get(articleId);
+    if (!stack || stack.length === 0) return;
+    const previous = stack.pop();
+    if (previous === undefined) return;
+    setCanUndo(stack.length > 0);
+    updateArticleDraft(articleId, { markdown: previous });
+    window.requestAnimationFrame(() => {
+      (articleViewMode === "rich" ? richEditorRef.current : editorRef.current)?.focus();
     });
   }
 
@@ -2024,12 +2079,22 @@ function Workbench() {
                 viewMode={articleViewMode}
                 onViewModeChange={setArticleViewMode}
                 onFormat={applyFormat}
+                onUndo={undoLastChange}
+                canUndo={canUndo}
                 onCopyAll={copySelectedArticle}
                 onConnectWordPress={() => setProjectSettingsProjectId(state?.project.id ?? null)}
                 onPublishDraft={() => void publishSelectedArticle("draft")}
                 onPublishNow={() => void publishSelectedArticle("publish")}
               />
-              <div className="min-h-0 flex-1">
+              <div
+                className="min-h-0 flex-1"
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key === "z") {
+                    event.preventDefault();
+                    undoLastChange();
+                  }
+                }}
+              >
                 {selectedArticle ? (
                   <ArticleWorkspace
                     markdown={selectedMarkdown}
@@ -4347,6 +4412,8 @@ function ArticleToolbar({
   viewMode,
   onViewModeChange,
   onFormat,
+  onUndo,
+  canUndo,
   onCopyAll,
   onConnectWordPress,
   onPublishDraft,
@@ -4358,6 +4425,8 @@ function ArticleToolbar({
   viewMode: ArticleViewMode;
   onViewModeChange: (mode: ArticleViewMode) => void;
   onFormat: (command: FormatCommand) => void;
+  onUndo: () => void;
+  canUndo: boolean;
   onCopyAll: () => void;
   onConnectWordPress: () => void;
   onPublishDraft: () => void;
@@ -4394,6 +4463,15 @@ function ArticleToolbar({
         title="Copy full article"
       >
         Copy All
+      </button>
+      <button
+        onClick={onUndo}
+        disabled={!article || !canUndo}
+        title="Undo last change (⌘Z)"
+        className="flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2.5 text-[11.5px] font-medium text-ink-muted transition-colors hover:border-line hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+      >
+        <Undo2 className="size-3.5" />
+        Revert
       </button>
       <div className="relative">
         <button
