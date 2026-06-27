@@ -2,6 +2,11 @@
 
 ## Completed
 
+### Generate Button Delay Removal
+
+- Removed the leftover worker-readiness gate from the queue `Generate` button now that the worker status UI has been removed.
+- The button now returns to its normal active black state as soon as queue conditions allow, instead of waiting on hidden worker polling state.
+
 ### Generated Sitemap
 
 - Added a native Next.js `app/sitemap.ts` route so `/sitemap.xml` is generated from public marketing pages and blog entries.

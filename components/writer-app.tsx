@@ -313,8 +313,7 @@ function Workbench() {
     generateBlocked,
     state?.queueControl.mode ?? "stopped",
     Boolean(resumableQueuedJob),
-    generateFeedback.status === "starting",
-    workerStatus?.health === "ready"
+    generateFeedback.status === "starting"
   );
   const queueProjectionKey = state ? [
     state.project.id,
@@ -6194,8 +6193,7 @@ function describeGenerateButton(
   blocked: boolean,
   queueMode: QueueControlMode,
   hasResumableCurrent: boolean,
-  starting: boolean,
-  workerReady: boolean
+  starting: boolean
 ) {
   if (starting) {
     return {
@@ -6216,29 +6214,25 @@ function describeGenerateButton(
   if (queueMode === "stop_after_current" && hasResumableCurrent) {
     return {
       label: "Resume current",
-      disabled: blocked || !workerReady,
-      title: !workerReady
-        ? "Background worker has not observed this queue yet. Starting..."
+      disabled: blocked,
+      title: blocked
+        ? "Queue is busy."
         : "Continue the article that already started, then stop before the next item."
     };
   }
   if (stats.queued > 0) {
     return {
       label: "Generate",
-      disabled: blocked || !workerReady,
-      title: !workerReady
-        ? "Background worker has not observed this queue yet. Starting..."
-        : blocked
-          ? "Queue is busy."
-          : "Start queued article generation."
+      disabled: blocked,
+      title: blocked
+        ? "Queue is busy."
+        : "Start queued article generation."
     };
   }
   return {
     label: "Generate",
     disabled: true,
-    title: !workerReady
-      ? "Background worker has not observed this queue yet. Starting..."
-      : "Add titles to create queue work."
+    title: "Add titles to create queue work."
   };
 }
 
