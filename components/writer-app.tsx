@@ -2760,14 +2760,25 @@ function SettingsPanel({
 
             {/* Tavily */}
             <div className="rounded-md border border-line bg-surface-1 px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[13px] font-semibold text-ink">Tavily Research</div>
                   <div className="mt-0.5 text-[11.5px] text-ink-muted">BYOK source discovery and evidence extraction.</div>
                 </div>
-                <span className={cn("mono shrink-0 rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", tavilyKeyConfigured ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
-                  {tavilyKeyConfigured ? "Connected" : "Not configured"}
-                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className={cn("mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", tavilyKeyConfigured ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
+                    {tavilyKeyConfigured ? "Connected" : "Not configured"}
+                  </span>
+                  {!tavilyManageOpen ? (
+                    <button type="button" onClick={() => setTavilyManageOpen(true)} className={cn("h-7 rounded-md px-3 text-[12px] font-medium", tavilyKeyConfigured ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
+                      {tavilyKeyConfigured ? "Manage" : "Connect"}
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => setTavilyManageOpen(false)} className="h-7 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
+                      Done
+                    </button>
+                  )}
+                </div>
               </div>
               {tavilyManageOpen && (
                 <div className="mt-3 space-y-2">
@@ -2787,45 +2798,43 @@ function SettingsPanel({
                     label="Research provider"
                     value={draft.aiProvider.researchProvider ?? "queuewrite"}
                     options={[
-                      { key: "queuewrite", label: "QueueWrite Research" },
-                      ...(tavilyKeyConfigured ? [{ key: "byok", label: "BYOK Experimental (Tavily)" }] : [])
+                      { key: "queuewrite", label: "QueueWrite Research (default)" },
+                      ...(tavilyKeyConfigured ? [{ key: "byok", label: "Tavily (BYOK)" }] : [])
                     ]}
                     onChange={(researchProvider) => updateDraft({ aiProvider: { researchProvider: researchProvider as "queuewrite" | "byok" } })}
                   />
                 </div>
               )}
-              <div className="mt-3 flex justify-end">
-                {!tavilyManageOpen ? (
-                  <button type="button" onClick={() => setTavilyManageOpen(true)} className={cn("h-8 rounded-md px-3 text-[12px] font-medium", tavilyKeyConfigured ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
-                    {tavilyKeyConfigured ? "Manage" : "Connect"}
-                  </button>
-                ) : (
-                  <button type="button" onClick={() => setTavilyManageOpen(false)} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
-                    Done
-                  </button>
-                )}
-              </div>
             </div>
-
-            {/* QueueWrite Research (platform default) */}
-            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-2.5">
-              <div>
-                <div className="text-[12px] font-medium text-ink">QueueWrite Research</div>
-                <div className="mt-0.5 text-[11px] text-ink-muted">Managed source discovery and evidence extraction.</div>
-              </div>
-              <span className="mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em] bg-success/10 text-success">Active</span>
-            </div>
-
-            {/* Writer API Key */}
             <div className="rounded-md border border-line bg-surface-1 px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[13px] font-semibold text-ink">Writer API Key</div>
                   <div className="mt-0.5 text-[11.5px] text-ink-muted">Optional. Platform AI is the fallback until a personal key is configured.</div>
                 </div>
-                <span className={cn("mono shrink-0 rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", writerKeyEnabled ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
-                  {writerKeyEnabled ? "Connected" : "Not configured"}
-                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className={cn("mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", writerKeyEnabled ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
+                    {writerKeyEnabled ? "Connected" : "Not configured"}
+                  </span>
+                  {writerKeyEnabled && !writerManageOpen && (
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ aiProvider: { writerKeyEnabled: false, writerApiKey: "" } })}
+                      className="h-7 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 hover:bg-surface-2"
+                    >
+                      Disconnect
+                    </button>
+                  )}
+                  {!writerManageOpen ? (
+                    <button type="button" onClick={() => setWriterManageOpen(true)} className={cn("h-7 rounded-md px-3 text-[12px] font-medium", writerKeyEnabled ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
+                      {writerKeyEnabled ? "Manage" : "Connect"}
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => setWriterManageOpen(false)} className="h-7 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
+                      Done
+                    </button>
+                  )}
+                </div>
               </div>
               {writerManageOpen && (
                 <div className="mt-3">
@@ -2836,26 +2845,6 @@ function SettingsPanel({
                   />
                 </div>
               )}
-              <div className="mt-3 flex justify-end gap-2">
-                {writerKeyEnabled && !writerManageOpen && (
-                  <button
-                    type="button"
-                    onClick={() => updateDraft({ aiProvider: { writerKeyEnabled: false, writerApiKey: "" } })}
-                    className="h-8 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 hover:bg-surface-2"
-                  >
-                    Disconnect
-                  </button>
-                )}
-                {!writerManageOpen ? (
-                  <button type="button" onClick={() => setWriterManageOpen(true)} className={cn("h-8 rounded-md px-3 text-[12px] font-medium", writerKeyEnabled ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
-                    {writerKeyEnabled ? "Manage" : "Connect"}
-                  </button>
-                ) : (
-                  <button type="button" onClick={() => setWriterManageOpen(false)} className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
-                    Done
-                  </button>
-                )}
-              </div>
             </div>
           </CollapsibleSettingsSection>
 
@@ -3180,34 +3169,29 @@ function ProjectSettingsPanel({
 
             {/* WordPress Site */}
             <div className="overflow-hidden rounded-md border border-line bg-surface-1">
-              <div className="px-4 py-3">
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
                 {wordpressStatus !== "not_connected" && savedWordPress?.siteUrl ? (
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-2.5 min-w-0">
-                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                      <div className="min-w-0">
-                        <div className="truncate text-[13px] font-semibold text-ink">{savedWordPress.siteUrl}</div>
-                        <div className="mt-0.5 text-[11.5px] text-ink-muted">
-                          {savedWordPress.defaultPostStatus === "draft" ? "Draft mode" : "Publish mode"}
-                        </div>
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+                    <div className="min-w-0">
+                      <div className="truncate text-[13px] font-semibold text-ink">{savedWordPress.siteUrl}</div>
+                      <div className="mt-0.5 text-[11.5px] text-ink-muted">
+                        {savedWordPress.defaultPostStatus === "draft" ? "Draft mode" : "Publish mode"}
                       </div>
                     </div>
-                    <WordPressConnectionStatusBadge status={wordpressStatus} />
                   </div>
                 ) : (
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[13px] font-semibold text-ink">WordPress Site</div>
-                      <div className="mt-0.5 text-[11.5px] text-ink-muted">Publish directly to WordPress.</div>
-                    </div>
-                    <WordPressConnectionStatusBadge status={wordpressStatus} />
+                  <div>
+                    <div className="text-[13px] font-semibold text-ink">WordPress Site</div>
+                    <div className="mt-0.5 text-[11.5px] text-ink-muted">Publish directly to WordPress.</div>
                   </div>
                 )}
-                <div className="mt-3 flex justify-end">
+                <div className="flex shrink-0 items-center gap-2">
+                  <WordPressConnectionStatusBadge status={wordpressStatus} />
                   <button
                     type="button"
                     onClick={() => setWordpressFormOpen(!wordpressFormOpen)}
-                    className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2"
+                    className="h-7 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2"
                   >
                     {wordpressFormOpen ? "Done" : wordpressStatus !== "not_connected" ? "Manage" : "Connect"}
                   </button>
@@ -3296,8 +3280,8 @@ function ProjectSettingsPanel({
             {/* Shopify Store */}
             <div className="overflow-hidden rounded-md border border-line bg-surface-1">
               <div className="px-4 py-3">
-                {shopifyStatus !== "not_connected" && savedShopify ? (
-                  <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  {shopifyStatus !== "not_connected" && savedShopify ? (
                     <div className="flex items-start gap-2.5 min-w-0">
                       <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
                       <div className="min-w-0">
@@ -3305,51 +3289,47 @@ function ProjectSettingsPanel({
                         <div className="mono mt-0.5 text-[11px] text-ink-subtle">{savedShopify.shopDomain}</div>
                       </div>
                     </div>
-                    <ShopifyConnectionStatusBadge status={shopifyStatus} />
-                  </div>
-                ) : (
-                  <div className="flex items-start justify-between gap-3">
+                  ) : (
                     <div>
                       <div className="text-[13px] font-semibold text-ink">Shopify Store</div>
                       <div className="mt-0.5 text-[11.5px] text-ink-muted">Publish articles to a Shopify blog.</div>
                     </div>
-                    <ShopifyConnectionStatusBadge status={shopifyStatus} />
-                  </div>
-                )}
-
-                <div className="mt-3 flex justify-end gap-2">
-                  {shopifyStatus !== "not_connected" && savedShopify ? (
-                    <>
-                      {shopifyLastValidatedAt && (
-                        <span className="self-center text-[11px] text-ink-subtle mr-auto">Last validated {formatDate(shopifyLastValidatedAt)}</span>
-                      )}
-                      <button
-                        onClick={() => void checkShopifyHealth()}
-                        disabled={shopifyBusy !== "idle"}
-                        className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40 hover:bg-surface-2"
-                      >
-                        {shopifyBusy === "checking" ? "Checking…" : "Check Health"}
-                      </button>
-                      <button
-                        onClick={() => void disconnectShopify()}
-                        disabled={shopifyBusy !== "idle"}
-                        className="h-8 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 disabled:opacity-40 hover:bg-surface-2"
-                      >
-                        {shopifyBusy === "disconnecting" ? "Disconnecting…" : "Disconnect"}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setShopifyConnectFormOpen(!shopifyConnectFormOpen)}
-                      className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white"
-                    >
-                      {shopifyConnectFormOpen ? "Cancel" : "Connect"}
-                    </button>
                   )}
+                  <div className="flex shrink-0 items-center gap-2">
+                    <ShopifyConnectionStatusBadge status={shopifyStatus} />
+                    {shopifyStatus !== "not_connected" && savedShopify ? (
+                      <>
+                        <button
+                          onClick={() => void checkShopifyHealth()}
+                          disabled={shopifyBusy !== "idle"}
+                          className="h-7 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40 hover:bg-surface-2"
+                        >
+                          {shopifyBusy === "checking" ? "Checking…" : "Check Health"}
+                        </button>
+                        <button
+                          onClick={() => void disconnectShopify()}
+                          disabled={shopifyBusy !== "idle"}
+                          className="h-7 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 disabled:opacity-40 hover:bg-surface-2"
+                        >
+                          {shopifyBusy === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShopifyConnectFormOpen(!shopifyConnectFormOpen)}
+                        className="h-7 rounded-md bg-ink px-3 text-[12px] font-medium text-white"
+                      >
+                        {shopifyConnectFormOpen ? "Cancel" : "Connect"}
+                      </button>
+                    )}
+                  </div>
                 </div>
+                {shopifyStatus !== "not_connected" && savedShopify && shopifyLastValidatedAt && (
+                  <div className="mt-1 text-[11px] text-ink-subtle">Last validated {formatDate(shopifyLastValidatedAt)}</div>
+                )}
                 {shopifyStatus === "failed" && savedShopify && (
-                  <div className="mt-2 text-[11px] text-danger">{shopifyLastError ?? "Most recent connection check failed."}</div>
+                  <div className="mt-1 text-[11px] text-danger">{shopifyLastError ?? "Most recent connection check failed."}</div>
                 )}
               </div>
 
