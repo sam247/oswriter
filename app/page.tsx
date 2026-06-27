@@ -29,7 +29,7 @@ export default async function Page() {
   if (isSplitHostDeployment() && isAppHost(host)) {
     const session = await getAuthSession();
     if (!session) redirect("/login");
-    return <WriterApp />;
+    return <WriterApp initialAuthed />;
   }
   return <HomePage />;
 }

@@ -2,6 +2,10 @@
 
 ## Completed
 
+### App Root Auth Prop Fix
+
+- Fixed the app-root workspace entry to pass `initialAuthed` into `WriterApp`, matching the current workspace shell contract and unblocking Vercel production builds.
+
 ### Queue Worker Status Simplification
 
 - Simplified the queue worker status box to the two user-facing states `Worker Ready` and `Worker Offline`.
