@@ -8,7 +8,7 @@ import { errorMessage, logStorageError } from "@/lib/storage/logging";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, neonUsageSnapshotPath, neonUsageSnapshotPrefix, operationalTelemetryPath, operationalTelemetryPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 import type { StorageProvider } from "@/lib/storage/storage";
 import type { WorkerObservationTimings } from "@/lib/storage/storage";
-import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, NeonUsageSnapshotDocument, OperationalTelemetryDocument, OrganisationDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, NeonUsageSnapshotDocument, OperationalTelemetryDocument, OrganisationDocument, ProjectDocument, ProjectShopifyConnectionSecret, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { toArticleSummary } from "@/lib/articles/summary";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 
@@ -35,6 +35,7 @@ export class NeonStorageProvider implements StorageProvider {
   private tenantReady = false;
   private generationTelemetrySchemaReady = false;
   private wordPressConnectionSchemaReady = false;
+  private shopifyConnectionSchemaReady = false;
   private siteKnowledgeSchemaReady = false;
   private infraTelemetrySchemaReady = false;
   private readonly ensuredProjects = new Set<string>();
@@ -428,6 +429,69 @@ export class NeonStorageProvider implements StorageProvider {
       const tenant = await this.ensureTenant();
       await this.sql`
         delete from project_wordpress_connections
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+      `;
+    });
+  }
+
+  async getProjectShopifyConnection(projectId: string): Promise<ProjectShopifyConnectionSecret | null> {
+    return this.withFailureLogging("getProjectShopifyConnection", projectId, async () => {
+      await this.ensureShopifyConnectionSchema();
+      const tenant = await this.ensureTenant();
+      const found = rows(await this.sql`
+        select document
+        from project_shopify_connections
+        where organisation_id = ${tenant.organisationId}
+          and project_id = ${projectId}
+      `);
+      return found[0]?.document as ProjectShopifyConnectionSecret | null ?? null;
+    });
+  }
+
+  async saveProjectShopifyConnection(connection: ProjectShopifyConnectionSecret): Promise<void> {
+    return this.withFailureLogging("saveProjectShopifyConnection", connection.projectId, async () => {
+      await this.ensureShopifyConnectionSchema();
+      const tenant = await this.ensureTenant();
+      await this.ensureProjectRows(connection.projectId);
+      const next = withProjectShopifyConnectionDefaults(connection, tenant);
+      await this.sql`
+        insert into project_shopify_connections (
+          project_id, organisation_id, created_by_user_id, shop_domain, encrypted_access_token,
+          granted_scopes, connection_status, installed_at, last_validated_at, last_error,
+          metadata, document, created_at, updated_at
+        )
+        values (
+          ${next.projectId}, ${next.organisationId}, ${next.createdByUserId}, ${next.shopDomain},
+          ${next.encryptedAccessToken}, ${next.grantedScopes.join(",")}, ${next.connectionStatus},
+          ${next.installedAt ?? null}::timestamptz, ${next.lastValidatedAt ?? null}::timestamptz,
+          ${next.lastError ?? null}, ${JSON.stringify(next.metadata)}::jsonb,
+          ${JSON.stringify(next)}::jsonb,
+          ${next.createdAt}::timestamptz, ${next.updatedAt}::timestamptz
+        )
+        on conflict (project_id) do update set
+          organisation_id = excluded.organisation_id,
+          created_by_user_id = excluded.created_by_user_id,
+          shop_domain = excluded.shop_domain,
+          encrypted_access_token = excluded.encrypted_access_token,
+          granted_scopes = excluded.granted_scopes,
+          connection_status = excluded.connection_status,
+          installed_at = excluded.installed_at,
+          last_validated_at = excluded.last_validated_at,
+          last_error = excluded.last_error,
+          metadata = excluded.metadata,
+          document = excluded.document,
+          updated_at = excluded.updated_at
+      `;
+    });
+  }
+
+  async deleteProjectShopifyConnection(projectId: string): Promise<void> {
+    return this.withFailureLogging("deleteProjectShopifyConnection", projectId, async () => {
+      await this.ensureShopifyConnectionSchema();
+      const tenant = await this.ensureTenant();
+      await this.sql`
+        delete from project_shopify_connections
         where organisation_id = ${tenant.organisationId}
           and project_id = ${projectId}
       `;
@@ -1904,6 +1968,33 @@ export class NeonStorageProvider implements StorageProvider {
     this.wordPressConnectionSchemaReady = true;
   }
 
+  private async ensureShopifyConnectionSchema() {
+    if (this.shopifyConnectionSchemaReady) return;
+    await this.sql`
+      create table if not exists project_shopify_connections (
+        project_id text primary key references projects(id) on delete cascade,
+        organisation_id text not null references organisations(id) on delete cascade,
+        created_by_user_id text not null references users(id),
+        shop_domain text not null,
+        encrypted_access_token text not null,
+        granted_scopes text not null default '',
+        connection_status text not null default 'not_connected',
+        installed_at timestamptz,
+        last_validated_at timestamptz,
+        last_error text,
+        metadata jsonb not null default '{}'::jsonb,
+        document jsonb not null,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+    await this.sql`
+      create index if not exists idx_project_shopify_connections_org
+        on project_shopify_connections (organisation_id, updated_at desc)
+    `;
+    this.shopifyConnectionSchemaReady = true;
+  }
+
   private async ensureSiteKnowledgeSchema() {
     if (this.siteKnowledgeSchemaReady) return;
     await this.sql`
@@ -2403,6 +2494,14 @@ function withProjectDefaults(project: ProjectDocument, tenant: TenantSeed): Proj
 }
 
 function withProjectWordPressConnectionDefaults(connection: ProjectWordPressConnectionSecret, tenant: TenantSeed): ProjectWordPressConnectionSecret {
+  return {
+    ...connection,
+    organisationId: connection.organisationId ?? tenant.organisationId,
+    createdByUserId: connection.createdByUserId ?? tenant.userId
+  };
+}
+
+function withProjectShopifyConnectionDefaults(connection: ProjectShopifyConnectionSecret, tenant: TenantSeed): ProjectShopifyConnectionSecret {
   return {
     ...connection,
     organisationId: connection.organisationId ?? tenant.organisationId,

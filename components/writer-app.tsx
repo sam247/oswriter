@@ -23,7 +23,7 @@ import type { QueueCostProjection } from "@/lib/queue/projection";
 import { rejectionSummaryLabel } from "@/lib/research/source-classification";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectShopifyConnection, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, ShopifyConnectionStatus, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -381,6 +381,26 @@ function Workbench() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  // Handle post-OAuth redirect params from Shopify connect flow.
+  // Waits for state to load so the project can be found before opening settings.
+  const shopifyParamsHandled = useRef(false);
+  useEffect(() => {
+    if (shopifyParamsHandled.current || !state) return;
+    const params = new URLSearchParams(window.location.search);
+    const projectSettingsId = params.get("projectSettings");
+    const shopifyResult = params.get("shopify");
+    if (projectSettingsId) {
+      shopifyParamsHandled.current = true;
+      setProjectSettingsProjectId(projectSettingsId);
+      if (shopifyResult === "connected") {
+        setMessage("Shopify publishing destination connected.");
+      }
+      // Clean up URL params without reloading.
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, "", cleanUrl);
+    }
+  }, [state]);
 
   useEffect(() => {
     if (!state?.project.id) return;
@@ -2742,6 +2762,7 @@ function ProjectSettingsPanel({
 }) {
   const initialProfile = normalizeProjectProfile(project.profile, fallbackTargetWords);
   const savedWordPress = project.publishing?.wordpress;
+  const savedShopify = project.publishing?.shopify;
   const [profile, setProfile] = useState(initialProfile);
   const [contentProfile, setContentProfile] = useState<ContentProfile>(project.defaultContentProfile ?? "industry_explainer");
   const [dirty, setDirty] = useState(false);
@@ -2756,6 +2777,11 @@ function ProjectSettingsPanel({
   const [wordpressLastError, setWordpressLastError] = useState<string | null>(savedWordPress?.lastError ?? null);
   const [wordpressLastValidatedAt, setWordpressLastValidatedAt] = useState<string | null>(savedWordPress?.lastValidatedAt ?? null);
   const [wordpressBusy, setWordpressBusy] = useState<"idle" | "testing" | "saving">("idle");
+  const [shopifyDomainDraft, setShopifyDomainDraft] = useState(savedShopify?.shopDomain ?? "");
+  const [shopifyStatus, setShopifyStatus] = useState<ShopifyConnectionStatus>(savedShopify?.connectionStatus ?? "not_connected");
+  const [shopifyLastError, setShopifyLastError] = useState<string | null>(savedShopify?.lastError ?? null);
+  const [shopifyLastValidatedAt, setShopifyLastValidatedAt] = useState<string | null>(savedShopify?.lastValidatedAt ?? null);
+  const [shopifyBusy, setShopifyBusy] = useState<"idle" | "checking" | "disconnecting">("idle");
   const updateProfile = (patch: ProjectProfilePatch) => {
     setProfile((current) => normalizeProjectProfile({ ...current, ...patch }, fallbackTargetWords));
     setDirty(true);
@@ -2792,6 +2818,49 @@ function ProjectSettingsPanel({
     setWordpress((current) => ({ ...current, applicationPassword: "" }));
     setWordpressLastError(null);
     setWordpressLastValidatedAt(new Date().toISOString());
+  };
+  const connectShopify = () => {
+    const domain = shopifyDomainDraft.trim();
+    if (!domain || !project.id) return;
+    window.location.href = `/api/project/shopify/connect?projectId=${encodeURIComponent(project.id)}&shop=${encodeURIComponent(domain)}`;
+  };
+  const checkShopifyHealth = async () => {
+    setShopifyBusy("checking");
+    try {
+      const res = await fetch("/api/project/shopify/health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: project.id }),
+      });
+      const data = (await res.json()) as { connectionStatus?: string; lastValidatedAt?: string; lastError?: string | null; error?: string };
+      if (res.ok) {
+        setShopifyStatus((data.connectionStatus as ShopifyConnectionStatus) ?? "connected");
+        setShopifyLastValidatedAt(data.lastValidatedAt ?? new Date().toISOString());
+        setShopifyLastError(data.lastError ?? null);
+      } else {
+        setShopifyStatus("failed");
+        setShopifyLastError(data.error ?? "Health check failed.");
+      }
+    } catch {
+      setShopifyStatus("failed");
+      setShopifyLastError("Health check failed.");
+    }
+    setShopifyBusy("idle");
+  };
+  const disconnectShopify = async () => {
+    setShopifyBusy("disconnecting");
+    try {
+      const res = await fetch(`/api/project/shopify?projectId=${encodeURIComponent(project.id)}`, { method: "DELETE" });
+      if (res.ok) {
+        setShopifyStatus("not_connected");
+        setShopifyDomainDraft("");
+        setShopifyLastError(null);
+        setShopifyLastValidatedAt(null);
+      }
+    } catch {
+      // Ignore — status badge will reflect the server state on next load.
+    }
+    setShopifyBusy("idle");
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -2967,6 +3036,71 @@ function ProjectSettingsPanel({
               </button>
             </div>
           </CollapsibleSettingsSection>
+          <CollapsibleSettingsSection title="Shopify">
+            <div className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-3 py-3">
+              <div>
+                <div className="text-[13px] font-medium text-ink">Shopify Publishing Destination</div>
+                <div className="mt-0.5 text-[11px] text-ink-muted">Connect a Shopify store to enable article publishing.</div>
+              </div>
+              <ShopifyConnectionStatusBadge status={shopifyStatus} />
+            </div>
+            {shopifyStatus !== "not_connected" && savedShopify ? (
+              <div className="space-y-2">
+                <div className="rounded-md border border-line bg-surface-2 px-3 py-2.5">
+                  <div className="mono text-[11px] text-ink-muted">Connected store</div>
+                  <div className="mt-0.5 text-[13px] font-medium text-ink">{savedShopify.shopName ?? savedShopify.shopDomain}</div>
+                  <div className="mono mt-0.5 text-[11px] text-ink-subtle">{savedShopify.shopDomain}</div>
+                </div>
+                {shopifyLastValidatedAt && (
+                  <div className="text-[11px] text-ink-subtle">Last validated {formatDate(shopifyLastValidatedAt)}</div>
+                )}
+                {shopifyStatus === "failed" && (
+                  <div className="text-[11px] text-danger">{shopifyLastError ?? "Most recent connection check failed."}</div>
+                )}
+                <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
+                  <button
+                    onClick={() => void checkShopifyHealth()}
+                    disabled={shopifyBusy !== "idle"}
+                    className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink disabled:opacity-40"
+                  >
+                    {shopifyBusy === "checking" ? "Checking..." : "Check Connection"}
+                  </button>
+                  <button
+                    onClick={() => void disconnectShopify()}
+                    disabled={shopifyBusy !== "idle"}
+                    className="h-8 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-danger disabled:opacity-40"
+                  >
+                    {shopifyBusy === "disconnecting" ? "Disconnecting..." : "Disconnect"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="block text-[12px] text-ink-muted">
+                  <span>Store domain</span>
+                  <input
+                    type="text"
+                    value={shopifyDomainDraft}
+                    onChange={(event) => setShopifyDomainDraft(event.currentTarget.value)}
+                    placeholder="your-store.myshopify.com"
+                    className="mt-1 h-8 w-full rounded border border-line bg-background px-2 text-[13px] text-ink outline-none focus:border-ink"
+                  />
+                </label>
+                {shopifyStatus === "failed" && (
+                  <div className="text-[11px] text-danger">{shopifyLastError ?? "Connection failed."}</div>
+                )}
+                <div className="mt-2 flex items-center justify-end gap-2 border-t border-line pt-3">
+                  <button
+                    onClick={connectShopify}
+                    disabled={!shopifyDomainDraft.trim() || shopifyBusy !== "idle"}
+                    className="h-8 rounded-md bg-ink px-3 text-[12px] font-medium text-white disabled:opacity-40"
+                  >
+                    Connect Shopify Store
+                  </button>
+                </div>
+              </div>
+            )}
+          </CollapsibleSettingsSection>
         </div>
       </div>
     </div>
@@ -3110,6 +3244,16 @@ function SettingsToggle({ label, checked, onChange, disabled = false, note }: { 
 }
 
 function WordPressConnectionStatusBadge({ status }: { status: WordPressConnectionStatus }) {
+  const label = status === "connected" ? "Connected" : status === "failed" ? "Failed" : "Not Connected";
+  const tone = status === "connected"
+    ? "bg-success/10 text-success"
+    : status === "failed"
+      ? "bg-danger/10 text-danger"
+      : "bg-surface-3 text-ink-subtle";
+  return <span className={cn("mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", tone)}>{label}</span>;
+}
+
+function ShopifyConnectionStatusBadge({ status }: { status: ShopifyConnectionStatus }) {
   const label = status === "connected" ? "Connected" : status === "failed" ? "Failed" : "Not Connected";
   const tone = status === "connected"
     ? "bg-success/10 text-success"

@@ -37,6 +37,7 @@
   "exclude": [
     "node_modules",
     "VITE_UI_DESIGN",
-    "SITE_DESIGN"
+    "SITE_DESIGN",
+    "connectors"
   ]
 }

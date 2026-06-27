@@ -36,6 +36,13 @@ NEXT_PUBLIC_APP_URL="https://app.queuewrite.com"
 MARKETING_BASE_URL="https://queuewrite.com"
 APP_BASE_URL="https://app.queuewrite.com"
 CRON_SECRET="replace-with-a-worker-secret"
+
+# Shopify publishing destination (required when using Shopify)
+SHOPIFY_API_KEY=""
+SHOPIFY_API_SECRET=""
+SHOPIFY_APP_URL=""
+SHOPIFY_SCOPES="read_content,write_content"
+# SHOPIFY_API_VERSION="2025-01"  # optional, defaults to 2025-01
 ```
 
 For local Playwright runs, the suite overrides the production defaults with:

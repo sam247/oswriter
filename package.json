@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "dev:shopify": "npm --prefix connectors/shopify run dev",
     "mcp": "tsx mcp/server.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
@@ -16,6 +17,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@neondatabase/serverless": "^1.1.0",
+    "@shopify/shopify-api": "^11.14.1",
     "@vercel/blob": "^1.0.2",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",

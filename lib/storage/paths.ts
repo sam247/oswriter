@@ -6,6 +6,7 @@ export const workspacePreferencesPath = () => "workspace/preferences.json";
 export const workspacePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/workspace.json`;
 export const settingsPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/settings.json`;
 export const wordpressConnectionPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/publishing/wordpress.json`;
+export const shopifyConnectionPath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/publishing/shopify.json`;
 export const siteKnowledgePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/knowledge/site/config.json`;
 export const siteProfilePath = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/knowledge/site/profile.json`;
 export const siteKnowledgePagesPrefix = (projectId = DEFAULT_PROJECT_ID) => `${root(projectId)}/knowledge/site/pages/`;

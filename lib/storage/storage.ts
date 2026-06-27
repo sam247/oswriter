@@ -1,4 +1,4 @@
-import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, NeonUsageSnapshotDocument, OperationalTelemetryDocument, ProjectDocument, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, SiteKnowledgePageDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
+import type { ArticleDocument, ArticleSummary, DebugDocument, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, NeonUsageSnapshotDocument, OperationalTelemetryDocument, ProjectDocument, ProjectShopifyConnectionSecret, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchPack, SettingsDocument, SiteKnowledgePageDocument, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
 import { createDefaultProject, createDefaultQueueControl, createDefaultSettings, createDefaultWorkspacePreferences, DEFAULT_PROJECT_ID } from "@/lib/defaults";
 import { applyPublishingDefaults } from "@/lib/publishing/status";
 import { normalizeProjectProfile } from "@/lib/project/profile";
@@ -7,7 +7,7 @@ import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { isApprovedStatus, isCompletedArticleStatus } from "@/lib/status";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
-import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, neonUsageSnapshotPath, neonUsageSnapshotPrefix, operationalTelemetryPath, operationalTelemetryPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, neonUsageSnapshotPath, neonUsageSnapshotPrefix, operationalTelemetryPath, operationalTelemetryPrefix, queueControlPath, researchPath, settingsPath, shopifyConnectionPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
 
 export interface StorageProvider {
   getJson<T>(path: string): Promise<T | null>;
@@ -27,6 +27,9 @@ export interface StorageProvider {
   getProjectWordPressConnection?(projectId: string): Promise<ProjectWordPressConnectionSecret | null>;
   saveProjectWordPressConnection?(connection: ProjectWordPressConnectionSecret): Promise<void>;
   deleteProjectWordPressConnection?(projectId: string): Promise<void>;
+  getProjectShopifyConnection?(projectId: string): Promise<ProjectShopifyConnectionSecret | null>;
+  saveProjectShopifyConnection?(connection: ProjectShopifyConnectionSecret): Promise<void>;
+  deleteProjectShopifyConnection?(projectId: string): Promise<void>;
   deleteProjectSiteKnowledge?(projectId: string): Promise<void>;
   getProjectQueueScan?(): Promise<{ projectsChecked: number; projectIds: string[] }>;
   getCompactJobCounts?(projectId: string): Promise<CompactJobCounts>;
@@ -216,6 +219,27 @@ export class WorkspaceStore {
       return this.storage.deleteProjectWordPressConnection(projectId);
     }
     await this.storage.deletePath(wordpressConnectionPath(projectId));
+  }
+
+  async getProjectShopifyConnection(projectId: string) {
+    if (this.storage.getProjectShopifyConnection) {
+      return this.storage.getProjectShopifyConnection(projectId);
+    }
+    return this.storage.getJson<ProjectShopifyConnectionSecret>(shopifyConnectionPath(projectId));
+  }
+
+  async saveProjectShopifyConnection(connection: ProjectShopifyConnectionSecret) {
+    if (this.storage.saveProjectShopifyConnection) {
+      return this.storage.saveProjectShopifyConnection(connection);
+    }
+    await this.storage.putJson(shopifyConnectionPath(connection.projectId), connection);
+  }
+
+  async deleteProjectShopifyConnection(projectId: string) {
+    if (this.storage.deleteProjectShopifyConnection) {
+      return this.storage.deleteProjectShopifyConnection(projectId);
+    }
+    await this.storage.deletePath(shopifyConnectionPath(projectId));
   }
 
   async listProjects() {

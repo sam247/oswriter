@@ -142,8 +142,49 @@ export interface ProjectWordPressConnection {
   updatedAt: string;
 }
 
+export type ShopifyConnectionStatus = "not_connected" | "connected" | "failed";
+
+export interface ShopifyBlogSummary {
+  id: string;
+  title: string;
+  handle: string;
+}
+
+export interface ProjectShopifyConnection {
+  shopDomain: string;
+  shopName?: string | null;
+  primaryLocale?: string | null;
+  currency?: string | null;
+  timezone?: string | null;
+  grantedScopes: string[];
+  availableBlogs: ShopifyBlogSummary[];
+  accessTokenConfigured: boolean;
+  connectionStatus: ShopifyConnectionStatus;
+  installedAt?: string | null;
+  lastValidatedAt?: string | null;
+  lastError?: string | null;
+  updatedAt: string;
+}
+
+export interface ProjectShopifyConnectionSecret {
+  projectId: string;
+  organisationId?: string;
+  createdByUserId?: string;
+  shopDomain: string;
+  encryptedAccessToken: string;
+  grantedScopes: string[];
+  connectionStatus: ShopifyConnectionStatus;
+  metadata: Record<string, unknown>;
+  installedAt: string;
+  lastValidatedAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectPublishing {
   wordpress?: ProjectWordPressConnection;
+  shopify?: ProjectShopifyConnection;
 }
 
 export interface ProjectDocument {
