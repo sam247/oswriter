@@ -2,6 +2,12 @@
 
 ## Completed
 
+### Website Understanding Summary
+
+- Replaced the website import diagnostic summary with a clearer `Knowledge Import` section and a new `Website Understanding` summary in project settings.
+- Generated 3-6 plain-English insights dynamically from extracted site profile signals and imported page content, instead of exposing empty extraction buckets like `Learned Services` and `Writing Preferences`.
+- Prioritized business positioning, audience, CTA, writing style, recurring themes, and other generation-relevant signals while omitting weak or empty placeholders.
+
 ### Generate Button Delay Removal
 
 - Removed the leftover worker-readiness gate from the queue `Generate` button now that the worker status UI has been removed.

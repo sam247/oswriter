@@ -1,9 +1,9 @@
 "use client";
 
-import { ChevronDown, ExternalLink, Loader2, Search, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, ExternalLink, Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { BUSINESS_TYPE_OPTIONS, type BusinessTypeKey } from "@/lib/project/profile";
-import { siteProfileBusinessType, siteProfileEcommerceDebug, siteProfileEcommerceFacets, siteProfileStrategyLabel } from "@/lib/site-profile";
+import { siteProfileBusinessType, siteProfileEcommerceFacets } from "@/lib/site-profile";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
 import type { ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, SiteKnowledgePageDocument } from "@/lib/types";
 
@@ -44,6 +44,13 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
   const hasSiteKnowledge = Boolean(siteProfile || siteSummary.pagesIndexed > 0 || siteSummary.lastImportedAt);
   const discoveryModeActive = siteKnowledgeUsesDiscoveryMode(siteSummary);
   const displayedSiteError = siteError ?? siteSummary.lastError ?? null;
+  const websiteInsights = useMemo(() => buildWebsiteUnderstandingInsights(siteProfile, pages), [pages, siteProfile]);
+
+  useEffect(() => {
+    if (siteSummary.status !== "ready" || pagesLoaded || pagesLoading) return;
+    void loadPages(projectId, setPages, setPagesLoading, setSiteError, setPagesLoaded);
+  }, [pagesLoaded, pagesLoading, projectId, siteSummary.status]);
+
   const filteredPages = useMemo(() => {
     const needle = pageQuery.trim().toLowerCase();
     if (!needle) return pages;
@@ -264,7 +271,7 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
             </div>
 
             <div className="mt-3 rounded-md border border-line bg-background px-3 py-2.5">
-              <div className="mono text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Status</div>
+              <div className="mono text-[10px] uppercase tracking-[0.16em] text-ink-subtle">Knowledge Import</div>
               {siteLoading ? (
                 <div className="mt-2 text-[12px] text-ink-muted">Loading...</div>
               ) : siteSummary.status === "not_configured" && !siteSummary.lastImportedAt ? (
@@ -272,13 +279,19 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
               ) : (
                 <div className="mt-2 space-y-1 text-[12px] text-ink-muted">
                   <div className="flex items-center justify-between gap-4">
-                    <span>{siteSummary.status === "importing" ? "Import Progress" : "Last Imported"}</span>
+                    <span>{siteSummary.status === "importing" ? "Import Progress" : "Last analysed"}</span>
                     <span className="text-right text-ink">{siteSummary.status === "importing" ? `${siteSummary.processedPages}/${Math.max(siteSummary.totalDiscoveredUrls, siteSummary.processedPages || 0, 1)}` : formatDateTime(siteSummary.lastImportedAt)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-4">
-                    <span>Knowledge Pages Analysed</span>
+                    <span>Pages analysed</span>
                     <span className="text-right text-ink">{siteSummary.pagesIndexed}</span>
                   </div>
+                  {siteSummary.startedAt && siteSummary.completedAt && (
+                    <div className="flex items-center justify-between gap-4">
+                      <span>Import duration</span>
+                      <span className="text-right text-ink">{formatDuration(siteSummary.startedAt, siteSummary.completedAt)}</span>
+                    </div>
+                  )}
                   {siteSummary.status === "importing" && siteSummary.currentUrl && (
                     <div className="border-t border-line pt-2 text-[11px] text-ink-subtle">{siteSummary.currentUrl}</div>
                   )}
@@ -291,7 +304,7 @@ export function KnowledgeBaseSettings({ projectId, businessTypeKey, businessType
             )}
             {displayedSiteError && <div className="mt-3 text-[11px] text-warn">{displayedSiteError}</div>}
             {siteProfile && siteSummary.status === "ready" && (
-              <WebsiteIntelligenceCard profile={siteProfile} importedAt={siteSummary.lastImportedAt} />
+              <WebsiteUnderstandingCard profile={siteProfile} insights={websiteInsights} />
             )}
           </div>
 
@@ -438,135 +451,48 @@ function SiteKnowledgePagesModal({
   );
 }
 
-function WebsiteIntelligenceCard({ profile, importedAt }: { profile: ProjectSiteProfileDocument; importedAt?: string | null }) {
+function WebsiteUnderstandingCard({
+  profile,
+  insights
+}: {
+  profile: ProjectSiteProfileDocument;
+  insights: string[];
+}) {
   const businessType = siteProfileBusinessType(profile);
-  const strategyLabel = siteProfileStrategyLabel(profile);
   const ecommerce = siteProfileEcommerceFacets(profile);
-  const ecommerceDebug = siteProfileEcommerceDebug(profile) as null | {
-    detectedBrands?: Array<{ label: string; confidence: number; pages: number; associatedCategories?: string[]; supportingPages?: string[] }>;
-    detectedCategories?: Array<{ label: string; confidence: number; pages: number }>;
-    detectedProductTypes?: Array<{ label: string; confidence: number; pages: number }>;
-    rejectedTerms?: Array<{ term: string; reason: string }>;
-  };
-  const [debugOpen, setDebugOpen] = useState(false);
-  const showEcommerceLists = businessType === "ecommerce" || businessType === "mixed" || ecommerce.brands.length > 0 || ecommerce.categories.length > 0 || ecommerce.productTypes.length > 0;
-  const showServiceLists = businessType !== "ecommerce" || profile.services.length > 0;
-  const showLegacyProductList = !showEcommerceLists || businessType === "service" || businessType === "unknown";
-  const showLocations = businessType !== "ecommerce" || profile.locations.length > 0;
+  const analysedCount = Math.max(profile.pageCount, 0);
+  const visibleInsights = insights.slice(0, 6);
 
   return (
     <div className="mt-3 rounded-md border border-line bg-background px-3 py-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="text-[12.5px] font-semibold text-ink">QueueWrite analysed {profile.pageCount} priority pages and learned the following about your business.</div>
-        {ecommerceDebug ? (
-          <button
-            type="button"
-            onClick={() => setDebugOpen((value) => !value)}
-            className="mono shrink-0 rounded-md border border-line bg-surface-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-ink-muted hover:text-ink"
-          >
-            {debugOpen ? "Hide Debug" : "Show Debug"}
-          </button>
-        ) : null}
+      <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
+        <CheckCircle2 className="size-4 shrink-0 text-success" />
+        <span>{analysedCount.toLocaleString()} {analysedCount === 1 ? "page" : "pages"} analysed</span>
       </div>
-      <div className="mt-3 grid gap-3 text-[11.5px] sm:grid-cols-2">
-        <ProfileLine label="Website" value={profile.domain || "-"} />
-        <ProfileLine label="Business Type" value={strategyLabel || formatBusinessType(businessType)} />
-        <ProfileLine label="Knowledge Pages Analysed" value={profile.pageCount || "-"} />
-        <ProfileLine label="Last Synced" value={formatDate(importedAt ?? profile.generatedAt)} />
-        <ProfileLine label="Suggested CTA" value={profile.ctas[0] ?? "-"} />
-      </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
-        {showServiceLists ? <ProfileList title="Learned Services" values={profile.services} limit={10} /> : null}
-        {showLegacyProductList ? <ProfileList title="Learned Products / Categories" values={profile.products} limit={10} /> : null}
-        {showEcommerceLists ? <ProfileList title="Primary Brands" values={ecommerce.brands} limit={8} /> : null}
-        {showEcommerceLists ? <ProfileList title="Primary Categories" values={ecommerce.categories} limit={8} /> : null}
-        {showEcommerceLists && ecommerce.productTypes.length ? <ProfileList title="Product Types" values={ecommerce.productTypes} limit={8} /> : null}
-        <ProfileList title="Learned Audiences" values={profile.audiences} limit={8} />
-        {showLocations ? <ProfileList title="Learned Locations" values={profile.locations} limit={15} /> : null}
-        <ProfileList title="Writing Preferences" values={profile.writingSignals} />
-      </div>
-      {ecommerceDebug && debugOpen ? (
-        <div className="mt-4 rounded-md border border-line bg-surface-1 px-3 py-3">
-          <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">Website Intelligence Debug</div>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <ProfileDebugList title="Detected Brands (associations, confidence, supporting pages)" items={ecommerceDebug.detectedBrands ?? []} limit={12} />
-            <ProfileDebugList title="Detected Categories (confidence)" items={ecommerceDebug.detectedCategories ?? []} limit={12} />
-            <ProfileDebugList title="Detected Product Types (confidence)" items={ecommerceDebug.detectedProductTypes ?? []} limit={12} />
-            <ProfileDebugRejected title="Rejected Terms" items={ecommerceDebug.rejectedTerms ?? []} limit={18} />
-          </div>
+      <div className="mt-3 text-[12.5px] font-semibold text-ink">Website Understanding</div>
+      <div className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">QueueWrite now understands:</div>
+      <ul className="mt-3 space-y-2 text-[12px] leading-relaxed text-ink">
+        {visibleInsights.map((insight) => (
+          <li key={insight} className="flex gap-2">
+            <span className="mt-[6px] size-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
+            <span>{insight}</span>
+          </li>
+        ))}
+      </ul>
+      {visibleInsights.length < 3 ? (
+        <div className="mt-3 text-[11px] text-ink-muted">
+          QueueWrite will surface more specific understanding as additional high-confidence signals appear in the imported pages.
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ProfileLine({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-line/60 pb-1">
-      <span className="text-ink-subtle">{label}</span>
-      <span className="text-right font-medium text-ink">{value}</span>
-    </div>
-  );
-}
-
-function ProfileList({ title, values, limit = 8 }: { title: string; values: string[]; limit?: number }) {
-  const visible = values.slice(0, limit);
-  return (
-    <div>
-      <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
-      {visible.length ? (
-        <ul className="mt-1 space-y-0.5 text-[11.5px] text-ink-muted">
-          {visible.map((value) => <li key={value}>- {value}</li>)}
-        </ul>
-      ) : (
-        <div className="mt-1 text-[11.5px] text-ink-subtle">Not enough signal yet.</div>
-      )}
-    </div>
-  );
-}
-
-function ProfileDebugList({
-  title,
-  items,
-  limit = 12
-}: {
-  title: string;
-  items: Array<{ label: string; confidence: number; pages: number; associatedCategories?: string[]; supportingPages?: string[] }>;
-  limit?: number;
-}) {
-  const visible = items.slice(0, limit);
-  return (
-    <div>
-      <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
-      {visible.length ? (
-        <ul className="mt-1 space-y-0.5 text-[11.5px] text-ink-muted">
-          {visible.map((item) => (
-            <li key={item.label}>
-              <div>- {item.label} ({item.confidence}, {item.pages}p)</div>
-              {item.associatedCategories?.length ? <div className="pl-3 text-[10.5px] text-ink-subtle">Associations: {item.associatedCategories.join(", ")}</div> : null}
-              {item.supportingPages?.length ? <div className="pl-3 text-[10.5px] text-ink-subtle">Pages: {item.supportingPages.join(", ")}</div> : null}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="mt-1 text-[11.5px] text-ink-subtle">No signals recorded.</div>
-      )}
-    </div>
-  );
-}
-
-function ProfileDebugRejected({ title, items, limit = 18 }: { title: string; items: Array<{ term: string; reason: string }>; limit?: number }) {
-  const visible = items.slice(0, limit);
-  return (
-    <div>
-      <div className="mono text-[9.5px] uppercase tracking-[0.14em] text-ink-subtle">{title}</div>
-      {visible.length ? (
-        <ul className="mt-1 space-y-0.5 text-[11.5px] text-ink-muted">
-          {visible.map((item) => <li key={`${item.term}:${item.reason}`}>- {item.term} ({item.reason})</li>)}
-        </ul>
-      ) : (
-        <div className="mt-1 text-[11.5px] text-ink-subtle">No rejected terms recorded.</div>
-      )}
+      {(businessType === "ecommerce" || businessType === "mixed") && (ecommerce.brands.length > 0 || ecommerce.categories.length > 0 || ecommerce.productTypes.length > 0) ? (
+        <div className="mt-4 rounded-md border border-line bg-surface-1 px-3 py-2.5 text-[11px] text-ink-muted">
+          {[
+            ecommerce.brands.length ? `Brands: ${ecommerce.brands.slice(0, 3).join(", ")}` : "",
+            ecommerce.categories.length ? `Categories: ${ecommerce.categories.slice(0, 3).join(", ")}` : "",
+            ecommerce.productTypes.length ? `Product types: ${ecommerce.productTypes.slice(0, 3).join(", ")}` : ""
+          ].filter(Boolean).join(" · ")}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -665,20 +591,175 @@ function formatDateTime(value?: string | null) {
   return date.toLocaleString();
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "Not Configured";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Not Configured";
-  return date.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
-}
-
-function formatBusinessType(value: ReturnType<typeof siteProfileBusinessType>) {
-  if (value === "unknown") return "General";
-  if (value === "ecommerce") return "Ecommerce";
-  if (value === "mixed") return "Mixed";
-  return "Service";
-}
-
 function siteKnowledgeUsesDiscoveryMode(siteKnowledge: ProjectSiteKnowledgeDocument | null) {
   return Boolean(siteKnowledge?.metadata?.discoveryMode || siteKnowledge?.metadata?.crawlMode === "discovery");
+}
+
+function formatDuration(startedAt?: string | null, completedAt?: string | null) {
+  if (!startedAt || !completedAt) return "Not available";
+  const start = new Date(startedAt).getTime();
+  const end = new Date(completedAt).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return "Not available";
+  const seconds = Math.max(1, Math.round((end - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (!remainingSeconds) return `${minutes}m`;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function buildWebsiteUnderstandingInsights(profile: ProjectSiteProfileDocument | null, pages: SiteKnowledgePageDocument[]) {
+  if (!profile) return [];
+
+  const businessType = siteProfileBusinessType(profile);
+  const ecommerce = siteProfileEcommerceFacets(profile);
+  const insights: string[] = [];
+  const pushInsight = (value: string | null | undefined) => {
+    if (!value || insights.includes(value)) return;
+    insights.push(value);
+  };
+
+  const services = topConfidenceLabels(profile, "services", profile.services, 3);
+  const products = topConfidenceLabels(profile, "products", profile.products, 3);
+  const audiences = topConfidenceLabels(profile, "audiences", profile.audiences, 3);
+  const locations = topConfidenceLabels(profile, "locations", profile.locations, 3);
+  const categories = ecommerce.categories.slice(0, 3);
+  const brands = ecommerce.brands.slice(0, 3);
+  const productTypes = ecommerce.productTypes.slice(0, 3);
+
+  if ((businessType === "service" || businessType === "unknown") && services.length) {
+    pushInsight(`Your business focuses on ${listToEnglish(services.slice(0, 2))}.`);
+  } else if (businessType === "mixed" && services.length && (categories.length || productTypes.length)) {
+    pushInsight(`Your positioning combines ${listToEnglish(services.slice(0, 2))} with ${listToEnglish((categories.length ? categories : productTypes).slice(0, 2))}.`);
+  } else if ((businessType === "ecommerce" || businessType === "mixed") && (categories.length || productTypes.length || brands.length)) {
+    const commerceFocus = categories.length ? categories : productTypes.length ? productTypes : brands;
+    pushInsight(`Your website is centred on ${listToEnglish(commerceFocus.slice(0, 2))}.`);
+  } else if (products.length) {
+    pushInsight(`Your website consistently highlights ${listToEnglish(products.slice(0, 2))}.`);
+  }
+
+  if (audiences.length) {
+    pushInsight(`You are speaking primarily to ${listToEnglish(audiences.slice(0, 2))}.`);
+  }
+
+  if (profile.ctas[0]) {
+    pushInsight(`Your preferred call-to-action is "${profile.ctas[0]}".`);
+  }
+
+  pushInsight(writingInsight(profile.writingSignals));
+
+  for (const theme of recurringThemeInsights(pages)) {
+    pushInsight(theme);
+    if (insights.length >= 6) break;
+  }
+
+  if (locations.length && insights.length < 6) {
+    pushInsight(`Location signals suggest a focus on ${listToEnglish(locations.slice(0, 2))}.`);
+  }
+
+  if (brands.length && insights.length < 6 && !insights.some((insight) => insight.includes("brands such as"))) {
+    pushInsight(`The site reinforces trust through brands such as ${listToEnglish(brands.slice(0, 2))}.`);
+  }
+
+  return insights.slice(0, Math.min(6, Math.max(3, insights.length)));
+}
+
+function topConfidenceLabels(
+  profile: ProjectSiteProfileDocument,
+  key: "services" | "products" | "audiences" | "locations",
+  fallback: string[],
+  limit: number
+) {
+  const confidence = confidenceEntries(profile, key)
+    .filter((entry) => entry.score >= confidenceFloor(key))
+    .map((entry) => entry.label);
+  return uniqueValues((confidence.length ? confidence : fallback).slice(0, limit));
+}
+
+function confidenceEntries(
+  profile: ProjectSiteProfileDocument,
+  key: "services" | "products" | "audiences" | "locations"
+) {
+  const metadata = isRecord(profile.metadata) ? profile.metadata : {};
+  const confidence = isRecord(metadata.confidence) ? metadata.confidence : {};
+  const values = confidence[key];
+  if (!Array.isArray(values)) return [];
+  return values
+    .filter((item): item is { label: string; score: number } => isRecord(item) && typeof item.label === "string" && typeof item.score === "number")
+    .sort((left, right) => right.score - left.score);
+}
+
+function confidenceFloor(key: "services" | "products" | "audiences" | "locations") {
+  if (key === "services" || key === "products") return 8;
+  if (key === "audiences") return 4;
+  return 5;
+}
+
+function writingInsight(signals: string[]) {
+  const hasUkEnglish = signals.includes("UK English");
+  const hasIndustryTerms = signals.includes("Industry terminology detected");
+  if (hasUkEnglish && hasIndustryTerms) return "Content should use UK English and precise industry terminology.";
+  if (hasIndustryTerms) return "Content should use precise industry terminology rather than generic marketing language.";
+  if (hasUkEnglish) return "Content should follow UK English conventions.";
+  return null;
+}
+
+function recurringThemeInsights(pages: SiteKnowledgePageDocument[]) {
+  if (!pages.length) return [];
+  const combined = pages
+    .map((page) => `${page.title} ${page.h1} ${page.metaDescription} ${page.shortSummary}`.toLowerCase())
+    .join(" ");
+
+  const themes = [
+    {
+      sentence: "Review gates and acceptance standards are recurring themes.",
+      score: themeScore(combined, /\breview(?:ed|ing)?\b/g) + themeScore(combined, /\bacceptance standards?\b/g) + themeScore(combined, /\bapproval workflows?\b/g)
+    },
+    {
+      sentence: "Editorial quality and evidence-backed output are recurring themes.",
+      score: themeScore(combined, /\beditorial quality\b/g) + themeScore(combined, /\bquality\b/g) + themeScore(combined, /\bevidence(?:-backed)?\b/g) + themeScore(combined, /\bvalidation\b/g)
+    },
+    {
+      sentence: "Your positioning centres on systematic content operations.",
+      score: themeScore(combined, /\bcontent operations?\b/g) + themeScore(combined, /\bworkflow(?:s)?\b/g) + themeScore(combined, /\bpipeline(?:s)?\b/g) + themeScore(combined, /\bqueue\b/g)
+    },
+    {
+      sentence: "The site frames the offer as engineering-led rather than generic AI output.",
+      score: themeScore(combined, /\bengineering\b/g) + themeScore(combined, /\bengineered\b/g) + themeScore(combined, /\btechnical\b/g) + themeScore(combined, /\bgeneric ai\b/g)
+    },
+    {
+      sentence: "Search visibility and website structure are recurring priorities.",
+      score: themeScore(combined, /\bseo\b/g) + themeScore(combined, /\bsearch\b/g) + themeScore(combined, /\binternal links?\b/g) + themeScore(combined, /\bsitemap\b/g)
+    },
+    {
+      sentence: "Specialist expertise and credibility are being used as trust signals.",
+      score: themeScore(combined, /\bexpertise\b/g) + themeScore(combined, /\bspecialists?\b/g) + themeScore(combined, /\btrusted\b/g) + themeScore(combined, /\bcredibility\b/g)
+    }
+  ];
+
+  return themes
+    .filter((theme) => theme.score >= 2)
+    .sort((left, right) => right.score - left.score)
+    .map((theme) => theme.sentence)
+    .slice(0, 2);
+}
+
+function themeScore(text: string, pattern: RegExp) {
+  return text.match(pattern)?.length ?? 0;
+}
+
+function listToEnglish(values: string[]) {
+  const visible = uniqueValues(values);
+  if (!visible.length) return "";
+  if (visible.length === 1) return visible[0] ?? "";
+  if (visible.length === 2) return `${visible[0]} and ${visible[1]}`;
+  return `${visible.slice(0, -1).join(", ")}, and ${visible.at(-1)}`;
+}
+
+function uniqueValues(values: string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
