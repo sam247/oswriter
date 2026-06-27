@@ -2,6 +2,11 @@
 
 ## Completed
 
+### Queue Panel Count Cleanup
+
+- Removed the redundant queued subheading/count from the left queue panel when the queue already reads as a single active list under `Queue`.
+- Kept section headings only when they help distinguish queued work from running or failed items.
+
 ### App Root Auth Prop Fix
 
 - Fixed the app-root workspace entry to pass `initialAuthed` into `WriterApp`, matching the current workspace shell contract and unblocking Vercel production builds.

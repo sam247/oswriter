@@ -1840,22 +1840,43 @@ function Workbench() {
               </QueueSection>
             )}
             {queuedJobs.length > 0 && (
-              <QueueSection label="Queued" count={queuedJobs.length}>
-                {queuedJobs.map((job) => {
-                  const article = articles.find((item) => item.id === job.articleId) ?? null;
-                  return (
-                    <QueueListItem
-                      key={job.id}
-                      job={job}
-                      article={article}
-                      active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
-                      onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
-                      onRetry={() => retryOne(job.id)}
-                      onAction={(action) => actOnJob(job.id, action)}
-                    />
-                  );
-                })}
-              </QueueSection>
+              runningJobs.length > 0 || failedQueueJobs.length > 0 ? (
+                <QueueSection label="Queued" count={queuedJobs.length}>
+                  {queuedJobs.map((job) => {
+                    const article = articles.find((item) => item.id === job.articleId) ?? null;
+                    return (
+                      <QueueListItem
+                        key={job.id}
+                        job={job}
+                        article={article}
+                        active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
+                        onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
+                        onRetry={() => retryOne(job.id)}
+                        onAction={(action) => actOnJob(job.id, action)}
+                      />
+                    );
+                  })}
+                </QueueSection>
+              ) : (
+                <section className="pb-2">
+                  <div>
+                    {queuedJobs.map((job) => {
+                      const article = articles.find((item) => item.id === job.articleId) ?? null;
+                      return (
+                        <QueueListItem
+                          key={job.id}
+                          job={job}
+                          article={article}
+                          active={selectedArticleId === job.articleId || selectedArticleId === article?.id}
+                          onSelect={() => setSelectedArticleId(article?.id ?? job.articleId)}
+                          onRetry={() => retryOne(job.id)}
+                          onAction={(action) => actOnJob(job.id, action)}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              )
             )}
             {failedQueueJobs.length > 0 && (
               <QueueSection label="Failed" count={failedQueueJobs.length}>
