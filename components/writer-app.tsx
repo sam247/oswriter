@@ -1931,19 +1931,19 @@ function Workbench() {
               rows={3}
               className="mono w-full resize-none rounded-md border border-line bg-surface-1 p-2 text-[12px] leading-snug text-ink outline-none placeholder:text-ink-subtle focus:border-line-strong"
             />
-            <div className="mt-1 flex items-center justify-between gap-2 px-1 text-[10.5px] text-ink-subtle">
-              <span>{parsedTitleCount > 0 ? `${parsedTitleCount} title${parsedTitleCount === 1 ? "" : "s"} ready` : "Paste one title per line to queue work."}</span>
-              {uploadFeedback.durationMs !== null && <span className="mono">Last add {formatLatencyMs(uploadFeedback.durationMs)}</span>}
-            </div>
-            {uploadFeedback.message && (
+            {(uploadFeedback.status === "success" || uploadFeedback.durationMs !== null) && (
+              <div className="mt-1 flex items-center justify-between gap-2 px-1 text-[10.5px] text-ink-subtle">
+                <span>{uploadFeedback.status === "success" ? uploadFeedback.message : ""}</span>
+                {uploadFeedback.durationMs !== null && <span className="mono">Last add {formatLatencyMs(uploadFeedback.durationMs)}</span>}
+              </div>
+            )}
+            {uploadFeedback.message && uploadFeedback.status !== "success" && (
               <div
                 className={cn(
                   "mt-1 rounded-md px-2 py-1.5 text-[10.5px]",
                   uploadFeedback.status === "error"
                     ? "bg-danger/5 text-danger"
-                    : uploadFeedback.status === "success"
-                      ? "bg-success/5 text-success"
-                      : "bg-surface-3 text-ink-muted"
+                    : "bg-surface-3 text-ink-muted"
                 )}
               >
                 {uploadFeedback.message}

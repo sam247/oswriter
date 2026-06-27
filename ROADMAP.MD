@@ -2,6 +2,12 @@
 
 ## Completed
 
+### Queue Add Feedback Cleanup
+
+- Removed the static `Paste one title per line to queue work.` helper beneath the add-titles box.
+- Kept the compact post-submit summary row so successful queue adds now read as `X titles added to queue` alongside `Last add`.
+- Left error feedback in the separate warning state so failures remain visible without duplicating successful add confirmations.
+
 ### Project Settings Editorial Standards
 
 - Extended the existing `Project Settings` card so it now stores:
