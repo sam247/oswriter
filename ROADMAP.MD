@@ -2,6 +2,11 @@
 
 ## Completed
 
+### Generated Sitemap
+
+- Added a native Next.js `app/sitemap.ts` route so `/sitemap.xml` is generated from public marketing pages and blog entries.
+- Excluded application-only routes from the sitemap while allowing new public App Router pages and new blog posts to appear automatically.
+
 ### Queue Panel Count Cleanup
 
 - Removed the redundant queued subheading/count from the left queue panel when the queue already reads as a single active list under `Queue`.

@@ -73,6 +73,7 @@ npm run dev
 - `app.queuewrite.com/` is the authenticated QueueWrite workspace root.
 - `app.queuewrite.com/login`, `/signup`, `/verify`, `/forgot-password`, `/reset-password`, `/settings`, `/settings/billing`, and `/projects` are application-only routes.
 - `/dashboard` now redirects to `/` on the app host for backward compatibility.
+- `/sitemap.xml` is generated from the public App Router pages plus blog posts so new marketing pages and blog entries are included automatically.
 
 ## Authentication
 
