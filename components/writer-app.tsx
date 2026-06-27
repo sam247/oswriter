@@ -135,8 +135,52 @@ type TransitionTraceEntry = {
 const TRANSITION_TRACE_KEY = "oswriter.transitionTrace";
 const ARTICLE_VIEW_MODE_KEY = "oswriter.articleViewMode";
 
-export function WriterApp() {
+export function WriterApp({ initialAuthed }: { initialAuthed: boolean }) {
+  const [authed, setAuthed] = useState(initialAuthed);
+  if (!authed) return <Login onAuthed={() => setAuthed(true)} />;
   return <Workbench />;
+}
+
+function Login({ onAuthed }: { onAuthed: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    setLoading(false);
+    if (res.ok) onAuthed();
+    else setError("Incorrect workspace password.");
+  }
+
+  return (
+    <main className="grid min-h-screen place-items-center bg-background px-4">
+      <form onSubmit={submit} className="w-full max-w-sm rounded-lg border border-line bg-surface-1 p-5 shadow-sm">
+        <div className="mb-4">
+          <h1 className="text-lg font-semibold tracking-tight text-ink">QueueWrite</h1>
+          <p className="mt-1 text-sm text-ink-muted">Enter the workspace password to open the production queue.</p>
+        </div>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="h-9 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-ink"
+          autoFocus
+        />
+        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        <button className="mt-4 flex h-9 w-full items-center justify-center rounded-md bg-ink px-3 text-sm font-medium text-white" disabled={loading}>
+          {loading ? <Loader2 className="size-4 animate-spin" /> : "Open workspace"}
+        </button>
+      </form>
+    </main>
+  );
 }
 
 function Workbench() {
@@ -269,7 +313,8 @@ function Workbench() {
     generateBlocked,
     state?.queueControl.mode ?? "stopped",
     Boolean(resumableQueuedJob),
-    generateFeedback.status === "starting"
+    generateFeedback.status === "starting",
+    workerStatus?.health === "ready"
   );
   const queueProjectionKey = state ? [
     state.project.id,
@@ -3127,33 +3172,23 @@ function DashboardStat({ label, value, detail, warn = false, danger = false }: {
 }
 
 function WorkerStatusCard({ status }: { status: WorkerStatusSnapshot }) {
-  const nextTitle = status.nextJob?.title ?? "No queued job";
-  const diagnostics = [
-    status.diagnostics.workerTakeovers ? `${status.diagnostics.workerTakeovers} takeovers` : null,
-    status.diagnostics.manualHandoffs ? `${status.diagnostics.manualHandoffs} handoffs` : null,
-    status.diagnostics.blockedContinuations ? `${status.diagnostics.blockedContinuations} blocked` : null,
-    status.diagnostics.staleRecoveries ? `${status.diagnostics.staleRecoveries} stale recoveries` : null
-  ].filter(Boolean).join(" · ");
+  const ready = status.health === "ready";
 
   return (
     <div className={cn("rounded-md border px-3 py-2.5", workerHealthTone(status.health))}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={cn("inline-flex h-2.5 w-2.5 rounded-full", workerHealthDot(status.health))} />
-            <span className="text-[12px] font-semibold text-ink">Worker {workerHealthLabel(status.health)}</span>
+      <div className="flex items-start gap-2">
+        <span className={cn("mt-1 inline-flex h-2.5 w-2.5 rounded-full", workerHealthDot(status.health))} />
+        <div>
+          <div className="text-[12px] font-semibold text-ink">
+            Worker {ready ? "Ready" : "Offline"}
           </div>
-          <div className="mt-1 text-[11px] leading-snug text-ink-muted">{status.detail}</div>
+          <div className="mt-1 text-[11px] leading-snug text-ink-muted">
+            {ready
+              ? "Queued work is waiting for the next worker poll."
+              : "Background worker has not observed this queue yet. Starting..."}
+          </div>
         </div>
-        <div className="mono text-[10.5px] text-ink-subtle">{status.remaining} pending</div>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[10.5px] text-ink-muted">
-        <MetricLine label="Next" value={nextTitle} />
-        <MetricLine label="Last seen" value={relativeDate(status.lastWorkerSeenAt ?? status.serverTime)} />
-        <MetricLine label="Lease" value={status.lease && !status.lease.expired ? "Active" : "Idle"} />
-        <MetricLine label="Configured" value={status.configured ? "Yes" : "No"} />
-      </div>
-      {diagnostics && <div className="mt-2 text-[10.5px] text-ink-subtle">{diagnostics}</div>}
     </div>
   );
 }
@@ -5196,7 +5231,6 @@ function ValidationPanel({
   const snapshot = article.profileSnapshot;
   const planning = article.planningDiagnostics;
   const readyToPublish = article.validation.pass && validationGroups.length === 0;
-  const planningSummary = planning ? summarizePlanning(planning) : null;
   return (
     <div className="space-y-4">
       <div className={cn(
@@ -5211,16 +5245,15 @@ function ValidationPanel({
             </div>
             <div className="mt-1 text-[11.5px] leading-snug text-ink-muted">
               {readyToPublish
-                ? "All validation checks passed. This article meets the current publishing standard."
+                ? "All validation checks passed."
                 : `${validationGroups.length} validation issue${validationGroups.length === 1 ? "" : "s"} require attention before publishing.`}
             </div>
           </div>
         </div>
       </div>
-      <ValidationWorkflowIndicator readyToPublish={readyToPublish} />
       {snapshot && (
         <div className="rounded-md border border-line bg-surface-1 p-3">
-          <PanelTitle title="Article profile" />
+          <PanelTitle title="Article profile snapshot" />
           <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <MetricLine label="Region" value={snapshot.regionLabel} />
             <MetricLine label="Industry" value={snapshot.industryLabel} />
@@ -5233,19 +5266,6 @@ function ValidationPanel({
       {planning && (
         <div className="rounded-md border border-line bg-surface-1 p-3">
           <PanelTitle title="Planning" />
-          {planningSummary ? (
-            <div className="mt-2 rounded-md border border-line bg-background px-3 py-2.5">
-              <div className={cn("text-[12px] font-semibold", planningSummary.complete ? "text-success" : "text-warn")}>
-                {planningSummary.complete ? "Complete" : "Needs expansion"}
-              </div>
-              <div className="mt-1 text-[11px] leading-snug text-ink-muted">
-                {planningSummary.covered} of {planningSummary.planned} planned concepts covered.
-              </div>
-              <div className="mt-1 text-[11px] leading-snug text-ink-muted">
-                Coverage {planningSummary.coverage}%.
-              </div>
-            </div>
-          ) : null}
           <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <MetricLine label="Planned H2" value={formatNumber(planning.plannedH2Count)} />
             <MetricLine label="Actual H2" value={formatNumber(planning.actualH2Count)} />
@@ -5256,21 +5276,22 @@ function ValidationPanel({
             <MetricLine label="Plan completed" value={`${formatNumber(planning.targetAchievementPercent)}%`} />
             <MetricLine label="Plan outcome" value={titleCase(planning.plannerOutcome)} />
             <MetricLine label="Planned concepts" value={formatNumber(planning.researchConceptCount ?? 0)} />
+            <MetricLine label="Coverage ratio" value={(planning.plannedBreadthRatio ?? 0).toFixed(2)} />
             <MetricLine label="Concepts covered" value={formatNumber(planning.actualBreadthCoverage ?? 0)} />
             <MetricLine label="Coverage" value={`${formatNumber(planning.actualBreadthCoveragePercent ?? 0)}%`} />
             <MetricLine label="Coverage status" value={titleCase(planning.breadthStatus ?? "sufficient")} />
           </div>
         </div>
       )}
-      {validationGroups.length ? (
-        <div
-          ref={warningsRef}
-          className={cn(
-            "space-y-2 rounded-md transition-shadow",
-            highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
-          )}
-        >
-          <PanelTitle title="Validation findings" />
+      <div
+        ref={warningsRef}
+        className={cn(
+          "space-y-2 rounded-md transition-shadow",
+          highlightWarnings && "shadow-[0_0_0_3px_rgba(183,121,31,0.28)]"
+        )}
+      >
+        <PanelTitle title="Validation findings" />
+        {validationGroups.length ? (
           <div className="space-y-2">
             {validationGroups.map((group) => (
               <ValidationIssueCard
@@ -5282,8 +5303,18 @@ function ValidationPanel({
               />
             ))}
           </div>
-        </div>
-      ) : null}
+        ) : article.status === "approved" || article.status === "scheduled" || article.status === "published" ? (
+          <div className="rounded-md border border-success/20 bg-success/5 p-3 text-xs text-success">This article is ready for publication review.</div>
+        ) : <Empty text="No validation warnings." />}
+        {article.validation.advisories?.length ? (
+          <div className="rounded-md border border-line bg-surface-1 p-3">
+            <div className="text-[11px] font-medium text-ink">Editorial notes</div>
+            <ul className="mt-2 space-y-2 text-xs text-ink-muted">
+              {article.validation.advisories.map((advisory) => <li key={advisory} className="rounded-md bg-surface-2 p-2">{advisory}</li>)}
+            </ul>
+          </div>
+        ) : null}
+      </div>
       <ValidationScoreSummary
         items={[
           ["Quality", article.validation.qualityScore],
@@ -5293,28 +5324,6 @@ function ValidationPanel({
           ["Warnings", article.validation.warnings.length]
         ]}
       />
-    </div>
-  );
-}
-
-function ValidationWorkflowIndicator({ readyToPublish }: { readyToPublish: boolean }) {
-  const items = readyToPublish
-    ? ["Research complete", "Generation complete", "Validation complete", "Ready to publish"]
-    : ["Research complete", "Generation complete", "Validation requires review"];
-  return (
-    <div className="rounded-md border border-line bg-surface-1 p-3">
-      <div className="space-y-1.5">
-        {items.map((item, index) => (
-          <div key={item} className="flex items-center gap-2 text-[11px]">
-            {readyToPublish || index < 2 ? (
-              <CheckCircle2 className="size-3.5 shrink-0 text-success" />
-            ) : (
-              <AlertCircle className="size-3.5 shrink-0 text-warn" />
-            )}
-            <span className={cn("text-ink-muted", readyToPublish && index === items.length - 1 && "text-ink")}>{item}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -5754,18 +5763,6 @@ interface ValidationIssueGroup {
   issues: string[];
   summary: string;
   action: string;
-}
-
-function summarizePlanning(planning: NonNullable<ArticleDocument["planningDiagnostics"]>) {
-  const planned = planning.researchConceptCount ?? 0;
-  const covered = planning.actualBreadthCoverage ?? 0;
-  const coverage = Math.round(planning.actualBreadthCoveragePercent ?? 0);
-  return {
-    complete: planned > 0 ? covered >= planned : coverage >= 100,
-    planned,
-    covered,
-    coverage
-  };
 }
 
 function buildValidationIssueGroups(issues: string[]): ValidationIssueGroup[] {
@@ -6233,7 +6230,8 @@ function describeGenerateButton(
   blocked: boolean,
   queueMode: QueueControlMode,
   hasResumableCurrent: boolean,
-  starting: boolean
+  starting: boolean,
+  workerReady: boolean
 ) {
   if (starting) {
     return {
@@ -6254,21 +6252,29 @@ function describeGenerateButton(
   if (queueMode === "stop_after_current" && hasResumableCurrent) {
     return {
       label: "Resume current",
-      disabled: blocked,
-      title: "Continue the article that already started, then stop before the next item."
+      disabled: blocked || !workerReady,
+      title: !workerReady
+        ? "Background worker has not observed this queue yet. Starting..."
+        : "Continue the article that already started, then stop before the next item."
     };
   }
   if (stats.queued > 0) {
     return {
       label: "Generate",
-      disabled: blocked,
-      title: blocked ? "Queue is busy." : "Start queued article generation."
+      disabled: blocked || !workerReady,
+      title: !workerReady
+        ? "Background worker has not observed this queue yet. Starting..."
+        : blocked
+          ? "Queue is busy."
+          : "Start queued article generation."
     };
   }
   return {
     label: "Generate",
     disabled: true,
-    title: "Add titles to create queue work."
+    title: !workerReady
+      ? "Background worker has not observed this queue yet. Starting..."
+      : "Add titles to create queue work."
   };
 }
 

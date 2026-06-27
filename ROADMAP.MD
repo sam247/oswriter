@@ -2,75 +2,11 @@
 
 ## Completed
 
-### Resend Dependency Restore
+### Queue Worker Status Simplification
 
-- Restored the missing `resend` package to the committed production dependency set after Vercel removed it during install and failed the auth/mail build path.
-- Regenerated the lockfile so deployment now resolves the Resend-backed mail service used by OTP and queue completion emails.
-
-### Marketing Navigation Simplification
-
-- Removed `Workflow`, `Integrations`, `Blog`, and `Contact` from the header navigation across the marketing site so the top-level nav now stays focused on `Features` and `Pricing`.
-- Renamed the homepage header label from `Platform` to `Features` so navigation terminology now stays consistent across all public pages.
-- Moved `Blog` and `Contact` into the marketing footers where needed, keeping those destinations available without crowding the header.
-- Reworked the blog archive into a card grid that shows three posts per row on large screens while preserving the existing filters and search controls.
-
-### QueueWrite Authentication And Application Split
-
-- Split QueueWrite into two explicit surfaces:
-  - `queuewrite.com` for public marketing only
-  - `app.queuewrite.com` for the authenticated application only
-- Moved the real QueueWrite workspace to `/` on the app host and changed `/dashboard` into a compatibility redirect instead of the primary application entry.
-- Replaced the shared workspace-password gate with email OTP authentication using:
-  - 6-digit single-use codes
-  - 10-minute expiry
-  - rate limiting
-  - secure HTTP-only session cookies
-- Added the app-only auth route set:
-  - `/login`
-  - `/signup`
-  - `/verify`
-  - `/forgot-password`
-  - `/reset-password`
-  - `/settings`
-  - `/settings/billing`
-  - `/projects`
-- Added Neon-backed auth persistence for OTPs and sessions through `0023_auth_otp_sessions.sql`.
-- Added a centralized mail service with Resend production delivery so auth emails and queue completion notifications share the same abstraction.
-- Kept the existing workspace, billing logic, queue APIs, research, validation, SEO, telemetry, storage contracts, and worker flows intact while changing only application access and host routing.
-- Updated middleware, host-aware URLs, and route guards so marketing pages stay off the app host and app-only routes redirect away from the marketing host.
-- Added split-host Playwright coverage for:
-  - public marketing navigation
-  - signup OTP delivery and verification
-  - returning-user login OTP delivery and verification
-  - authenticated billing access on the app host
-- Hardened the in-memory auth, mail, and storage adapters for local/browser verification by sharing state explicitly across Next dev route handlers.
-
-### Homepage Refinement Pass
-
-- Removed the homepage `Trusted by` logo strip so visitors now move directly from the hero into the QueueWrite workflow narrative.
-- Tightened the hero-to-workflow transition to reduce the dead space created by removing that section while keeping the existing visual style and spacing system intact.
-- Widened the workflow section layout so `Research → Generate → Review → Optimise → Publish.` has more horizontal presence and reads as a stronger product story without changing the wording.
-- Preserved the homepage hero, queue animation, KPI section, pricing cards, CTA section, navigation, colour palette, and typography system as-is.
-
-### Public Site Frontend And Dashboard Split
-
-- Ported the public marketing frontend from `SITE_DESIGN` into the Next.js App Router so QueueWrite now serves a dedicated public website at:
-  - `/`
-  - `/features`
-  - `/pricing`
-  - `/contact`
-  - `/blog`
-  - `/blog/[slug]`
-- Preserved the real QueueWrite workspace as the authoritative application experience and moved its entry point to `/dashboard` instead of replacing it with the Lovable demo shell.
-- Kept the existing password-auth flow intact on `/dashboard` so unauthenticated users still see the current login gate and authenticated users enter the unchanged workspace.
-- Preserved the existing billing implementation at `/settings/billing` and updated route handoff so authenticated users return to `/dashboard`.
-- Added Playwright coverage for the critical public/app split:
-  - public marketing navigation
-  - public blog article access
-  - protected dashboard access
-  - protected billing access
-  - authenticated billing round-trip back to the workspace
-- Added explicit in-memory storage support for local Playwright runs so browser verification can execute without Blob credentials.
+- Simplified the queue worker status box to the two user-facing states `Worker Ready` and `Worker Offline`.
+- Replaced the detailed lease, diagnostics, and next-job metadata with the shorter queue-status copy for readiness and startup.
+- Disabled the `Generate` control while the worker is offline or still starting, and restored the black active state once the worker reports ready.
 
 ### Pipeline Dashboard Refinement
 
@@ -141,17 +77,12 @@
 
 - Reframed the Validation tab as an editorial publication review rather than a diagnostics surface.
 - Added a publishing-readiness summary card at the top so the first message is either `Ready to publish` or `Needs review`.
-- Strengthened the ready state copy so successful validation reads as a definitive publication gate rather than a generic success state.
-- Added a lightweight workflow indicator near the top to reinforce the production path from research through validation to publication.
 - Reordered the sidebar hierarchy to read as:
   - publishing status
   - article profile snapshot
   - planning
   - validation findings
   - quality scores
-- Renamed `Article profile snapshot` to `Article profile`.
-- Added a planning conclusion at the top of the Planning section so users see `Complete` or `Needs expansion` before the supporting metrics.
-- Removed the empty-state `No validation warnings.` block so success-state Validation flows directly from readiness into supporting context.
 - Merged duplicate validation findings by category so repeated issues such as completeness problems now appear in one combined review card.
 - Rewrote validation finding cards in more editorial language with:
   - a natural summary of what is wrong
