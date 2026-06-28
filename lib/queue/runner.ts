@@ -1,6 +1,7 @@
-import type { ArticleDocument, DebugDocument, DebugEvent, GenerationTelemetryDocument, ModelAdapter, ModelGenerationResult, QueueJob, SearchAdapter } from "@/lib/types";
+import type { ArticleDocument, DebugDocument, DebugEvent, GenerationTelemetryDocument, ModelAdapter, ModelGenerationResult, QueueJob, SearchAdapter, SemanticKnowledgeGraph } from "@/lib/types";
 import { createPipeline, nowIso } from "@/lib/defaults";
 import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
+import { buildSemanticKnowledgeGraph } from "@/lib/knowledge-engine";
 import { sendQueueCompletionNotification } from "@/lib/mail/queue-notifications";
 import { countWords, slugId } from "@/lib/text";
 import { completeStage, failStage, skipStage, startStage } from "@/lib/pipeline";
@@ -425,7 +426,7 @@ export class QueueRunner {
       const siteProfile = await this.store.getProjectSiteProfile(job.projectId);
       const knowledgeBase = normalizeProjectKnowledgeBase(project.knowledgeBase);
       const projectIntelligence = siteProfile ?? knowledgeBase;
-      const plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile, job.title);
+      let plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile, job.title);
 
       if (!stageDone(job, "research")) {
         await this.throwIfEmergencyStopped(job.projectId);
@@ -434,9 +435,13 @@ export class QueueRunner {
         log({ stage: "research", level: "info", message: "Research started." });
         const projectWebsite = siteProfile?.domain || knowledgeBase.website || project.publishing?.wordpress?.siteUrl || "";
         const allowProjectSources = allowsProjectOwnedResearchSources(job.title);
-        const research = isResearchProvider(this.researchProvider)
+        const researched = isResearchProvider(this.researchProvider)
           ? await this.researchProvider.research({ title: job.title, articleId: job.articleId, profileSnapshot, contentProfile, projectWebsite, allowProjectSources })
           : await runResearch(job.title, job.articleId, this.researchProvider, profileSnapshot, contentProfile, "queuewrite", { projectWebsite, allowProjectSources });
+        const research = {
+          ...researched,
+          semanticIntelligence: researched.semanticIntelligence ?? buildSemanticKnowledgeGraph(job.title, researched)
+        };
         await this.store.saveResearch(research, job.projectId);
         const researchTelemetry = {
           requestedResearchProvider: research.requestedResearchProvider ?? research.researchProvider ?? "queuewrite",
@@ -464,7 +469,8 @@ export class QueueRunner {
           costPerSource: research.costPerSource ?? 0,
           costPerAcceptedSource: research.costPerAcceptedSource ?? 0,
           costPerEvidenceItem: research.costPerEvidenceItem ?? 0,
-          confidence: research.confidence
+          confidence: research.confidence,
+          semanticIntelligence: research.semanticIntelligence ?? null
         }),
           updatedAt: nowIso()
         }, context.source, "research");
@@ -489,6 +495,9 @@ export class QueueRunner {
         await this.store.saveDebug(debug, job.projectId);
         return job;
       }
+
+      const outlineSemanticIntelligence = semanticIntelligenceFromResearchStage(job);
+      if (outlineSemanticIntelligence) plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile, job.title, outlineSemanticIntelligence);
 
       if (!stageDone(job, "outline")) {
         await this.throwIfEmergencyStopped(job.projectId);
@@ -515,11 +524,13 @@ export class QueueRunner {
 
       const research = await this.store.getResearch(job.articleId, job.projectId);
       if (!research) throw new Error("Research unavailable after research stage.");
+      const semanticIntelligence = research.semanticIntelligence ?? buildSemanticKnowledgeGraph(job.title, research);
+      plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile, job.title, semanticIntelligence);
 
       await this.throwIfEmergencyStopped(job.projectId);
       job = { ...job, timings: markTiming(job.timings, "generation_started_at"), pipeline: startStage(job.pipeline, "generation", "Writing Markdown article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
-      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot, knowledgeBase: siteProfile ? null : knowledgeBase, siteProfile, contentProfile }));
+      const generation = normaliseGenerationResult(await this.model.generateArticle({ title: job.title, research, controls: settings.controls, plan, profileSnapshot, knowledgeBase: siteProfile ? null : knowledgeBase, siteProfile, semanticIntelligence, contentProfile }));
       await this.throwIfEmergencyStopped(job.projectId);
       const markdown = generation.markdown;
       job = {
@@ -539,7 +550,7 @@ export class QueueRunner {
       job = { ...job, timings: markTiming(job.timings, "save_started_at"), pipeline: startStage(job.pipeline, "save", "Saving generated article."), updatedAt: nowIso() };
       await this.store.saveJob(job);
       const needsReview = [...research.warnings];
-      const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords, profileSnapshot, contentProfile });
+      const validation = heuristicValidation({ title: job.title, markdown, research, controls: settings.controls, targetWords: plan.targetWords, profileSnapshot, siteProfile, semanticIntelligence, contentProfile });
       const planningDiagnostics = buildPlanningDiagnostics(plan, markdown, research);
       needsReview.push(...validation.needsReviewReasons);
       const uniqueReasons = [...new Set(needsReview)];
@@ -1013,6 +1024,15 @@ function durationMs(start?: string, end?: string) {
 
 function stageDone(job: QueueJob, stage: QueueJob["pipeline"][number]["stage"]) {
   return job.pipeline.find((step) => step.stage === stage)?.status === "done";
+}
+
+function semanticIntelligenceFromResearchStage(job: QueueJob): SemanticKnowledgeGraph | null {
+  const value = job.pipeline.find((step) => step.stage === "research")?.meta?.semanticIntelligence;
+  return isSemanticKnowledgeGraph(value) ? value : null;
+}
+
+function isSemanticKnowledgeGraph(value: unknown): value is SemanticKnowledgeGraph {
+  return Boolean(value && typeof value === "object" && "conceptCount" in value && "generatedAt" in value);
 }
 
 function canContinueProcessing(job: QueueJob, source: "manual" | "worker" | undefined, workerLeaseActive = false) {

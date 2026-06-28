@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { buildBusinessKnowledgeGraph } from "@/lib/knowledge-engine";
 import { BUSINESS_TYPE_OPTIONS, type BusinessTypeKey } from "@/lib/project/profile";
 import { getSettingsMutationBlocker } from "@/lib/queue/safety";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
@@ -26,13 +27,17 @@ export async function GET(req: Request) {
   let siteProfile = await store.getProjectSiteProfile(projectId);
   if (!siteProfile && siteKnowledge?.pagesIndexed) {
     const pages = await store.listProjectSiteKnowledgePages(projectId);
-    siteProfile = extractProjectSiteProfile({
+    const extractedProfile = extractProjectSiteProfile({
       projectId,
       organisationId: siteKnowledge.organisationId,
       sitemapUrl: siteKnowledge.sitemapUrl,
       pages,
       configuredBusinessType: normalizedBusinessTypeKey(project.profile?.businessTypeKey)
     });
+    siteProfile = {
+      ...extractedProfile,
+      businessIntelligence: buildBusinessKnowledgeGraph(extractedProfile, pages)
+    };
     await store.saveProjectSiteProfile(siteProfile);
   }
   return NextResponse.json({

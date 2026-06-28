@@ -225,6 +225,9 @@ describe("site knowledge", () => {
     assert.equal(metadata.crawlMode, "discovery");
     assert.equal(result.siteProfile.domain, "disclosurely.com");
     assert.ok(result.siteProfile.pageCount >= 5);
+    assert.ok(result.siteProfile.businessIntelligence);
+    assert.ok(result.siteProfile.businessIntelligence?.assets.some((item) => item.label === "Pricing pages"));
+    assert.ok(result.siteProfile.businessIntelligence?.brand.some((item) => item.label === "Book A Demo"));
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/about"));
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/contact"));
     assert.ok(result.pages.some((page) => page.url === "https://disclosurely.com/features/disclosure-monitoring"));

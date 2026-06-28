@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DEFAULT_CONTROLS } from "@/lib/defaults";
 import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
+import { buildSemanticKnowledgeGraph } from "@/lib/knowledge-engine";
 import { buildGenerationPrompt } from "@/lib/models/openai";
 import { normalizeProjectProfile, snapshotProjectProfile } from "@/lib/project/profile";
 import { heuristicValidation } from "@/lib/validation/heuristics";
@@ -218,6 +219,30 @@ Short section.`,
     assert.match(prompt, /Briefly explain specialist terminology before building on it\./);
     assert.match(prompt, /Challenge common assumptions when the evidence justifies it\./);
     assert.match(prompt, /Additional guidance: Avoid unnecessary hype\./);
+  });
+
+  it("adds semantic graph context to planning and prompting", () => {
+    const title = "API Authentication Methods Compared";
+    const research = {
+      ...researchPack(),
+      title,
+      researchConcepts: ["API Keys", "OAuth 2.0", "JWT", "Mutual TLS"],
+      usefulFacts: [
+        "API keys are simple but create leakage risks.",
+        "OAuth 2.0 is often compared with JWT bearer tokens.",
+        "Pricing and implementation cost depend on identity provider support."
+      ],
+      questionsFound: ["Which API authentication method is safest?"]
+    };
+    const semanticGraph = buildSemanticKnowledgeGraph(title, research);
+    const plan = buildArticleGenerationPlan(DEFAULT_CONTROLS, null, null, "comparison", title, semanticGraph);
+    const prompt = buildGenerationPrompt({ title, controls: DEFAULT_CONTROLS, research, semanticIntelligence: semanticGraph, plan });
+
+    assert.ok(plan.semanticIntelligenceContext?.some((line) => line.includes("Secondary entities")));
+    assert.ok(plan.planningPriorities.some((line) => line.includes("semantic entities")));
+    assert.match(prompt, /Semantic Intelligence graph/);
+    assert.match(prompt, /OAuth 2\.0/);
+    assert.match(prompt, /topic coverage concepts, not keywords/i);
   });
 });
 

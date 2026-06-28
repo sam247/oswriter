@@ -2962,7 +2962,9 @@ function siteKnowledgePageFromRow(row: Record<string, unknown>): SiteKnowledgePa
 }
 
 function siteProfileFromRow(row: Record<string, unknown>): ProjectSiteProfileDocument {
+  const document = isRecord(row.document) ? row.document as Partial<ProjectSiteProfileDocument> : {};
   return {
+    ...document,
     projectId: String(row.project_id),
     organisationId: String(row.organisation_id),
     domain: String(row.domain ?? ""),

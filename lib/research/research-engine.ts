@@ -2,6 +2,7 @@ import { calculateProfileRelevanceScore } from "@/lib/project/profile";
 import type { ProjectProfileSnapshot, ResearchFactSource, ResearchPack, ResearchProviderId, SearchAdapter, SearchResult } from "@/lib/types";
 import { buildQueryVariants, average, toResearchSource } from "@/lib/research/scoring";
 import { nowIso } from "@/lib/defaults";
+import { buildSemanticKnowledgeGraph } from "@/lib/knowledge-engine";
 import { estimatedExaContentCostUsd, estimatedExaSearchCostUsd, estimateResearchCostUsd } from "@/lib/telemetry/costs";
 import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
 import { domainFromUrl, registeredDomainFromUrl } from "@/lib/text";
@@ -158,6 +159,13 @@ export async function runResearch(title: string, articleId: string, search: Sear
         ? managedResearchCostUsd
         : estimateResearchCostUsd(managedSearchRequests, managedContentPages)) + providerCostUsd
     : providerCostUsd;
+  const semanticIntelligence = buildSemanticKnowledgeGraph(title, {
+    researchConcepts,
+    usefulFacts,
+    questionsFound,
+    headingsFound
+  });
+
   return {
     articleId,
     title,
@@ -198,6 +206,7 @@ export async function runResearch(title: string, articleId: string, search: Sear
     headingsFound,
     researchConcepts,
     researchConceptCount: researchConcepts.length,
+    semanticIntelligence,
     authorityScore,
     relevanceScore,
     confidence,

@@ -21,7 +21,7 @@ export class OpenAIModelAdapter implements ModelAdapter {
   async generateArticle(input: ArticleGenerationInput): Promise<ModelGenerationResult> {
     this.ensureKey();
     const model = process.env.AI_GENERATION_MODEL ?? "deepseek-v4-flash";
-    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.siteProfile ?? input.knowledgeBase, input.contentProfile, input.title);
+    const plan = input.plan ?? buildArticleGenerationPlan(input.controls, input.profileSnapshot, input.siteProfile ?? input.knowledgeBase, input.contentProfile, input.title, input.semanticIntelligence ?? input.research.semanticIntelligence);
     const response = await this.client.chat.completions.create({
       model,
       messages: promptToMessages(
@@ -138,7 +138,7 @@ function normaliseBaseUrl(value: string | undefined) {
     .replace(/\/v1$/i, "");
 }
 
-export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, siteProfile, contentProfile = "industry_explainer", plan = buildArticleGenerationPlan(controls, profileSnapshot, siteProfile ?? knowledgeBase, contentProfile, title) }: ArticleGenerationInput) {
+export function buildGenerationPrompt({ title, research, controls, profileSnapshot, knowledgeBase, siteProfile, semanticIntelligence, contentProfile = "industry_explainer", plan = buildArticleGenerationPlan(controls, profileSnapshot, siteProfile ?? knowledgeBase, contentProfile, title, semanticIntelligence ?? research.semanticIntelligence) }: ArticleGenerationInput) {
   const contentDefinition = CONTENT_PROFILES[contentProfile];
   const projectContext = profileContextLines(profileSnapshot);
   const knowledgeContext = siteProfile ? siteProfileContextLines(siteProfile) : projectKnowledgeContextLines(knowledgeBase);
@@ -150,6 +150,12 @@ export function buildGenerationPrompt({ title, research, controls, profileSnapsh
     ? "Website intelligence (learned from the imported sitemap; use during planning, outline construction, and writing; do not force irrelevant mentions)"
     : "Knowledge Base (use during planning, outline construction, and writing; do not force irrelevant mentions)";
   const knowledgeContextBlock = knowledgeContext.length ? `\n${knowledgeContextLabel}:\n${knowledgeContext.map((line) => `- ${line}`).join("\n")}` : "";
+  const businessIntelligenceBlock = plan.businessIntelligenceContext?.length
+    ? `\nBusiness Intelligence graph (structured; use only when naturally relevant):\n${plan.businessIntelligenceContext.map((line) => `- ${line}`).join("\n")}`
+    : "";
+  const semanticIntelligenceBlock = plan.semanticIntelligenceContext?.length
+    ? `\nSemantic Intelligence graph (topic coverage concepts, not keywords):\n${plan.semanticIntelligenceContext.map((line) => `- ${line}`).join("\n")}`
+    : "";
   const websiteEntityBlock = plan.websiteEntityRecommendations
     ? `\nWebsite entity recommendations for this article:\n${plan.websiteEntityRecommendations.contextLines.map((line) => `- ${line}`).join("\n")}\n- Prefer website-owned entities before external brands, retailers, or generic examples when they are relevant to the title.\n- When recommended website-owned brands are a natural fit, weave ${plan.websiteEntityRecommendations.brandUsageTarget?.min ?? 2}-${plan.websiteEntityRecommendations.brandUsageTarget?.max ?? 5} brand mentions into examples and recommendations across the article rather than keeping product advice generic.\n- Brand mentions must feel natural inside outfit, gifting, accessories, or product recommendations. Do not list brands in a block and do not let the article become promotional copy.\n- Use external entities only when no relevant website-owned entity exists or the research specifically requires them.`
     : "";
@@ -164,7 +170,7 @@ Non-negotiable:
 - Write a complete article. Do not stop mid-sentence.
 
 Title: ${title}
-${projectContextBlock}${editorialDirectivesBlock}${knowledgeContextBlock}${websiteEntityBlock}
+${projectContextBlock}${editorialDirectivesBlock}${knowledgeContextBlock}${businessIntelligenceBlock}${semanticIntelligenceBlock}${websiteEntityBlock}
 Content profile: ${contentDefinition.label}
 Purpose: ${contentDefinition.purpose}
 Required outline pattern: ${contentDefinition.outline.join(" -> ")}

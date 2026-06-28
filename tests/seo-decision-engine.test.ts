@@ -313,6 +313,41 @@ describe("SEO decision engine", () => {
     assert.doesNotMatch(updated, /\]\(\/services\/excavation\)/i);
     assert.doesNotMatch(updated, /\]\(\/services\/piling\)/i);
   });
+
+  it("recommends missing graph concepts instead of keyword stuffing", () => {
+    const article = articleFixture();
+    const research = {
+      ...researchFixture(),
+      semanticIntelligence: {
+        primaryEntity: { label: "Project Risk Management" },
+        secondaryEntities: [{ label: "Risk Register" }, { label: "Stakeholder Ownership" }],
+        relatedEntities: [{ label: "Delivery Governance" }],
+        terminology: [{ label: "RACI" }],
+        definitions: [],
+        comparisons: [],
+        risks: [{ label: "Scope Creep" }],
+        benefits: [{ label: "Fewer Delivery Delays" }],
+        costs: [{ label: "Budget Contingency" }],
+        timeBasedConcepts: [],
+        misconceptions: [],
+        diagnosticQuestions: [],
+        conditionalScenarios: [],
+        expectedFaqs: [{ label: "How should teams prioritise project risks?" }],
+        entityConfusion: [],
+        searchIntentArchetypes: [{ label: "Practical decision support" }],
+        missingConcepts: [],
+        generatedAt: "2026-06-18T00:00:00.000Z",
+        conceptCount: 8
+      }
+    };
+
+    const result = buildSeoDecisionEngine({ article, markdown: article.markdown, research });
+    const recommendation = result.recommendations.find((item) => item.id === "expand-semantic-coverage");
+
+    assert.ok(recommendation);
+    assert.match(recommendation.reason, /semantic graph/i);
+    assert.match(recommendation.proposedText, /concepts to explain, not keywords to repeat/i);
+  });
 });
 
 function articleFixture(): ArticleDocument {

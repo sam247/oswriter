@@ -1,9 +1,10 @@
 import { buildArticleGenerationPlan, buildPlanningDiagnostics } from "@/lib/generation/plan";
+import { businessCoverageItems, calculateKnowledgeCoverage, semanticCoverageItems } from "@/lib/knowledge-engine";
 import { calculateProfileRelevanceScore } from "@/lib/project/profile";
 import type { ValidationInput, ValidationResult } from "@/lib/types";
 import { CONTENT_PROFILES } from "@/lib/content-profiles";
 
-export function heuristicValidation({ markdown, research, controls, targetWords, profileSnapshot, contentProfile = "industry_explainer" }: ValidationInput): ValidationResult {
+export function heuristicValidation({ title, markdown, research, controls, targetWords, profileSnapshot, siteProfile, semanticIntelligence, contentProfile = "industry_explainer" }: ValidationInput): ValidationResult {
   const warnings: string[] = [];
   const advisories: string[] = [];
   const needsReviewReasons: string[] = [];
@@ -14,13 +15,15 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   const hasStatistic = /(?:\d+(?:\.\d+)?\s?%|\b\d{1,3}(?:,\d{3})+\b|\b\d+(?:\.\d+)?\s?(?:million|billion|survey|respondents|companies|organizations|organisations|customers|users|workers|projects|market|revenue|cost|growth)\b)/i.test(markdown);
   const hasInternalLink = /\[[^\]]+\]\((?!https?:\/\/)[^)]+\)/i.test(markdown);
   const wordCount = markdown.trim().split(/\s+/).filter(Boolean).length;
-  const plan = controls ? buildArticleGenerationPlan(controls, profileSnapshot, null, contentProfile) : null;
+  const plan = controls ? buildArticleGenerationPlan(controls, profileSnapshot, siteProfile, contentProfile, title, semanticIntelligence ?? research.semanticIntelligence) : null;
   const contentDefinition = CONTENT_PROFILES[contentProfile];
   const effectiveTargetWords = targetWords ?? plan?.targetWords ?? null;
   const minimumWords = effectiveTargetWords ? Math.round(effectiveTargetWords * 0.8) : 650;
   const expectedH2Count = plan?.h2SectionCount ?? 4;
   const planningDiagnostics = plan ? buildPlanningDiagnostics(plan, markdown, research) : null;
   const editorialStandards = new Set(profileSnapshot?.editorialStandards ?? []);
+  const businessCoverage = calculateKnowledgeCoverage(markdown, businessCoverageItems(siteProfile?.businessIntelligence), "Business opportunity");
+  const semanticCoverage = calculateKnowledgeCoverage(markdown, semanticCoverageItems(semanticIntelligence ?? research.semanticIntelligence), "Semantic opportunity");
 
   if (research.warnings.length) {
     warnings.push(...research.warnings);
@@ -70,6 +73,14 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
   ) {
     advisories.push("Topic breadth may be underrepresented.");
   }
+  if (businessCoverage.available.length >= 3 && businessCoverage.used.length === 0) {
+    advisories.push("Available business authority, trust, or expertise signals were not used.");
+  } else if (businessCoverage.missing.length >= 3 && businessCoverage.used.length > 0) {
+    advisories.push("Additional business evidence could be referenced if it fits the article naturally.");
+  }
+  if (semanticCoverage.available.length >= 8 && semanticCoverage.missing.length >= 5) {
+    advisories.push("Semantic coverage could be expanded with missing concepts rather than repeated keywords.");
+  }
 
   const qualityScore = Math.max(35, 100 - warnings.length * 10 - (research.confidence < 60 ? 15 : 0));
   const faqScore = hasFaq ? 80 : 45;
@@ -87,9 +98,13 @@ export function heuristicValidation({ markdown, research, controls, targetWords,
       intent: 75,
       headings: h2Count >= expectedH2Count ? 82 : 50,
       readability: wordCount >= minimumWords ? 78 : 55,
+      ...(businessCoverage.available.length ? { businessCoverage: Math.round((businessCoverage.used.length / businessCoverage.available.length) * 100) } : {}),
+      ...(semanticCoverage.available.length ? { semanticCoverage: Math.round((semanticCoverage.used.length / semanticCoverage.available.length) * 100) } : {}),
       ...(profileRelevanceScore === null ? {} : { profileRelevance: profileRelevanceScore })
     },
     profileRelevanceScore,
+    businessCoverage,
+    semanticCoverage,
     faqScore,
     seoScore
   };

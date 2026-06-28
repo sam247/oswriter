@@ -545,8 +545,17 @@ function WebsiteUnderstandingCard({
         <CheckCircle2 className="size-4 shrink-0 text-success" />
         <span>{analysedCount.toLocaleString()} {analysedCount === 1 ? "page" : "pages"} analysed</span>
       </div>
-      <div className="mt-3 text-[12.5px] font-semibold text-ink">Website Understanding</div>
-      <div className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">QueueWrite now understands:</div>
+      <div className="mt-3 text-[12.5px] font-semibold text-ink">Website understood</div>
+      <div className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">QueueWrite identified:</div>
+      <ul className="mt-3 grid gap-1.5 text-[12px] leading-relaxed text-ink sm:grid-cols-2">
+        {businessUnderstandingSignals(profile).map((signal) => (
+          <li key={signal} className="flex gap-2">
+            <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden="true" />
+            <span>{signal}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 text-[11.5px] leading-relaxed text-ink-muted">Concise summary:</div>
       <ul className="mt-3 space-y-2 text-[12px] leading-relaxed text-ink">
         {visibleInsights.map((insight) => (
           <li key={insight} className="flex gap-2">
@@ -682,6 +691,21 @@ function formatDuration(startedAt?: string | null, completedAt?: string | null) 
   const remainingSeconds = seconds % 60;
   if (!remainingSeconds) return `${minutes}m`;
   return `${minutes}m ${remainingSeconds}s`;
+}
+
+function businessUnderstandingSignals(profile: ProjectSiteProfileDocument) {
+  const graph = profile.businessIntelligence;
+  const signals = [
+    "Editorial positioning",
+    profile.services.length || profile.products.length ? "Core services" : "",
+    graph?.authority.length ? "Authority signals" : "",
+    graph?.trust.length ? "Certifications and trust evidence" : "",
+    profile.audiences.length ? "Audience" : "",
+    profile.writingSignals.length || profile.ctas.length ? "Brand tone" : "",
+    graph?.assets.length ? "Internal assets" : "",
+    graph?.internalLinks.length ? "Internal linking opportunities" : ""
+  ].filter(Boolean);
+  return signals.length ? signals.slice(0, 8) : ["Editorial positioning", "Audience", "Brand tone"];
 }
 
 function buildWebsiteUnderstandingInsights(profile: ProjectSiteProfileDocument | null, pages: SiteKnowledgePageDocument[]) {

@@ -66,6 +66,46 @@ export interface ProjectKnowledgeBase {
   preferredCTA: string;
 }
 
+export interface KnowledgeGraphItem {
+  label: string;
+  evidence?: string[];
+  confidence?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface BusinessKnowledgeGraph {
+  authority: KnowledgeGraphItem[];
+  trust: KnowledgeGraphItem[];
+  expertise: KnowledgeGraphItem[];
+  assets: KnowledgeGraphItem[];
+  brand: KnowledgeGraphItem[];
+  internalLinks: KnowledgeGraphItem[];
+  generatedAt: string;
+  sourcePageCount: number;
+}
+
+export interface SemanticKnowledgeGraph {
+  primaryEntity: KnowledgeGraphItem | null;
+  secondaryEntities: KnowledgeGraphItem[];
+  relatedEntities: KnowledgeGraphItem[];
+  terminology: KnowledgeGraphItem[];
+  definitions: KnowledgeGraphItem[];
+  comparisons: KnowledgeGraphItem[];
+  risks: KnowledgeGraphItem[];
+  benefits: KnowledgeGraphItem[];
+  costs: KnowledgeGraphItem[];
+  timeBasedConcepts: KnowledgeGraphItem[];
+  misconceptions: KnowledgeGraphItem[];
+  diagnosticQuestions: KnowledgeGraphItem[];
+  conditionalScenarios: KnowledgeGraphItem[];
+  expectedFaqs: KnowledgeGraphItem[];
+  entityConfusion: KnowledgeGraphItem[];
+  searchIntentArchetypes: KnowledgeGraphItem[];
+  missingConcepts: KnowledgeGraphItem[];
+  generatedAt: string;
+  conceptCount: number;
+}
+
 export type SiteKnowledgeStatus = "not_configured" | "importing" | "ready" | "failed";
 
 export interface ProjectSiteKnowledgeDocument {
@@ -111,6 +151,7 @@ export interface ProjectSiteProfileDocument {
   locations: string[];
   ctas: string[];
   writingSignals: string[];
+  businessIntelligence?: BusinessKnowledgeGraph;
   generatedAt: string;
   updatedAt: string;
   metadata: Record<string, unknown>;
@@ -433,6 +474,7 @@ export interface ResearchPack {
   headingsFound: string[];
   researchConcepts?: string[];
   researchConceptCount?: number;
+  semanticIntelligence?: SemanticKnowledgeGraph;
   authorityScore: number;
   relevanceScore: number;
   confidence: number;
@@ -519,8 +561,17 @@ export interface ValidationResult {
   qualityScore: number;
   sectionScores: Record<string, number>;
   profileRelevanceScore?: number | null;
+  businessCoverage?: KnowledgeCoverageResult;
+  semanticCoverage?: KnowledgeCoverageResult;
   faqScore: number;
   seoScore: number;
+}
+
+export interface KnowledgeCoverageResult {
+  available: string[];
+  used: string[];
+  missing: string[];
+  opportunities: string[];
 }
 
 export interface ArticleDocument {
@@ -1000,6 +1051,7 @@ export interface ArticleGenerationInput {
   profileSnapshot?: ProjectProfileSnapshot | null;
   knowledgeBase?: ProjectKnowledgeBase | null;
   siteProfile?: ProjectSiteProfileDocument | null;
+  semanticIntelligence?: SemanticKnowledgeGraph | null;
   contentProfile?: ContentProfile;
 }
 
@@ -1016,5 +1068,7 @@ export interface ValidationInput {
   controls?: ContentControls;
   targetWords?: number;
   profileSnapshot?: ProjectProfileSnapshot | null;
+  siteProfile?: ProjectSiteProfileDocument | null;
+  semanticIntelligence?: SemanticKnowledgeGraph | null;
   contentProfile?: ContentProfile;
 }

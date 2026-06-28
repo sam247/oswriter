@@ -1,4 +1,5 @@
-import type { ArticleDocument, ProjectProfile, ProjectSiteProfileDocument, ResearchPack, SiteKnowledgePageDocument } from "@/lib/types";
+import { businessCoverageItems, calculateKnowledgeCoverage, semanticCoverageItems } from "@/lib/knowledge-engine";
+import type { ArticleDocument, KnowledgeCoverageResult, ProjectProfile, ProjectSiteProfileDocument, ResearchPack, SiteKnowledgePageDocument } from "@/lib/types";
 
 export type SeoRecommendationSection = "fix" | "improve" | "project";
 
@@ -52,6 +53,7 @@ export function buildSeoDecisionEngine({ article, markdown, research, profile, s
   const recommendations = [
     ...buildFixRecommendations(article, markdown, profile),
     ...buildImproveRecommendations(article, markdown, research, profile),
+    ...buildKnowledgeGraphRecommendations(article, markdown, research, siteProfile),
     ...buildProjectRecommendations(markdown, profile),
     ...buildInternalLinkRecommendations(markdown, sitePages, siteProfile, profile)
   ].sort((left, right) => right.priority - left.priority || right.impact - left.impact);
@@ -64,6 +66,50 @@ export function buildSeoDecisionEngine({ article, markdown, research, profile, s
     estimatedImpact,
     recommendations
   };
+}
+
+function buildKnowledgeGraphRecommendations(article: ArticleDocument, markdown: string, research?: ResearchPack | null, siteProfile?: ProjectSiteProfileDocument | null) {
+  const recommendations: SeoRecommendation[] = [];
+  const businessCoverage = article.validation.businessCoverage
+    ?? calculateKnowledgeCoverage(markdown, businessCoverageItems(siteProfile?.businessIntelligence), "Business opportunity");
+  const semanticCoverage = article.validation.semanticCoverage
+    ?? calculateKnowledgeCoverage(markdown, semanticCoverageItems(research?.semanticIntelligence), "Semantic opportunity");
+
+  if (shouldRecommendCoverage(businessCoverage)) {
+    const suggestions = businessCoverage.missing.slice(0, 3);
+    recommendations.push(createAppendRecommendation({
+      id: "add-business-evidence",
+      section: "improve",
+      title: "Business evidence could work harder",
+      reason: `${businessCoverage.available.length} business intelligence signal${businessCoverage.available.length === 1 ? "" : "s"} are available; ${suggestions.length} could support this article if they fit naturally: ${suggestions.join(", ")}.`,
+      actionLabel: "Add Evidence",
+      impact: 3,
+      priority: 86,
+      markdown,
+      block: `## Why This Matters\n\nRelevant business evidence can help readers judge fit and credibility. Where it fits the article, consider referencing ${suggestions.join(", ")} without turning the section into a sales pitch.`
+    }));
+  }
+
+  if (shouldRecommendCoverage(semanticCoverage, 8, 5)) {
+    const suggestions = semanticCoverage.missing.slice(0, 5);
+    recommendations.push(createAppendRecommendation({
+      id: "expand-semantic-coverage",
+      section: "improve",
+      title: "Topic coverage is missing concepts",
+      reason: `The semantic graph found ${semanticCoverage.available.length} expected concepts; these are not covered clearly enough: ${suggestions.join(", ")}.`,
+      actionLabel: "Expand Concepts",
+      impact: 4,
+      priority: 89,
+      markdown,
+      block: `## Additional Concepts To Address\n\nTo improve topical completeness, add concise coverage of ${suggestions.join(", ")} where it helps the reader. Treat these as concepts to explain, not keywords to repeat.`
+    }));
+  }
+
+  return recommendations;
+}
+
+function shouldRecommendCoverage(coverage: KnowledgeCoverageResult, minimumAvailable = 3, minimumMissing = 2) {
+  return coverage.available.length >= minimumAvailable && coverage.missing.length >= minimumMissing;
 }
 
 export function applySeoRecommendations(markdown: string, recommendations: SeoRecommendation[]) {

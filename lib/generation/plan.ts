@@ -1,7 +1,8 @@
 import { clampTargetWords, editorialDirectivesForStandards, planningPrioritiesForProfile } from "@/lib/project/profile";
+import { businessGraphContextLines, graphPlanningPriorities, semanticGraphContextLines } from "@/lib/knowledge-engine";
 import { knowledgeBasePlanningPriorities, projectKnowledgeContextLines } from "@/lib/project/knowledge-base";
 import { siteProfileContextLines, siteProfileEntityRecommendations, siteProfilePlanningPriorities, type SiteEntityRecommendations } from "@/lib/site-profile";
-import type { ContentControls, ProjectKnowledgeBase, ProjectProfileSnapshot, ProjectSiteProfileDocument, ResearchPack } from "@/lib/types";
+import type { ContentControls, ProjectKnowledgeBase, ProjectProfileSnapshot, ProjectSiteProfileDocument, ResearchPack, SemanticKnowledgeGraph } from "@/lib/types";
 import { CONTENT_PROFILES, type ContentProfile } from "@/lib/content-profiles";
 
 const MIN_OUTPUT_TOKENS = 3200;
@@ -22,6 +23,8 @@ export interface ArticleGenerationPlan {
   planningPriorities: string[];
   editorialDirectives: string[];
   knowledgeContext?: string[];
+  businessIntelligenceContext?: string[];
+  semanticIntelligenceContext?: string[];
   websiteEntityRecommendations?: SiteEntityRecommendations;
 }
 
@@ -49,7 +52,8 @@ export function buildArticleGenerationPlan(
   profileSnapshot?: ProjectProfileSnapshot | null,
   projectIntelligence?: ProjectSiteProfileDocument | ProjectKnowledgeBase | null,
   contentProfile?: ContentProfile,
-  title?: string
+  title?: string,
+  semanticIntelligence?: SemanticKnowledgeGraph | null
 ): ArticleGenerationPlan {
   const targetWords = clampTargetWords(profileSnapshot?.targetWords ?? controls.lengthTargetWords);
   const density = sectionDensityForAudience(profileSnapshot?.audience);
@@ -64,6 +68,8 @@ export function buildArticleGenerationPlan(
   const knowledgeContext = siteProfile
     ? [...siteProfileContextLines(siteProfile), ...(websiteEntityRecommendations?.contextLines ?? [])]
     : projectKnowledgeContextLines(knowledgeBase);
+  const businessIntelligenceContext = businessGraphContextLines(siteProfile?.businessIntelligence);
+  const semanticIntelligenceContext = semanticGraphContextLines(semanticIntelligence);
   return {
     targetWords,
     minimumWords: Math.round(targetWords * 0.8),
@@ -83,9 +89,12 @@ export function buildArticleGenerationPlan(
       ...planningPrioritiesForProfile(profileSnapshot),
       ...editorialDirectives,
       ...(siteProfile ? siteProfilePlanningPriorities(siteProfile) : knowledgeBasePlanningPriorities(knowledgeBase)),
+      ...graphPlanningPriorities(siteProfile?.businessIntelligence, semanticIntelligence),
       ...(websiteEntityRecommendations?.priorityLines ?? [])
     ],
     ...(knowledgeContext.length ? { knowledgeContext } : {}),
+    ...(businessIntelligenceContext.length ? { businessIntelligenceContext } : {}),
+    ...(semanticIntelligenceContext.length ? { semanticIntelligenceContext } : {}),
     ...(websiteEntityRecommendations ? { websiteEntityRecommendations } : {})
   };
 }

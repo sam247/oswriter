@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { nowIso } from "@/lib/defaults";
+import { buildBusinessKnowledgeGraph } from "@/lib/knowledge-engine";
 import type { BusinessTypeKey } from "@/lib/project/profile";
 import { ExaSearchAdapter } from "@/lib/research/exa";
 import { createEmptyProjectSiteKnowledge } from "@/lib/site-knowledge-state";
@@ -258,13 +259,17 @@ export async function importSiteKnowledge({
       },
       updatedAt: completedAt
     };
-    const siteProfile = extractProjectSiteProfile({
+    const extractedProfile = extractProjectSiteProfile({
       projectId,
       organisationId: siteKnowledge.organisationId,
       sitemapUrl: normalizedSitemapUrl,
       pages,
       configuredBusinessType
     });
+    const siteProfile: ProjectSiteProfileDocument = {
+      ...extractedProfile,
+      businessIntelligence: buildBusinessKnowledgeGraph(extractedProfile, pages)
+    };
     await store.saveProjectSiteProfile(siteProfile);
     await persistSiteKnowledgeStatus(store, siteKnowledge, onProgress);
     await recordWebsiteImportOperation(store, {
