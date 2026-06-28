@@ -3,6 +3,7 @@ import type { WorkspacePreferencesDocument } from "@/lib/types";
 export function toPublicWorkspacePreferences(preferences: WorkspacePreferencesDocument): WorkspacePreferencesDocument {
   const aiProvider = preferences.aiProvider;
   const researchKeyConfigured = aiProvider.researchKeyStatus === "configured" && Boolean(aiProvider.researchApiKey);
+  const researchMode = researchKeyConfigured && aiProvider.researchMode === "custom" ? "custom" : (aiProvider.researchMode ?? "auto");
   return {
     ...preferences,
     aiProvider: {
@@ -11,11 +12,11 @@ export function toPublicWorkspacePreferences(preferences: WorkspacePreferencesDo
       writerKeyEnabled: aiProvider.writerKeyEnabled,
       writerKeyStatus: aiProvider.writerKeyStatus,
       writerApiKey: aiProvider.writerApiKey,
+      researchMode,
+      customResearchProvider: researchMode === "custom" ? (aiProvider.customResearchProvider ?? "serpapi") : undefined,
       researchKeyEnabled: researchKeyConfigured,
       researchKeyStatus: researchKeyConfigured ? "configured" : "not_configured",
-      researchApiKey: "",
-      researchProvider: researchKeyConfigured && aiProvider.researchProvider === "byok" ? "byok" : "queuewrite",
-      byokResearchProvider: "tavily"
+      researchApiKey: ""
     }
   };
 }

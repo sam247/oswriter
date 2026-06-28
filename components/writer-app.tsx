@@ -2708,7 +2708,7 @@ function SettingsPanel({
 }) {
   const [draft, setDraft] = useState(state.preferences);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
-  const [tavilyManageOpen, setTavilyManageOpen] = useState(false);
+  const [byokKeyInputOpen, setByokKeyInputOpen] = useState(false);
   const [writerManageOpen, setWriterManageOpen] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftRef = useRef(draft);
@@ -2717,7 +2717,8 @@ function SettingsPanel({
   useEffect(() => { onUpdateRef.current = onUpdatePreferences; }, [onUpdatePreferences]);
 
   const writerKeyEnabled = draft.aiProvider.writerKeyEnabled;
-  const tavilyKeyConfigured = draft.aiProvider.researchKeyStatus === "configured";
+  const researchMode = draft.aiProvider.researchMode ?? "auto";
+  const byokKeyConfigured = draft.aiProvider.researchKeyStatus === "configured";
 
   const scheduleSave = useCallback(() => {
     setSaveStatus("saving");
@@ -2770,58 +2771,110 @@ function SettingsPanel({
             </a>
           </CollapsibleSettingsSection>
 
-          <CollapsibleSettingsSection title="API Keys" defaultOpen>
-            <p className="text-[12px] text-ink-muted">Connect research and writing providers. Keys are encrypted before storage and never shown again.</p>
+          <CollapsibleSettingsSection title="Research" defaultOpen>
+            <p className="text-[12px] text-ink-muted">Choose how QueueWrite performs research for your articles.</p>
 
-            {/* Tavily */}
-            <div className="rounded-md border border-line bg-surface-1 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-[13px] font-semibold text-ink">Tavily Research</div>
-                  <div className="mt-0.5 text-[11.5px] text-ink-muted">BYOK source discovery and evidence extraction.</div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className={cn("mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", tavilyKeyConfigured ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
-                    {tavilyKeyConfigured ? "Connected" : "Not configured"}
-                  </span>
-                  {tavilyKeyConfigured && !tavilyManageOpen && (
-                    <button
-                      type="button"
-                      onClick={() => { updateDraft({ aiProvider: { researchApiKey: "", researchKeyEnabled: false, researchKeyStatus: "not_configured", researchProvider: "queuewrite" } }); setTavilyManageOpen(false); }}
-                      className="h-7 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 hover:bg-surface-2"
-                    >
-                      Disconnect
-                    </button>
-                  )}
-                  {!tavilyManageOpen ? (
-                    <button type="button" onClick={() => setTavilyManageOpen(true)} className={cn("h-7 rounded-md px-3 text-[12px] font-medium", tavilyKeyConfigured ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
-                      {tavilyKeyConfigured ? "Manage" : "Connect"}
-                    </button>
-                  ) : (
-                    <button type="button" onClick={() => setTavilyManageOpen(false)} className="h-7 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
-                      Done
-                    </button>
-                  )}
+            {/* Auto */}
+            <button
+              type="button"
+              onClick={() => updateDraft({ aiProvider: { researchMode: "auto" } })}
+              className={cn("w-full rounded-md border px-4 py-3 text-left transition-colors", researchMode === "auto" ? "border-ink bg-surface-2" : "border-line bg-surface-1 hover:bg-surface-2")}
+            >
+              <div className="flex items-start gap-3">
+                <div className={cn("mt-0.5 size-3.5 shrink-0 rounded-full border-2 transition-colors", researchMode === "auto" ? "border-ink bg-ink" : "border-line-strong bg-transparent")} />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold text-ink">Auto</span>
+                    <span className="mono rounded bg-surface-3 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em] text-ink-subtle">Recommended</span>
+                  </div>
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">QueueWrite manages research automatically using our recommended provider combination. Best for almost all users.</p>
                 </div>
               </div>
-              {tavilyManageOpen && (
-                <div className="mt-3">
+            </button>
+
+            {/* Auto Deep — Coming Soon */}
+            <div className="w-full cursor-not-allowed rounded-md border border-line bg-surface-1 px-4 py-3 opacity-60">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 size-3.5 shrink-0 rounded-full border-2 border-line-strong bg-transparent" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold text-ink">Auto Deep</span>
+                    <span className="mono rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Coming Soon</span>
+                  </div>
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">Performs broader and deeper research before planning your article. Gathers additional evidence from multiple sources and verifies claims.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Bring Your Own Provider */}
+            <button
+              type="button"
+              onClick={() => updateDraft({ aiProvider: { researchMode: "custom" } })}
+              className={cn("w-full rounded-md border px-4 py-3 text-left transition-colors", researchMode === "custom" ? "border-ink bg-surface-2" : "border-line bg-surface-1 hover:bg-surface-2")}
+            >
+              <div className="flex items-start gap-3">
+                <div className={cn("mt-0.5 size-3.5 shrink-0 rounded-full border-2 transition-colors", researchMode === "custom" ? "border-ink bg-ink" : "border-line-strong bg-transparent")} />
+                <div className="min-w-0">
+                  <span className="text-[13px] font-semibold text-ink">Bring Your Own Provider</span>
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">Use your own research API credits instead of QueueWrite managed research. Ideal for agencies and teams already paying for search providers.</p>
+                </div>
+              </div>
+            </button>
+
+            {/* BYOK provider configuration — visible only when custom is selected */}
+            {researchMode === "custom" && (
+              <div className="rounded-md border border-line bg-surface-2 px-4 py-3">
+                <div className="text-[12px] font-medium text-ink-muted mb-2">Provider</div>
+                <div className="mb-3 flex items-center justify-between rounded-md border border-line bg-surface-1 px-3 py-2">
+                  <div>
+                    <div className="text-[13px] font-medium text-ink">SerpAPI</div>
+                    <div className="mt-0.5 text-[11px] text-ink-muted">Uses your own SerpAPI account for Google search retrieval. Only the search source changes.</div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 ml-3">
+                    {byokKeyConfigured && !byokKeyInputOpen && (
+                      <button
+                        type="button"
+                        onClick={() => { updateDraft({ aiProvider: { researchApiKey: "", researchKeyEnabled: false, researchKeyStatus: "not_configured", researchMode: "auto" } }); setByokKeyInputOpen(false); }}
+                        className="h-7 rounded-md border border-line/60 bg-surface-1 px-3 text-[12px] font-medium text-danger/80 hover:bg-surface-2"
+                      >
+                        Disconnect
+                      </button>
+                    )}
+                    <span className={cn("mono rounded px-2 py-1 text-[10px] uppercase tracking-[0.14em]", byokKeyConfigured ? "bg-success/10 text-success" : "bg-surface-3 text-ink-subtle")}>
+                      {byokKeyConfigured ? "Connected" : "Not configured"}
+                    </span>
+                    {!byokKeyInputOpen ? (
+                      <button type="button" onClick={() => setByokKeyInputOpen(true)} className={cn("h-7 rounded-md px-3 text-[12px] font-medium", byokKeyConfigured ? "border border-line bg-surface-1 text-ink hover:bg-surface-2" : "bg-ink text-white")}>
+                        {byokKeyConfigured ? "Manage" : "Connect"}
+                      </button>
+                    ) : (
+                      <button type="button" onClick={() => setByokKeyInputOpen(false)} className="h-7 rounded-md border border-line bg-surface-1 px-3 text-[12px] font-medium text-ink hover:bg-surface-2">
+                        Done
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {byokKeyInputOpen && (
                   <SettingsSecretInput
-                    label="Tavily API Key"
-                    saved={tavilyKeyConfigured}
+                    label="SerpAPI Key"
+                    saved={byokKeyConfigured}
                     onSave={(researchApiKey) => researchApiKey && updateDraft({
                       aiProvider: {
                         researchApiKey,
                         researchKeyEnabled: true,
                         researchKeyStatus: "configured",
-                        researchProvider: "byok",
-                        byokResearchProvider: "tavily"
+                        researchMode: "custom",
+                        customResearchProvider: "serpapi"
                       }
                     })}
                   />
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
+          </CollapsibleSettingsSection>
+
+          <CollapsibleSettingsSection title="API Keys" defaultOpen>
+            <p className="text-[12px] text-ink-muted">Connect your personal writing provider key. Keys are encrypted before storage and never shown again.</p>
             <div className="rounded-md border border-line bg-surface-1 px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -6985,7 +7038,9 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
   const writerApiKey = patch.aiProvider?.writerApiKey ?? preferences.aiProvider.writerApiKey;
   const replacementResearchKey = patch.aiProvider?.researchApiKey;
   const researchKeyConfigured = Boolean(replacementResearchKey?.trim()) || preferences.aiProvider.researchKeyStatus === "configured";
-  const requestedResearchProvider = patch.aiProvider?.researchProvider ?? preferences.aiProvider.researchProvider ?? "queuewrite";
+  const requestedMode = patch.aiProvider?.researchMode ?? preferences.aiProvider.researchMode ?? "auto";
+  const researchMode = requestedMode === "custom" && researchKeyConfigured ? "custom" : requestedMode === "auto_deep" ? "auto_deep" : "auto";
+  const customResearchProvider = patch.aiProvider?.customResearchProvider ?? preferences.aiProvider.customResearchProvider ?? "serpapi";
   const providerPreference = writerKeyEnabled ? "bring_your_own_key" : "platform_managed";
   return {
     ...preferences,
@@ -7011,11 +7066,11 @@ function mergeWorkspacePreferences(preferences: WorkspacePreferencesDocument, pa
       writerKeyEnabled,
       writerApiKey: writerKeyEnabled ? writerApiKey : "",
       writerKeyStatus: writerKeyEnabled && writerApiKey ? "configured" : writerKeyEnabled ? "placeholder" : "not_configured",
+      researchMode,
+      customResearchProvider: researchMode === "custom" ? customResearchProvider : undefined,
       researchKeyEnabled: researchKeyConfigured,
       researchApiKey: replacementResearchKey ?? preferences.aiProvider.researchApiKey,
-      researchKeyStatus: researchKeyConfigured ? "configured" : "not_configured",
-      researchProvider: requestedResearchProvider === "byok" && researchKeyConfigured ? "byok" : "queuewrite",
-      byokResearchProvider: "tavily"
+      researchKeyStatus: researchKeyConfigured ? "configured" : "not_configured"
     },
     operational: {
       ...preferences.operational,

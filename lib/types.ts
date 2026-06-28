@@ -288,8 +288,15 @@ export interface SettingsDocument {
 
 export type AiProviderPreference = "platform_managed" | "bring_your_own_key";
 export type PersonalApiKeyStatus = "not_configured" | "placeholder" | "configured";
+
+/** Internal provider IDs used by the research engine and telemetry. Never exposed to users. */
 export type ResearchProviderId = "queuewrite" | "queuewrite_experimental" | "byok";
-export type ByokResearchProviderId = "tavily";
+
+/** User-facing research modes. These are what customers see and select. */
+export type ResearchMode = "auto" | "auto_deep" | "custom";
+
+/** BYOK research providers available to advanced users. */
+export type CustomResearchProvider = "serpapi" | "dataforseo" | "firecrawl";
 
 export interface WorkspacePreferencesDocument {
   organisationId?: string;
@@ -313,11 +320,11 @@ export interface WorkspacePreferencesDocument {
     writerKeyEnabled: boolean;
     writerKeyStatus: PersonalApiKeyStatus;
     writerApiKey: string;
+    researchMode?: ResearchMode;
+    customResearchProvider?: CustomResearchProvider;
     researchKeyEnabled: boolean;
     researchKeyStatus: PersonalApiKeyStatus;
     researchApiKey: string;
-    researchProvider?: ResearchProviderId;
-    byokResearchProvider?: ByokResearchProviderId;
   };
   operational: {
     autoStartQueueOnAdd: boolean;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { ExaSearchAdapter } from "@/lib/research/exa";
 import { QueueWriteExperimentalDiscoveryProvider } from "@/lib/research/providers/queuewrite-experimental";
-import { RESEARCH_PROVIDER_OPTIONS, INTERNAL_RESEARCH_PROVIDER_OPTIONS, ResearchProviderError, ResearchProviderRegistry, WorkspaceResearchProvider } from "@/lib/research/providers/registry";
+import { ResearchProviderError, ResearchProviderRegistry, WorkspaceResearchProvider } from "@/lib/research/providers/registry";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { TAVILY_COST_PRICING_SOURCE, TavilySearchAdapter, validateTavilyApiKey } from "@/lib/research/providers/tavily";
 import { runResearch } from "@/lib/research/research-engine";
@@ -11,16 +11,6 @@ import { WorkspaceStore } from "@/lib/storage/storage";
 import type { ResearchProviderId } from "@/lib/types";
 
 describe("research provider architecture", () => {
-  it("exposes production and configured BYOK lanes while keeping Exa Deep internal", () => {
-    assert.deepEqual(RESEARCH_PROVIDER_OPTIONS, [
-      { id: "queuewrite", label: "QueueWrite Research", requiresApiKey: false },
-      { id: "byok", label: "BYOK Experimental (Tavily)", requiresApiKey: true }
-    ]);
-    assert.deepEqual(INTERNAL_RESEARCH_PROVIDER_OPTIONS, [
-      { id: "queuewrite_experimental", label: "QueueWrite Research Experimental" }
-    ]);
-  });
-
   it("keeps production Exa on its default search request", async () => {
     const originalKey = process.env.EXA_API_KEY;
     process.env.EXA_API_KEY = "exa-test";
@@ -115,87 +105,120 @@ describe("research provider architecture", () => {
     assert.equal(research.providerUsage?.reportedResearchCostUsd, calls * 0.02);
   });
 
-  it("routes a configured per-user BYOK key to Tavily with no managed fallback", async () => {
+  it("defaults to auto mode and routes to the managed provider", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    let managedCalls = 0;
+    const registry = new ResearchProviderRegistry()
+      .register("queuewrite", () => ({
+        id: "queuewrite" as const,
+        label: "QueueWrite Research",
+        async research(input) {
+          managedCalls += 1;
+          return emptyPack(input.articleId, input.title, "queuewrite");
+        }
+      }));
+    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "Auto", articleId: "article-1" });
+    assert.equal(result.researchProvider, "queuewrite");
+    assert.equal(result.fallbackUsed, false);
+    assert.equal(managedCalls, 1);
+  });
+
+  it("routes a configured per-user custom key to BYOK provider with no managed fallback", async () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     const preferences = await store.getWorkspacePreferences();
     await store.saveWorkspacePreferences({
       ...preferences,
       aiProvider: {
         ...preferences.aiProvider,
-        researchProvider: "byok",
-        byokResearchProvider: "tavily",
+        researchMode: "custom",
+        customResearchProvider: "serpapi",
         researchKeyEnabled: true,
         researchKeyStatus: "configured",
-        researchApiKey: "tvly-user-key"
+        researchApiKey: "serpapi-user-key"
       }
     });
     let managedCalls = 0;
     const registry = new ResearchProviderRegistry()
-      .register("queuewrite", () => ({ id: "queuewrite", label: "QueueWrite Research", async research() { managedCalls += 1; throw new Error("must not run"); } }))
+      .register("queuewrite", () => ({ id: "queuewrite" as const, label: "QueueWrite Research", async research() { managedCalls += 1; throw new Error("must not run"); } }))
       .register("byok", (apiKey) => ({
-        id: "byok",
-        label: "BYOK Experimental (Tavily)",
+        id: "byok" as const,
+        label: "SerpAPI",
         async research(input) {
-          assert.equal(apiKey, "tvly-user-key");
+          assert.equal(apiKey, "serpapi-user-key");
           return emptyPack(input.articleId, input.title, "byok");
         }
       }));
-    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "BYOK", articleId: "article-1" });
+    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "BYOK", articleId: "article-2" });
     assert.equal(result.researchProvider, "byok");
     assert.equal(result.fallbackUsed, false);
     assert.equal(managedCalls, 0);
   });
 
   it("keeps BYOK failures provider-specific", async () => {
-    const store = await byokStore();
+    const store = await customProviderStore();
     const registry = new ResearchProviderRegistry().register("byok", () => ({
-      id: "byok",
-      label: "BYOK Experimental (Tavily)",
-      async research() { throw new Error("Tavily research unavailable: 401 invalid key"); }
+      id: "byok" as const,
+      label: "SerpAPI",
+      async research() { throw new Error("Provider research unavailable: 401 invalid key"); }
     }));
     await assert.rejects(
-      () => new WorkspaceResearchProvider(store, registry).research({ title: "Failure", articleId: "article-2" }),
+      () => new WorkspaceResearchProvider(store, registry).research({ title: "Failure", articleId: "article-3" }),
       (error) => error instanceof ResearchProviderError
         && error.provider === "byok"
         && error.reason === "authentication"
     );
   });
 
-  it("never exposes a saved Tavily key", async () => {
-    const store = await byokStore();
+  it("never exposes a saved custom provider key", async () => {
+    const store = await customProviderStore();
     const internal = await store.getWorkspacePreferences();
     const publicPreferences = toPublicWorkspacePreferences(internal);
-    assert.equal(internal.aiProvider.researchApiKey, "tvly-user-key");
+    assert.equal(internal.aiProvider.researchApiKey, "serpapi-user-key");
     assert.equal(publicPreferences.aiProvider.researchApiKey, "");
     assert.equal(publicPreferences.aiProvider.researchKeyStatus, "configured");
-    assert.equal(publicPreferences.aiProvider.researchProvider, "byok");
+    assert.equal(publicPreferences.aiProvider.researchMode, "custom");
   });
 
   it("returns a reviewable research pack when production research is unavailable", async () => {
     const store = new WorkspaceStore(new MemoryStorageAdapter());
     const registry = new ResearchProviderRegistry().register("queuewrite", () => ({
-      id: "queuewrite",
+      id: "queuewrite" as const,
       label: "QueueWrite Research",
       async research() { throw new Error("QueueWrite Research unavailable: 503"); }
     }));
-    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "Resilient", articleId: "article-3" });
+    const result = await new WorkspaceResearchProvider(store, registry).research({ title: "Resilient", articleId: "article-4" });
     assert.equal(result.researchProvider, "queuewrite");
     assert.equal(result.fallbackUsed, true);
   });
+
+  it("migrates legacy byok researchProvider to auto mode on read", async () => {
+    const store = new WorkspaceStore(new MemoryStorageAdapter());
+    const preferences = await store.getWorkspacePreferences();
+    // Simulate legacy stored preferences with researchProvider: "byok"
+    await store.saveWorkspacePreferences({
+      ...preferences,
+      aiProvider: {
+        ...preferences.aiProvider,
+        researchMode: "auto" as const
+      }
+    });
+    const loaded = await store.getWorkspacePreferences();
+    assert.equal(loaded.aiProvider.researchMode, "auto");
+  });
 });
 
-async function byokStore() {
+async function customProviderStore() {
   const store = new WorkspaceStore(new MemoryStorageAdapter());
   const preferences = await store.getWorkspacePreferences();
   await store.saveWorkspacePreferences({
     ...preferences,
     aiProvider: {
       ...preferences.aiProvider,
-      researchProvider: "byok",
-      byokResearchProvider: "tavily",
+      researchMode: "custom",
+      customResearchProvider: "serpapi",
       researchKeyEnabled: true,
       researchKeyStatus: "configured",
-      researchApiKey: "tvly-user-key"
+      researchApiKey: "serpapi-user-key"
     }
   });
   return store;

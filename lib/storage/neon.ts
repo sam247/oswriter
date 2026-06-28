@@ -1283,7 +1283,31 @@ export class NeonStorageProvider implements StorageProvider {
     const normalized = withWorkspacePreferenceDefaults(saved, tenant);
     const aiProvider = normalized.aiProvider;
     const researchApiKey = typeof userPreferences.researchApiKey === "string" ? userPreferences.researchApiKey : "";
-    const researchProvider = userPreferences.researchProvider === "byok" && researchApiKey ? "byok" : "queuewrite";
+
+    // Migrate legacy researchProvider values ("byok"/"queuewrite") to the new ResearchMode enum.
+    // Old BYOK Tavily users migrate to "auto" since Tavily is now a managed internal provider.
+    const legacyResearchProvider = userPreferences.researchProvider;
+    const storedResearchMode = userPreferences.researchMode;
+    let researchMode: import("@/lib/types").ResearchMode;
+    if (storedResearchMode === "custom" || storedResearchMode === "auto_deep" || storedResearchMode === "auto") {
+      researchMode = storedResearchMode;
+    } else if (legacyResearchProvider === "byok") {
+      // Legacy BYOK Tavily → auto (Tavily is now internal; no BYOK key is stored for new providers)
+      researchMode = "auto";
+    } else {
+      researchMode = "auto";
+    }
+
+    const customResearchProvider = userPreferences.customResearchProvider === "serpapi"
+      || userPreferences.customResearchProvider === "dataforseo"
+      || userPreferences.customResearchProvider === "firecrawl"
+      ? userPreferences.customResearchProvider as import("@/lib/types").CustomResearchProvider
+      : undefined;
+
+    // Clear legacy Tavily API keys — they no longer apply to any user-facing mode.
+    // Custom provider keys (SerpAPI etc.) are preserved.
+    const effectiveResearchApiKey = researchMode === "custom" ? researchApiKey : "";
+
     return {
       ...normalized,
       aiProvider: {
@@ -1292,11 +1316,11 @@ export class NeonStorageProvider implements StorageProvider {
         writerKeyEnabled: aiProvider.writerKeyEnabled,
         writerKeyStatus: aiProvider.writerKeyStatus,
         writerApiKey: aiProvider.writerApiKey,
-        researchProvider,
-        researchKeyEnabled: Boolean(researchApiKey),
-        researchKeyStatus: researchApiKey ? "configured" : "not_configured",
-        researchApiKey,
-        byokResearchProvider: "tavily"
+        researchMode,
+        customResearchProvider,
+        researchKeyEnabled: Boolean(effectiveResearchApiKey),
+        researchKeyStatus: effectiveResearchApiKey ? "configured" : "not_configured",
+        researchApiKey: effectiveResearchApiKey
       }
     };
   }
@@ -1313,11 +1337,10 @@ export class NeonStorageProvider implements StorageProvider {
         writerKeyEnabled: aiProvider.writerKeyEnabled,
         writerKeyStatus: aiProvider.writerKeyStatus,
         writerApiKey: aiProvider.writerApiKey,
-        researchProvider: "queuewrite",
+        researchMode: "auto",
         researchKeyEnabled: false,
         researchKeyStatus: "not_configured",
-        researchApiKey: "",
-        byokResearchProvider: "tavily"
+        researchApiKey: ""
       }
     };
     await this.sql`
@@ -1332,15 +1355,17 @@ export class NeonStorageProvider implements StorageProvider {
         workspace_preferences = ${JSON.stringify(workspaceDocument)}::jsonb,
         updated_at = excluded.updated_at
     `;
+    const researchMode = next.aiProvider.researchMode ?? "auto";
+    const isCustomMode = researchMode === "custom" && Boolean(next.aiProvider.researchApiKey);
     await this.sql`
       insert into user_provider_preferences (organisation_id, user_id, preferences, updated_at)
       values (
         ${tenant.organisationId},
         ${tenant.userId},
         ${JSON.stringify({
-          researchProvider: next.aiProvider.researchProvider === "byok" && next.aiProvider.researchApiKey ? "byok" : "queuewrite",
-          byokResearchProvider: "tavily",
-          researchApiKey: next.aiProvider.researchApiKey ?? ""
+          researchMode: isCustomMode ? "custom" : researchMode,
+          customResearchProvider: isCustomMode ? (next.aiProvider.customResearchProvider ?? "serpapi") : undefined,
+          researchApiKey: isCustomMode ? (next.aiProvider.researchApiKey ?? "") : ""
         })}::jsonb,
         ${next.updatedAt}::timestamptz
       )

@@ -1,26 +1,16 @@
 import type { WorkspaceStore } from "@/lib/storage/storage";
 import type { ResearchProvider, ResearchProviderInput } from "@/lib/research/providers/types";
-import { createByokResearchProvider } from "@/lib/research/providers/byok";
-import { createQueueWriteResearchProvider } from "@/lib/research/providers/queuewrite";
+import { createManagedResearchProvider } from "@/lib/research/providers/managed-router";
 import { createQueueWriteResearchExperimentalProvider } from "@/lib/research/providers/queuewrite-experimental";
 import type { ResearchPack, ResearchProviderId, ResearchProviderTelemetry } from "@/lib/types";
 
-export const RESEARCH_PROVIDER_OPTIONS: ReadonlyArray<{ id: ResearchProviderId; label: string; requiresApiKey: boolean }> = [
-  { id: "queuewrite", label: "QueueWrite Research", requiresApiKey: false },
-  { id: "byok", label: "BYOK Experimental (Tavily)", requiresApiKey: true }
-];
-
-export const INTERNAL_RESEARCH_PROVIDER_OPTIONS: ReadonlyArray<{ id: ResearchProviderId; label: string }> = [
-  { id: "queuewrite_experimental", label: "QueueWrite Research Experimental" }
-];
-
+/** Internal registry used for benchmarks and testing. Not part of the user-facing research mode system. */
 export class ResearchProviderRegistry {
   private readonly factories = new Map<ResearchProviderId, (apiKey?: string) => ResearchProvider>();
 
   constructor() {
-    this.register("queuewrite", () => createQueueWriteResearchProvider());
+    this.register("queuewrite", () => createManagedResearchProvider());
     this.register("queuewrite_experimental", () => createQueueWriteResearchExperimentalProvider());
-    this.register("byok", (apiKey) => createByokResearchProvider(apiKey ?? ""));
   }
 
   register(id: ResearchProviderId, factory: (apiKey?: string) => ResearchProvider) {
@@ -35,6 +25,13 @@ export class ResearchProviderRegistry {
   }
 }
 
+/**
+ * Routes research requests based on the workspace's chosen ResearchMode.
+ *
+ * - auto:       QueueWrite managed research (Tavily primary, Exa fallback). Fully transparent.
+ * - auto_deep:  Coming soon. Architecture provisioned; not yet available.
+ * - custom:     Bring Your Own Provider — routes to the user's configured provider (e.g. SerpAPI).
+ */
 export class WorkspaceResearchProvider implements ResearchProvider {
   readonly id = "queuewrite" as const;
   readonly label = "QueueWrite Research";
@@ -46,19 +43,34 @@ export class WorkspaceResearchProvider implements ResearchProvider {
 
   async research(input: ResearchProviderInput): Promise<ResearchPack> {
     const preferences = await this.store.getWorkspacePreferences();
-    if (preferences.aiProvider.researchProvider === "byok") {
+    const mode = preferences.aiProvider.researchMode ?? "auto";
+
+    if (mode === "auto_deep") {
+      return unavailableResearchPack(input, "Auto Deep research is not yet available. Generation continued with standard managed research.", "auto_deep_unavailable");
+    }
+
+    if (mode === "custom") {
       try {
-        if (!preferences.aiProvider.researchApiKey.trim()) throw new Error("Tavily API key is required.");
-        return withProviderTelemetry(await this.registry.create("byok", preferences.aiProvider.researchApiKey).research(input), {
-          requestedResearchProvider: "byok",
-          actualResearchProvider: "byok",
-          fallbackUsed: false,
-          fallbackReason: null
-        });
+        if (!preferences.aiProvider.researchApiKey.trim()) throw new Error("Research API key is required for custom provider mode.");
+        const { createCustomResearchProvider } = await import("@/lib/research/providers/byok");
+        return withProviderTelemetry(
+          await createCustomResearchProvider(
+            preferences.aiProvider.customResearchProvider ?? "serpapi",
+            preferences.aiProvider.researchApiKey
+          ).research(input),
+          {
+            requestedResearchProvider: "byok",
+            actualResearchProvider: "byok",
+            fallbackUsed: false,
+            fallbackReason: null
+          }
+        );
       } catch (error) {
         throw ResearchProviderError.from("byok", error);
       }
     }
+
+    // auto mode — managed routing (Tavily primary, Exa fallback), fully internal
     try {
       return withProviderTelemetry(await this.registry.create("queuewrite").research(input), {
         requestedResearchProvider: "queuewrite",

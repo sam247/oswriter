@@ -72,11 +72,10 @@ export function createDefaultWorkspacePreferences(input: Partial<WorkspacePrefer
       writerKeyEnabled: false,
       writerKeyStatus: "not_configured",
       writerApiKey: "",
+      researchMode: "auto",
       researchKeyEnabled: false,
       researchKeyStatus: "not_configured",
-      researchApiKey: "",
-      researchProvider: "queuewrite",
-      byokResearchProvider: "tavily"
+      researchApiKey: ""
     },
     operational: {
       autoStartQueueOnAdd: false,
