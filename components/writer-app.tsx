@@ -203,6 +203,7 @@ function Workbench() {
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() => createDefaultScheduleForm());
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
+  const [articleBodyLoading, setArticleBodyLoading] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -262,6 +263,7 @@ function Workbench() {
   const optimisticQueuedJobIdsRef = useRef<Set<string>>(new Set());
   const optimisticQueueControlRef = useRef<AppState["queueControl"] | null>(null);
   const analyticsProjectIdRef = useRef<string | null>(null);
+  const articleCacheRef = useRef<Map<string, ArticleDocument>>(new Map());
 
   const jobs = state?.jobs ?? [];
   const articles = state?.articles ?? [];
@@ -276,14 +278,18 @@ function Workbench() {
     () => jobs.find((job) => job.articleId === selectedArticleId || job.id === selectedArticle?.jobId) ?? null,
     [jobs, selectedArticle?.jobId, selectedArticleId]
   );
+  const selectedArticleSummary = useMemo(
+    () => articles.find((a) => a.id === selectedArticleId) ?? null,
+    [articles, selectedArticleId]
+  );
   const selectedJobHasWritingStarted = selectedJob ? generationHasReachedWriting(selectedJob) : false;
-  const showArticleToolbar = Boolean(selectedArticle || selectedJobHasWritingStarted);
+  const showArticleToolbar = Boolean(selectedArticle || articleBodyLoading || selectedJobHasWritingStarted);
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   // Keep a ref to the current markdown so undo checkpoints can capture it without being in useCallback deps
   const selectedMarkdownRef = useRef(selectedMarkdown);
   selectedMarkdownRef.current = selectedMarkdown;
-  const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : "";
-  const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? null;
+  const selectedTitle = selectedArticle ? titleDrafts[selectedArticle.id] ?? selectedArticle.title : (selectedArticleSummary?.title ?? "");
+  const breadcrumbArticleTitle = selectedArticle ? selectedTitle : selectedJob?.title ?? selectedArticleSummary?.title ?? null;
   const handleSelectedMarkdownChange = useCallback((markdown: string) => {
     if (!selectedArticle) return;
     const articleId = selectedArticle.id;
@@ -600,20 +606,49 @@ function Workbench() {
     };
   }, [globalSearchOpen, globalSearchQuery]);
 
+  function prefetchArticle(articleId: string) {
+    if (articleCacheRef.current.has(articleId)) return;
+    void fetch(`/api/articles/${articleId}`, { cache: "no-store" })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: { article?: ArticleDocument } | null) => {
+        if (data?.article) articleCacheRef.current.set(data.article.id, data.article);
+      })
+      .catch(() => undefined);
+  }
+
   useEffect(() => {
     if (!selectedArticleId) {
       setSelectedArticle(null);
+      setArticleBodyLoading(false);
       setDetails({ research: null, debug: null });
       return;
     }
     const controller = new AbortController();
-    setSelectedArticle(null);
+
+    const cached = articleCacheRef.current.get(selectedArticleId);
+    if (cached) {
+      setSelectedArticle(cached);
+      setArticleBodyLoading(false);
+    } else {
+      setSelectedArticle(null);
+      setArticleBodyLoading(true);
+    }
+
     void fetch(`/api/articles/${selectedArticleId}`, { cache: "no-store", signal: controller.signal })
       .then((res) => res.ok ? res.json() : null)
       .then((data: { article?: ArticleDocument } | null) => {
-        if (data?.article) setSelectedArticle(data.article);
+        if (data?.article) {
+          articleCacheRef.current.set(data.article.id, data.article);
+          setSelectedArticle(data.article);
+        }
+        setArticleBodyLoading(false);
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setArticleBodyLoading(false);
+      });
+
+    setDetails({ research: null, debug: null });
     void fetch(`/api/articles/${selectedArticleId}/details`, { cache: "no-store", signal: controller.signal })
       .then((res) => res.ok ? res.json() : { research: null, debug: null })
       .then((data: Details) => setDetails(data));
@@ -621,6 +656,7 @@ function Workbench() {
   }, [selectedArticleId, articles.some((article) => article.id === selectedArticleId)]);
 
   function applyUpdatedArticle(updated: ArticleDocument) {
+    articleCacheRef.current.set(updated.id, updated);
     setSelectedArticle((current) => current?.id === updated.id ? updated : current);
     setState((current) => current ? {
       ...current,
@@ -2053,10 +2089,11 @@ function Workbench() {
               onClose={() => setSettingsOpen(false)}
               onUpdatePreferences={updatePreferences}
             />
-          ) : selectedArticle || selectedJob ? (
+          ) : (selectedArticleId || selectedJob) ? (
             <>
               <ArticleHeader
                 article={selectedArticle}
+                summary={selectedArticleSummary}
                 job={selectedJob}
                 research={details.research}
                 title={selectedTitle}
@@ -2107,6 +2144,8 @@ function Workbench() {
                     richEditorRef={richEditorRef}
                     onChange={handleSelectedMarkdownChange}
                   />
+                ) : articleBodyLoading ? (
+                  <ArticleBodySkeleton />
                 ) : selectedJob ? (
                   <GenerationWorkspace
                     job={selectedJob}
@@ -2136,6 +2175,7 @@ function Workbench() {
               bulkBusy={busy}
               activeArticleId={selectedArticleId}
               onSelectArticle={setSelectedArticleId}
+              onPrefetchArticle={prefetchArticle}
               onFilterChange={setFilter}
               onOpenProjectSettings={openCurrentProjectSettings}
               onToggleArticleSelection={toggleInventoryArticleSelection}
@@ -2486,6 +2526,7 @@ function ProjectDashboard({
   bulkBusy,
   activeArticleId,
   onSelectArticle,
+  onPrefetchArticle,
   onFilterChange,
   onOpenProjectSettings,
   onToggleArticleSelection,
@@ -2504,6 +2545,7 @@ function ProjectDashboard({
   bulkBusy: boolean;
   activeArticleId: string | null;
   onSelectArticle: (id: string) => void;
+  onPrefetchArticle: (id: string) => void;
   onFilterChange: (filter: Filter) => void;
   onOpenProjectSettings: () => void;
   onToggleArticleSelection: (id: string) => void;
@@ -2626,6 +2668,7 @@ function ProjectDashboard({
               onToggleArticleSelection={onToggleArticleSelection}
               onToggleSelectAll={() => onToggleSelectAll(contentInventoryIds)}
               onSelectArticle={onSelectArticle}
+              onPrefetchArticle={onPrefetchArticle}
               sortKey={sortKey}
               sortDirection={sortDirection}
               onSort={changeSort}
@@ -3844,6 +3887,7 @@ function InventoryTable({
   onToggleArticleSelection,
   onToggleSelectAll,
   onSelectArticle,
+  onPrefetchArticle,
   sortKey,
   sortDirection,
   onSort
@@ -3858,6 +3902,7 @@ function InventoryTable({
   onToggleArticleSelection: (id: string) => void;
   onToggleSelectAll: () => void;
   onSelectArticle: (id: string) => void;
+  onPrefetchArticle: (id: string) => void;
   sortKey: InventorySortKey;
   sortDirection: SortDirection;
   onSort: (key: InventorySortKey) => void;
@@ -3913,6 +3958,7 @@ function InventoryTable({
               <tr
                 key={article.id}
                 onClick={() => onSelectArticle(article.id)}
+                onMouseEnter={() => onPrefetchArticle(article.id)}
                 className={cn(
                   "group/row cursor-pointer border-b border-line/70 text-[12px] transition-colors hover:bg-surface-1/80",
                   (selected || active) && "bg-ink/[0.04]"
@@ -4600,6 +4646,7 @@ function ArticleToolbar({
 
 function ArticleHeader({
   article,
+  summary,
   job,
   research,
   title,
@@ -4613,6 +4660,7 @@ function ArticleHeader({
   onRegenerate
 }: {
   article: ArticleDocument | null;
+  summary: ArticleSummary | null;
   job: QueueJob | null;
   research: ResearchPack | null;
   title: string;
@@ -4644,6 +4692,30 @@ function ArticleHeader({
           <div className="mono text-[11px] text-ink-muted">Attempt {job.attempts}</div>
           <MetadataDot />
           <span>{profileLabel}</span>
+        </div>
+      </div>
+    );
+  }
+  if (!article && summary) {
+    return (
+      <div className="relative px-6 pb-3 pt-5 lg:px-8">
+        <button
+          type="button"
+          onClick={onBack}
+          className="mono inline-flex items-center gap-1 text-[11px] text-ink-muted transition-colors hover:text-ink"
+        >
+          <span>←</span>
+          <span>{backLabel}</span>
+        </button>
+        <div className="mt-3 flex gap-4">
+          <div className="min-w-0 flex-1">
+            <h1 className="min-h-[2.2rem] w-full text-[24px] font-semibold leading-tight tracking-tight text-ink">{summary.title}</h1>
+          </div>
+        </div>
+        <div className="mono mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-muted">
+          <div className="h-3 w-16 animate-pulse rounded bg-surface-2" />
+          <MetadataDot />
+          <div className="h-3 w-12 animate-pulse rounded bg-surface-2" />
         </div>
       </div>
     );
@@ -5362,7 +5434,46 @@ function CompletionMetric({ label, value }: { label: string; value: React.ReactN
 }
 
 function generationPlaceholderMarkdown(title: string) {
-  return `# ${title}\n\nQueueWrite is currently preparing this article.\n\nThe editor will populate automatically once generation begins.`;
+  return `# ${title}\n\n`;
+}
+
+function ArticleBodySkeleton() {
+  return (
+    <div className="h-full min-h-0 overflow-auto">
+      <div className="mx-auto max-w-[820px] px-8 pb-16 pt-10">
+        <div className="animate-pulse space-y-5">
+          <div className="h-8 w-3/4 rounded-md bg-surface-2" />
+          <div className="space-y-2.5">
+            <div className="h-5 w-full rounded bg-surface-2" />
+            <div className="h-5 w-[97%] rounded bg-surface-2" />
+            <div className="h-5 w-[91%] rounded bg-surface-2" />
+            <div className="h-5 w-[95%] rounded bg-surface-2" />
+            <div className="h-5 w-[85%] rounded bg-surface-2" />
+          </div>
+          <div className="h-6 w-1/2 rounded-md bg-surface-2" />
+          <div className="space-y-2.5">
+            <div className="h-5 w-full rounded bg-surface-2" />
+            <div className="h-5 w-[93%] rounded bg-surface-2" />
+            <div className="h-5 w-[98%] rounded bg-surface-2" />
+            <div className="h-5 w-[88%] rounded bg-surface-2" />
+          </div>
+          <div className="h-6 w-2/5 rounded-md bg-surface-2" />
+          <div className="space-y-2.5">
+            <div className="h-5 w-[96%] rounded bg-surface-2" />
+            <div className="h-5 w-full rounded bg-surface-2" />
+            <div className="h-5 w-[90%] rounded bg-surface-2" />
+          </div>
+          <div className="h-6 w-3/5 rounded-md bg-surface-2" />
+          <div className="space-y-2.5">
+            <div className="h-5 w-full rounded bg-surface-2" />
+            <div className="h-5 w-[94%] rounded bg-surface-2" />
+            <div className="h-5 w-[89%] rounded bg-surface-2" />
+            <div className="h-5 w-[97%] rounded bg-surface-2" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ArticleWorkspace({
