@@ -23,7 +23,7 @@ import type { QueueCostProjection } from "@/lib/queue/projection";
 import { rejectionSummaryLabel } from "@/lib/research/source-classification";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PipelineStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectShopifyConnection, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, ShopifyConnectionStatus, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, DebugEvent, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PipelineStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectShopifyConnection, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, ShopifyConnectionStatus, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -32,6 +32,10 @@ import { CONTENT_PROFILES, PROJECT_CONTENT_PROFILE_OPTIONS, normalizeContentProf
 type Details = { research: ResearchPack | null; debug: DebugDocument | null };
 type Filter = JobStatus | "all";
 type InspectorTab = "project" | "pipeline" | "research" | "validation" | "seo" | "debug";
+
+const INSPECTOR_TABS: InspectorTab[] = process.env.NODE_ENV === "development"
+  ? ["project", "pipeline", "research", "validation", "seo", "debug"]
+  : ["project", "pipeline", "research", "validation", "seo"];
 type FormatCommand = "bold" | "italic" | "link" | "unlink" | "h2" | "h3" | "bullet" | "numbered";
 type ArticleViewMode = "rich" | "md" | "split";
 type InventorySortKey = "quality" | "research" | "evidence" | "updated";
@@ -2200,7 +2204,7 @@ function Workbench() {
 
         {showRightPane && <aside className="flex min-h-0 flex-col bg-surface-2">
           <div className="hairline-b flex h-9 shrink-0 items-center gap-0 overflow-x-auto px-2">
-            {(["project", "pipeline", "research", "validation", "seo", "debug"] as const).map((item) => (
+            {INSPECTOR_TABS.map((item) => (
               <button key={item} onClick={() => setTab(item)} className={cn("relative h-9 shrink-0 px-2 text-[11.5px] font-medium capitalize", tab === item ? "text-ink after:absolute after:inset-x-2 after:bottom-0 after:h-[1.5px] after:bg-ink" : "text-ink-muted hover:text-ink")}>{item}</button>
             ))}
           </div>
@@ -5746,7 +5750,7 @@ function Inspector({
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
       {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} />}
       {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : articleBodyLoading ? <InspectorTabSkeleton /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
-      {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
+      {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} />}
       {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} busy={busy} onApprove={() => onApproveArticle(article.id)} onRegenerate={() => onRegenerateArticle(article)} /> : articleBodyLoading ? <InspectorTabSkeleton /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? (
         <SeoDecisionPanel
@@ -5954,8 +5958,7 @@ function PipelinePanel({
   job,
   details,
   selectedStage,
-  setSelectedStage,
-  setTab: _setTab
+  setSelectedStage
 }: {
   pipeline: ArticleDocument["pipeline"];
   article: ArticleDocument | null;
@@ -5963,42 +5966,50 @@ function PipelinePanel({
   details: Details;
   selectedStage: string;
   setSelectedStage: (stage: string) => void;
-  setTab: (tab: InspectorTab) => void;
 }) {
   const selected = pipeline.find((step) => step.stage === selectedStage) ?? pipeline[0];
   const dashboard = useMemo(
     () => buildPipelineDashboardSummary(pipeline, article, job, details.research),
     [article, details.research, job, pipeline]
   );
+  const diagnosticEvents = useMemo(
+    () => buildPipelineDiagnosticEvents(pipeline, article, details.research, details.debug),
+    [article, details.debug, details.research, pipeline]
+  );
+  const generationSummary = useMemo(
+    () => buildGenerationSummaryNarrative(pipeline, article, job, details.research),
+    [article, details.research, job, pipeline]
+  );
+  const rejectedTotal = dashboard.research.rejectedReasonSummary.reduce((sum, item) => sum + item.count, 0);
   const [open, setOpen] = useState({
     research: false,
-    queries: false,
-    accepted: false,
     rejected: false,
     diagnostics: false,
-    timing: false,
-    events: false,
-    raw: false
+    summary: false,
+    rawDebug: false
   });
-  const debugEvents = details.debug?.events ?? [];
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="rounded-md border border-line bg-surface-1 p-3">
         <div className="mb-3 flex items-center justify-between gap-3">
           <PanelTitle title="Current pipeline" />
-          {dashboard.activeStageLabel && <span className="mono text-[10.5px] text-ink-subtle">{dashboard.activeStageLabel} live</span>}
+          {dashboard.activeStageLabel && (
+            <span className="mono text-[10.5px] text-ink-subtle">{dashboard.activeStageLabel} live</span>
+          )}
         </div>
-        <ol className="relative space-y-2.5 pl-5">
+        <ol className="relative space-y-2 pl-5">
           <div className="absolute bottom-2 left-[7px] top-2 w-px bg-line" />
           {pipeline.map((step) => (
             <li key={step.stage} className="relative">
-              <span className="absolute -left-[18px] top-1 grid size-3 place-items-center bg-surface-1">
+              <span className="absolute -left-[18px] top-1.5 grid size-3 place-items-center bg-surface-1">
                 {pipelineIcon(step.status)}
               </span>
               <button
+                type="button"
                 onClick={() => setSelectedStage(step.stage)}
                 className={cn(
-                  "w-full rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:bg-surface-2",
+                  "w-full rounded-md border border-transparent px-2.5 py-2 text-left transition-colors hover:bg-surface-2",
                   selected?.stage === step.stage && "border-line bg-background"
                 )}
               >
@@ -6024,142 +6035,105 @@ function PipelinePanel({
         </ol>
       </div>
 
-      <div className="rounded-md border border-line bg-surface-1 p-3">
-        <PanelTitle title="Performance summary" />
-        <DashboardMetricCards
-          items={[
-            { label: "Active processing", value: formatOperationalDuration(dashboard.performance.activeProcessingMs) },
-            { label: "Queue wait", value: formatOperationalDuration(dashboard.performance.queueWaitMs) },
-            { label: "End-to-end", value: formatOperationalDuration(dashboard.performance.endToEndMs) }
-          ]}
-        />
-      </div>
-
-      <div className="rounded-md border border-line bg-surface-1 p-3">
-        <PanelTitle title="Research summary" />
-        <DashboardMetricCards
-          items={[
-            { label: "Accepted sources", value: String(dashboard.research.acceptedSources) },
-            { label: "Rejected sources", value: String(dashboard.research.rejectedSources) },
-            { label: "Queries generated", value: String(dashboard.research.queriesGenerated) }
-          ]}
-        />
-        <div className="mt-3 rounded-md border border-line/70 bg-background p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">
-            Rejected source reasons
+      <CollapsibleMetricCard
+        title="Research details"
+        summary={`${dashboard.research.queriesGenerated} queries · ${dashboard.research.acceptedSources} accepted · ${dashboard.research.rejectedSources} rejected`}
+        open={open.research}
+        onToggle={() => setOpen((current) => ({ ...current, research: !current.research }))}
+      >
+        <div className="space-y-4">
+          <div>
+            <SectionTitle title="Generated queries" />
+            {details.research?.queries?.length ? (
+              <ul className="space-y-1 text-xs leading-snug text-ink-muted">
+                {details.research.queries.map((query) => <li key={query}>{query}</li>)}
+              </ul>
+            ) : <Empty text="No queries recorded." />}
           </div>
-          {dashboard.research.rejectedReasonSummary.length ? (
-            <ul className="mt-2 space-y-1 text-[11.5px] leading-snug text-ink-muted">
-              {dashboard.research.rejectedReasonSummary.map((item) => (
-                <li key={item.label}>
-                  {item.label}
-                  {item.count > 1 ? ` (${item.count})` : ""}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="mt-2 text-[11.5px] text-ink-subtle">No rejected sources recorded.</div>
-          )}
+          <div>
+            <SectionTitle title="Accepted sources" />
+            <SourceList sources={dashboard.research.acceptedSourceList} />
+          </div>
+          <div>
+            <SectionTitle title="Rejected sources" />
+            {dashboard.research.rejectedSourceList.length ? (
+              <SourceList sources={dashboard.research.rejectedSourceList} rejected />
+            ) : <Empty text="No rejected sources recorded." />}
+          </div>
         </div>
-      </div>
+      </CollapsibleMetricCard>
 
-      <div className="space-y-2">
-        <CollapsibleMetricCard
-          title="Research details"
-          summary={`${dashboard.research.queriesGenerated} queries · ${dashboard.research.acceptedSources} accepted · ${dashboard.research.rejectedSources} rejected`}
-          open={open.research}
-          onToggle={() => setOpen((current) => ({ ...current, research: !current.research }))}
-        >
-          <div className="space-y-2">
-            <CollapsibleMetricCard
-              title="Show queries"
-              summary={`${dashboard.research.queriesGenerated} recorded`}
-              open={open.queries}
-              onToggle={() => setOpen((current) => ({ ...current, queries: !current.queries }))}
-            >
-              {details.research?.queries?.length ? (
-                <ul className="space-y-1 text-xs text-ink-muted">
-                  {details.research.queries.map((query) => <li key={query}>{query}</li>)}
-                </ul>
-              ) : <Empty text="No queries recorded." />}
-            </CollapsibleMetricCard>
+      <CollapsibleMetricCard
+        title="Rejected source reasons"
+        summary={rejectedTotal ? `${rejectedTotal} source${rejectedTotal === 1 ? "" : "s"} filtered` : "No rejections recorded"}
+        open={open.rejected}
+        onToggle={() => setOpen((current) => ({ ...current, rejected: !current.rejected }))}
+      >
+        <RejectedReasonList items={dashboard.research.rejectedReasonSummary} />
+      </CollapsibleMetricCard>
 
+      <CollapsibleMetricCard
+        title="Diagnostics"
+        summary={diagnosticEvents.length ? `${diagnosticEvents.length} event${diagnosticEvents.length === 1 ? "" : "s"}` : "No events yet"}
+        open={open.diagnostics}
+        onToggle={() => setOpen((current) => ({ ...current, diagnostics: !current.diagnostics }))}
+      >
+        <div className="space-y-3">
+          <PipelineDiagnosticsList events={diagnosticEvents} />
+          {process.env.NODE_ENV === "development" && details.debug ? (
             <CollapsibleMetricCard
-              title="Show accepted sources"
-              summary={`${dashboard.research.acceptedSources} recorded`}
-              open={open.accepted}
-              onToggle={() => setOpen((current) => ({ ...current, accepted: !current.accepted }))}
-            >
-              <SourceList sources={dashboard.research.acceptedSourceList} />
-            </CollapsibleMetricCard>
-
-            <CollapsibleMetricCard
-              title="Show rejected sources"
-              summary={`${dashboard.research.rejectedSources} recorded`}
-              open={open.rejected}
-              onToggle={() => setOpen((current) => ({ ...current, rejected: !current.rejected }))}
-            >
-              {dashboard.research.rejectedSourceList.length ? (
-                <SourceList sources={dashboard.research.rejectedSourceList} rejected />
-              ) : <Empty text="No rejected sources recorded." />}
-            </CollapsibleMetricCard>
-          </div>
-        </CollapsibleMetricCard>
-
-        <CollapsibleMetricCard
-          title="Diagnostics"
-          summary={`${debugEvents.length} events · ${selected ? formatPipelineStageLabel(selected.stage) : "No stage"} detail`}
-          open={open.diagnostics}
-          onToggle={() => setOpen((current) => ({ ...current, diagnostics: !current.diagnostics }))}
-        >
-          <div className="space-y-2">
-            <CollapsibleMetricCard
-              title="Timing diagnostics"
-              summary={`${formatOperationalDuration(dashboard.performance.activeProcessingMs)} active · ${formatOperationalDuration(dashboard.performance.endToEndMs)} end-to-end`}
-              open={open.timing}
-              onToggle={() => setOpen((current) => ({ ...current, timing: !current.timing }))}
-            >
-              <PipelineTimingDiagnostics timing={dashboard.timing} />
-            </CollapsibleMetricCard>
-
-            <CollapsibleMetricCard
-              title="Pipeline events"
-              summary={debugEvents.length ? `${debugEvents.length} recorded` : "No events yet"}
-              open={open.events}
-              onToggle={() => setOpen((current) => ({ ...current, events: !current.events }))}
+              title="Raw debug log"
+              summary={`${details.debug.events.length} developer events`}
+              open={open.rawDebug}
+              onToggle={() => setOpen((current) => ({ ...current, rawDebug: !current.rawDebug }))}
             >
               <DebugPanel debug={details.debug} />
             </CollapsibleMetricCard>
+          ) : null}
+        </div>
+      </CollapsibleMetricCard>
 
-            <CollapsibleMetricCard
-              title="Raw execution details"
-              summary={selected ? `${formatPipelineStageLabel(selected.stage)} selected` : "No stage selected"}
-              open={open.raw}
-              onToggle={() => setOpen((current) => ({ ...current, raw: !current.raw }))}
-            >
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {pipeline.map((step) => (
-                    <button
-                      key={step.stage}
-                      type="button"
-                      onClick={() => setSelectedStage(step.stage)}
-                      className={cn(
-                        "rounded-md border border-line px-2 py-1 text-[11px] text-ink-muted hover:bg-surface-2",
-                        selected?.stage === step.stage && "bg-background text-ink"
-                      )}
-                    >
-                      {formatPipelineStageLabel(step.stage)}
-                    </button>
-                  ))}
-                </div>
-                {selected ? <StageDetails step={selected} article={article} details={details} /> : <Empty text="No stage selected." />}
-              </div>
-            </CollapsibleMetricCard>
-          </div>
-        </CollapsibleMetricCard>
-      </div>
+      <CollapsibleMetricCard
+        title="Generation summary"
+        summary={generationSummary ? truncateGenerationSummaryPreview(generationSummary) : "Summary will appear after generation"}
+        open={open.summary}
+        onToggle={() => setOpen((current) => ({ ...current, summary: !current.summary }))}
+      >
+        {generationSummary ? (
+          <p className="text-[12.5px] leading-relaxed text-ink-muted">{generationSummary}</p>
+        ) : (
+          <Empty text="Generation summary will appear once the article has finished processing." />
+        )}
+      </CollapsibleMetricCard>
     </div>
+  );
+}
+
+function RejectedReasonList({ items }: { items: RejectionSummaryItem[] }) {
+  if (!items.length) return <Empty text="No rejected sources recorded." />;
+  return (
+    <ul className="space-y-1.5">
+      {items.map((item) => (
+        <li key={item.label} className="flex items-baseline gap-2.5 text-[12px] leading-snug text-ink-muted">
+          <span className="mono min-w-[1.25rem] font-semibold tabular-nums text-ink">{item.count}</span>
+          <span>{item.label}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PipelineDiagnosticsList({ events }: { events: string[] }) {
+  if (!events.length) return <Empty text="Diagnostic events will appear as generation progresses." />;
+  return (
+    <ul className="space-y-2">
+      {events.map((event, index) => (
+        <li key={`${event}-${index}`} className="flex items-start gap-2.5 text-[12px] leading-snug text-ink-muted">
+          <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-success" />
+          <span>{event}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -7790,6 +7764,154 @@ function summarizeRejectedSourceReasons(research: ResearchPack | null): Rejectio
   return Object.entries(summaryCounts)
     .map(([reason, count]) => ({ label: rejectionSummaryLabel(reason), count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+export function buildPipelineDiagnosticEvents(
+  pipeline: ArticleDocument["pipeline"],
+  article: ArticleDocument | null,
+  research: ResearchPack | null,
+  debug: DebugDocument | null
+) {
+  const events: string[] = [];
+  const researchStep = pipeline.find((step) => step.stage === "research");
+  const providerLabel = formatResearchProviderLabel(research, researchStep);
+  if (providerLabel) events.push(providerLabel);
+
+  const semantic = research?.semanticIntelligence
+    ?? (researchStep?.meta?.semanticIntelligence as ResearchPack["semanticIntelligence"] | undefined);
+  if (semantic?.conceptCount) {
+    events.push(`Built semantic knowledge graph (${formatNumber(semantic.conceptCount)} concepts)`);
+  }
+
+  const stageMessages: Partial<Record<ArticleDocument["pipeline"][number]["stage"], string>> = {
+    outline: "Generated outline",
+    generation: "Generated article draft",
+    validation: "Validation completed",
+    save: "Saved article",
+    export: "Export queued"
+  };
+
+  for (const step of pipeline) {
+    if (step.status !== "done" && step.status !== "running") continue;
+    const message = stageMessages[step.stage];
+    if (message && !events.includes(message)) events.push(message);
+    if (step.stage === "research" && step.status === "done" && !events.some((event) => /research/i.test(event))) {
+      events.push("Research completed");
+    }
+  }
+
+  if (article?.validation.pass && !article.validation.warnings.length && !article.needsReviewReasons.length) {
+    if (!events.some((event) => event.toLowerCase().includes("validation"))) {
+      events.push("Passed validation without recommendations");
+    }
+  }
+
+  const skipDebugPatterns = [
+    /telemetry/i,
+    /workbook/i,
+    /claimed for processing/i,
+    /technical failure/i,
+    /publishing failed/i
+  ];
+
+  for (const event of debug?.events ?? []) {
+    if (skipDebugPatterns.some((pattern) => pattern.test(event.message))) continue;
+    const formatted = formatPipelineDebugEventMessage(event);
+    if (formatted && !events.includes(formatted)) events.push(formatted);
+  }
+
+  return events;
+}
+
+export function buildGenerationSummaryNarrative(
+  pipeline: ArticleDocument["pipeline"],
+  article: ArticleDocument | null,
+  job: QueueJob | null,
+  research: ResearchPack | null
+) {
+  const researchStep = pipeline.find((step) => step.stage === "research");
+  const accepted = research?.researchSummary?.accepted ?? research?.sources.length ?? article?.sources.length ?? 0;
+  const rejectedFromList = research?.rejectedSources.length ?? 0;
+  const rejectedFromSummary = research?.researchSummary?.rejected
+    ? Object.values(research.researchSummary.rejected).reduce((sum, count) => sum + count, 0)
+    : 0;
+  const rejected = rejectedFromList || rejectedFromSummary;
+  const sourcesSearched = research?.sourcesFound
+    ?? numberMeta(researchStep?.meta?.sourcesFound)
+    ?? (accepted + rejected > 0 ? accepted + rejected : 0);
+  const concepts = research?.semanticIntelligence?.conceptCount
+    ?? research?.researchConceptCount
+    ?? numberMeta((researchStep?.meta?.semanticIntelligence as ResearchPack["semanticIntelligence"] | undefined)?.conceptCount);
+  const words = article?.wordCount
+    ?? numberMeta(pipeline.find((step) => step.stage === "generation")?.meta?.words);
+  const validationCount = article
+    ? (article.needsReviewReasons.length || article.validation.warnings.length)
+    : (job?.needsReviewReasons.length ?? 0);
+
+  const parts: string[] = [];
+  if (sourcesSearched > 0) {
+    parts.push(`searched ${formatNumber(sourcesSearched)} source${sourcesSearched === 1 ? "" : "s"}`);
+  }
+  if (accepted > 0) {
+    parts.push(`accepted ${formatNumber(accepted)} authoritative reference${accepted === 1 ? "" : "s"}`);
+  }
+  if (rejected > 0) {
+    parts.push(`rejected ${formatNumber(rejected)} lower-quality source${rejected === 1 ? "" : "s"}`);
+  }
+  if (concepts && concepts > 0) {
+    parts.push(`built a semantic knowledge graph containing ${formatNumber(concepts)} concept${concepts === 1 ? "" : "s"}`);
+  }
+  if (words && words > 0) {
+    parts.push(`generated a ${formatNumber(words)}-word article`);
+  }
+  if (validationCount > 0) {
+    parts.push(`identified ${formatNumber(validationCount)} validation recommendation${validationCount === 1 ? "" : "s"}`);
+  } else if (article?.validation.pass) {
+    parts.push("passed validation without recommendations");
+  }
+
+  if (!parts.length) return null;
+  return `QueueWrite ${joinNarrativeParts(parts)}.`;
+}
+
+function joinNarrativeParts(parts: string[]) {
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+function truncateGenerationSummaryPreview(summary: string) {
+  if (summary.length <= 88) return summary;
+  return `${summary.slice(0, 85).trimEnd()}...`;
+}
+
+function formatResearchProviderLabel(
+  research: ResearchPack | null,
+  researchStep?: ArticleDocument["pipeline"][number]
+) {
+  const providerName = researchStep?.meta?.providerName ?? research?.providerUsage?.providerName;
+  if (typeof providerName === "string" && providerName.trim()) {
+    const normalized = providerName.trim();
+    return `Using ${normalized.charAt(0).toUpperCase()}${normalized.slice(1)} provider`;
+  }
+  const provider = research?.actualResearchProvider ?? research?.researchProvider;
+  if (provider === "queuewrite") return "Using QueueWrite managed research";
+  if (provider === "queuewrite_experimental") return "Using QueueWrite experimental research";
+  if (provider === "byok") return "Using custom research provider";
+  return null;
+}
+
+function formatPipelineDebugEventMessage(event: DebugEvent) {
+  const mapped: Record<string, string> = {
+    "Research started.": "Research started",
+    "Research completed.": "Research completed",
+    "Outline stage prepared.": "Generated outline",
+    "Article generation completed.": "Article generation completed"
+  };
+  if (mapped[event.message]) return mapped[event.message];
+  if (event.message.startsWith("Job completed as needs_review.")) return "Completed with validation recommendations";
+  if (event.message.startsWith("Job completed as generated.")) return "Generation run completed";
+  if (event.message.startsWith("Job completed")) return "Generation run completed";
+  return null;
 }
 
 function formatEstimatedRuntime(ms: number) {
