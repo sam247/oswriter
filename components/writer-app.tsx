@@ -201,6 +201,11 @@ function Workbench() {
   const [bulkProgress, setBulkProgress] = useState<BulkPublishingProgress | null>(null);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() => createDefaultScheduleForm());
+  const [bootstrapping, setBootstrapping] = useState(true);
+  const [projectSwitching, setProjectSwitching] = useState(false);
+  const [lastKnownProjectName] = useState<string>(() => {
+    try { return localStorage.getItem("qw.projectName") ?? ""; } catch { return ""; }
+  });
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<ArticleDocument | null>(null);
   const [articleBodyLoading, setArticleBodyLoading] = useState(false);
@@ -373,7 +378,10 @@ function Workbench() {
     const merged = mergeOptimisticProcessingClaims(next, optimisticClaimsRef.current);
     recordStateTrace(merged, traceJobIdRef.current, source);
     setState(merged);
+    setBootstrapping(false);
+    setProjectSwitching(false);
     setQueueStatus(null);
+    try { localStorage.setItem("qw.projectName", merged.project.name); } catch { /* ignore */ }
     const selectedExists = selectedArticleId && (
       merged.jobs.some((job) => job.articleId === selectedArticleId) ||
       merged.articles.some((article) => article.id === selectedArticleId)
@@ -501,7 +509,6 @@ function Workbench() {
     const projectId = state?.project.id;
     if (!projectId || analyticsProjectIdRef.current === projectId) return;
     analyticsProjectIdRef.current = projectId;
-    setProjectAnalytics(null);
     void fetch("/api/analytics/project", { cache: "no-store" })
       .then((res) => res.ok ? res.json() : null)
       .then((data: ProjectAnalyticsSummary | null) => setProjectAnalytics(data));
@@ -1262,9 +1269,13 @@ function Workbench() {
     if (projectId === state?.project.id) return;
     setProjectMenuOpen(false);
     setMessage("Switching project...");
+    setProjectSwitching(true);
+    setSelectedArticleId(null);
     const nextProject = projects.find((project) => project.id === projectId);
     if (nextProject && state) {
-      setState({ ...state, project: nextProject, jobs: [], articles: [] });
+      // Keep articles/jobs visible during transition — applyServerState will replace them
+      setState({ ...state, project: nextProject });
+      try { localStorage.setItem("qw.projectName", nextProject.name); } catch { /* ignore */ }
     }
     const res = await fetch("/api/project", {
       method: "PATCH",
@@ -1273,12 +1284,12 @@ function Workbench() {
     });
     const data = await res.json().catch(() => ({})) as { article?: ArticleDocument; state?: AppState; error?: string };
     if (res.ok) {
-      setSelectedArticleId(null);
       setDetails({ research: null, debug: null });
       if (data.state) applyServerState(data.state, "project-switch");
       setMessage("Project switched.");
     } else {
       setMessage(data.error ?? "Project switch failed.");
+      setProjectSwitching(false);
       await refresh();
     }
   }
@@ -1764,7 +1775,7 @@ function Workbench() {
             onClick={openProjectBreadcrumb}
             className="truncate text-ink-muted transition-colors hover:text-ink"
           >
-            {state?.project.name ?? "Loading project"}
+            {state?.project.name ?? (lastKnownProjectName || "Loading project")}
           </button>
           {breadcrumbArticleTitle ? (
             <>
@@ -1896,7 +1907,7 @@ function Workbench() {
                     <PanelLeft className="size-3.5" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? "Project"}</span>
+                    <span className="block truncate text-[13px] font-semibold text-ink">{state?.project.name ?? (lastKnownProjectName || "Project")}</span>
                     <span className="mono mt-1 block text-[10.5px] text-ink-subtle">{formatNumber(stats.generated)} {stats.generated === 1 ? "Article" : "Articles"}</span>
                   </span>
                   <ChevronDown className={cn("mt-1 size-3 shrink-0 text-ink-subtle transition-transform", projectMenuOpen && "rotate-180")} />
@@ -2174,6 +2185,8 @@ function Workbench() {
               bulkProgress={bulkProgress}
               bulkBusy={busy}
               activeArticleId={selectedArticleId}
+              bootstrapping={bootstrapping}
+              projectSwitching={projectSwitching}
               onSelectArticle={setSelectedArticleId}
               onPrefetchArticle={prefetchArticle}
               onFilterChange={setFilter}
@@ -2202,6 +2215,7 @@ function Workbench() {
             summary={projectSummary}
             analytics={projectAnalytics}
             article={selectedArticle}
+            articleBodyLoading={articleBodyLoading}
             job={selectedJob}
             markdown={selectedMarkdown}
             onApplyMarkdown={handleSelectedMarkdownChange}
@@ -2486,7 +2500,16 @@ function GlobalSearchModal({
         <div className="max-h-[62vh] overflow-y-auto p-2">
           {query.trim().length < 2 ? (
             <Empty text="Type at least two characters." />
-          ) : total === 0 && !loading ? (
+          ) : loading && total === 0 ? (
+            <div className="animate-pulse space-y-2 p-1">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="rounded-md border border-line bg-surface-1 px-3 py-2">
+                  <div className="h-3.5 w-3/5 rounded bg-surface-2" />
+                  <div className="mt-1.5 h-2.5 w-2/5 rounded bg-surface-2" />
+                </div>
+              ))}
+            </div>
+          ) : total === 0 ? (
             <Empty text="No matching records found." />
           ) : (
             groups.map((group) => {
@@ -2525,6 +2548,8 @@ function ProjectDashboard({
   bulkProgress,
   bulkBusy,
   activeArticleId,
+  bootstrapping,
+  projectSwitching,
   onSelectArticle,
   onPrefetchArticle,
   onFilterChange,
@@ -2544,6 +2569,8 @@ function ProjectDashboard({
   bulkProgress: BulkPublishingProgress | null;
   bulkBusy: boolean;
   activeArticleId: string | null;
+  bootstrapping: boolean;
+  projectSwitching: boolean;
   onSelectArticle: (id: string) => void;
   onPrefetchArticle: (id: string) => void;
   onFilterChange: (filter: Filter) => void;
@@ -2654,8 +2681,12 @@ function ProjectDashboard({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8">
-        {orderedRows.length ? (
+      <div className={cn("min-h-0 flex-1 overflow-auto px-6 py-5 lg:px-8", projectSwitching && "pointer-events-none opacity-50 transition-opacity")}>
+        {bootstrapping && !orderedRows.length ? (
+          <div className="pt-2">
+            <InventoryTableSkeleton />
+          </div>
+        ) : orderedRows.length ? (
           <div className="pt-2">
             <InventoryTable
               rows={orderedRows}
@@ -2674,7 +2705,7 @@ function ProjectDashboard({
               onSort={changeSort}
             />
           </div>
-        ) : (
+        ) : bootstrapping ? null : (
           <Empty text={activeFilter === "needs_review" ? "Nothing needs review right now." : "Generated articles will appear here."} />
         )}
       </div>
@@ -3872,6 +3903,50 @@ function ProjectPerformanceTab({ analytics }: { analytics: ProjectAnalytics | nu
           <Empty text="Completed articles will appear here." />
         )}
       </ProjectSection>
+    </div>
+  );
+}
+
+function InventoryTableSkeleton() {
+  const rows = [0.9, 0.6, 0.8, 0.5, 0.75, 0.65, 0.85];
+  return (
+    <div className="overflow-hidden rounded-lg border border-line/80">
+      <table className="w-full table-fixed border-collapse">
+        <colgroup>
+          <col />
+          <col className="w-[72px]" />
+          <col className="w-[72px]" />
+          <col className="w-[78px]" />
+          <col className="w-[78px]" />
+          <col className="w-[88px]" />
+          <col className="w-[88px]" />
+          <col className="w-[68px]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-line/70 bg-surface-1/70">
+            <th className="px-4 py-2"><div className="h-3 w-12 rounded bg-surface-2" /></th>
+            {[...Array(7)].map((_, i) => <th key={i} className="px-3 py-2"><div className="mx-auto h-3 w-8 rounded bg-surface-2" /></th>)}
+          </tr>
+        </thead>
+        <tbody className="animate-pulse">
+          {rows.map((w, i) => (
+            <tr key={i} className="border-b border-line/70">
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <div className="size-1.5 shrink-0 rounded-full bg-surface-2" />
+                  <div className="h-3.5 rounded bg-surface-2" style={{ width: `${w * 100}%` }} />
+                </div>
+                <div className="mono mt-1.5 ml-3.5 h-2.5 w-20 rounded bg-surface-2" />
+              </td>
+              {[...Array(7)].map((_, j) => (
+                <td key={j} className="px-3 py-3">
+                  <div className="mx-auto h-3 w-8 rounded bg-surface-2" />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -5605,6 +5680,19 @@ function MarkdownEditor({
   );
 }
 
+function InspectorTabSkeleton() {
+  return (
+    <div className="animate-pulse space-y-3 p-1">
+      <div className="h-3 w-3/4 rounded bg-surface-2" />
+      <div className="h-3 w-full rounded bg-surface-2" />
+      <div className="h-3 w-2/3 rounded bg-surface-2" />
+      <div className="mt-4 h-3 w-1/2 rounded bg-surface-2" />
+      <div className="h-3 w-5/6 rounded bg-surface-2" />
+      <div className="h-3 w-3/4 rounded bg-surface-2" />
+    </div>
+  );
+}
+
 function Inspector({
   tab,
   setTab,
@@ -5616,6 +5704,7 @@ function Inspector({
   summary,
   analytics,
   article,
+  articleBodyLoading,
   job,
   markdown,
   onApplyMarkdown,
@@ -5639,6 +5728,7 @@ function Inspector({
   summary: ProjectSummary | null;
   analytics: ProjectAnalyticsSummary | null;
   article: ArticleDocument | null;
+  articleBodyLoading: boolean;
   job: QueueJob | null;
   markdown: string;
   onApplyMarkdown: (markdown: string) => void;
@@ -5655,9 +5745,9 @@ function Inspector({
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
       {tab === "project" && <ProjectContextPanel state={state} articles={articles} jobs={jobs} metrics={metrics} history={history} summary={summary} analytics={analytics} />}
-      {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
+      {tab === "research" && (article ? <ResearchPanel research={details.research} article={article} /> : articleBodyLoading ? <InspectorTabSkeleton /> : <Empty text={job?.status === "queued" ? "Research will appear once generation starts." : "Research is being prepared."} />)}
       {tab === "pipeline" && <PipelinePanel pipeline={(article?.pipeline ?? job?.pipeline) ?? []} article={article} job={job} details={details} selectedStage={selectedStage} setSelectedStage={setSelectedStage} setTab={setTab} />}
-      {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} busy={busy} onApprove={() => onApproveArticle(article.id)} onRegenerate={() => onRegenerateArticle(article)} /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
+      {tab === "validation" && (article ? <ValidationPanel article={article} warningsRef={warningsRef} highlightWarnings={highlightWarnings} busy={busy} onApprove={() => onApproveArticle(article.id)} onRegenerate={() => onRegenerateArticle(article)} /> : articleBodyLoading ? <InspectorTabSkeleton /> : <Empty text={job?.fatalError ?? "Validation will appear after the article is generated."} />)}
       {tab === "seo" && (article ? (
         <SeoDecisionPanel
           key={article.id}
@@ -5669,7 +5759,7 @@ function Inspector({
           onApplyMarkdown={onApplyMarkdown}
           onNotify={onNotify}
         />
-      ) : <Empty text="No article available for SEO checks." />)}
+      ) : articleBodyLoading ? <InspectorTabSkeleton /> : <Empty text="No article available for SEO checks." />)}
       {tab === "debug" && <DebugPanel debug={details.debug} />}
     </div>
   );
@@ -5722,7 +5812,20 @@ function ProjectContextPanel({
             </div>
           </div>
         </ProjectSection>
-      ) : null}
+      ) : (
+        <ProjectSection title="Project context">
+          <div className="animate-pulse space-y-3">
+            <div className="h-4 w-3/4 rounded bg-surface-2" />
+            <div className="h-3 w-1/3 rounded bg-surface-2" />
+            <div className="rounded-md border border-line bg-surface-2 p-3">
+              <div className="h-2.5 w-28 rounded bg-surface-3" />
+              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                {[...Array(5)].map((_, i) => <div key={i} className="h-3 rounded bg-surface-3" />)}
+              </div>
+            </div>
+          </div>
+        </ProjectSection>
+      )}
 
       {summary && articles.length ? (
         <ProjectSection title="Content metrics">
@@ -5733,6 +5836,12 @@ function ProjectContextPanel({
             <MetricLine label="Words" value={formatNumber(summary.totalWords)} />
             {averageLength !== null && <MetricLine label="Avg length" value={formatNumber(averageLength)} />}
             <MetricLine label="Sources" value={formatNumber(summary.totalSources)} />
+          </div>
+        </ProjectSection>
+      ) : !state ? (
+        <ProjectSection title="Content metrics">
+          <div className="animate-pulse grid grid-cols-2 gap-x-4 gap-y-2">
+            {[...Array(6)].map((_, i) => <div key={i} className="h-3 rounded bg-surface-2" />)}
           </div>
         </ProjectSection>
       ) : null}
