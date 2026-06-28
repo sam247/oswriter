@@ -5099,7 +5099,7 @@ function PreparingArticleWorkspace({
                   <div className="mt-2 flex min-w-0 items-center gap-2">
                     <span className="size-1.5 shrink-0 rounded-full bg-info" />
                     <span className="truncate text-[13px] font-medium text-ink">{active.label}</span>
-                    <span className="mono ml-auto shrink-0 text-[10.5px] text-ink-subtle">{formatPipelineRowStatus(active.status)}</span>
+                    <span className="mono ml-auto shrink-0 text-[10.5px] text-ink-subtle">{formatGenerationRowStatus(active)}</span>
                   </div>
                   {active.detail && <p className="mt-1 pl-3.5 text-[12px] leading-5 text-ink-muted">{active.detail}</p>}
                 </div>
@@ -5187,7 +5187,7 @@ function GenerationPipelineCard({
               <div key={active.key} className="rounded-md border border-line bg-background px-3 py-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <h2 className="truncate text-[15px] font-semibold text-ink">{generationLiveLabel(active)}</h2>
-                  <span className="mono ml-auto shrink-0 text-[10.5px] text-ink-subtle">{formatPipelineRowStatus(active.status)}</span>
+                  <span className="mono ml-auto shrink-0 text-[10.5px] text-ink-subtle">{formatGenerationRowStatus(active)}</span>
                 </div>
                 {active.detail && <p className="mt-1 text-[12px] leading-5 text-ink-muted">{active.detail}</p>}
               </div>
@@ -5196,7 +5196,7 @@ function GenerationPipelineCard({
               {rows.map((row, index) => (
                 <span
                   key={row.key}
-                  title={`${row.label}: ${formatPipelineRowStatus(row.status)}`}
+                  title={`${row.label}: ${formatGenerationRowStatus(row)}`}
                   className={cn(
                     "h-1.5 min-w-4 flex-1 rounded-full",
                     row.status === "done" && "bg-success/70",
@@ -5230,6 +5230,7 @@ type GenerationPipelineRow = {
   status: PipelineStatus;
   detail?: string;
   durationMs?: number;
+  step?: ArticleDocument["pipeline"][number];
 };
 
 function buildGenerationPipelineRows(job: QueueJob, project: ProjectDocument | null, research: ResearchPack | null): GenerationPipelineRow[] {
@@ -5242,10 +5243,11 @@ function buildGenerationPipelineRows(job: QueueJob, project: ProjectDocument | n
     if (step.status === "skipped") continue;
     rows.push({
       key: step.stage,
-      label: generationStageLabel(step.stage),
+      label: formatPipelineStageLabel(step.stage),
       status: step.status,
-      detail: generationStageDetail(step, research),
-      durationMs: step.durationMs
+      detail: generationStageDetail(step),
+      durationMs: step.durationMs,
+      step
     });
     if (step.stage === "research" && step.status === "done") {
       const semantic = research?.semanticIntelligence ?? (step.meta?.semanticIntelligence as ResearchPack["semanticIntelligence"] | undefined);
@@ -5939,45 +5941,17 @@ function formatPipelineStageLabel(stage: ArticleDocument["pipeline"][number]["st
   return stage.charAt(0).toUpperCase() + stage.slice(1);
 }
 
-function generationStageLabel(stage: ArticleDocument["pipeline"][number]["stage"]) {
-  return {
-    research: "Research",
-    outline: "Planning article",
-    generation: "Writing draft",
-    save: "Saving article",
-    editor: "Editorial pass",
-    validation: "Validation",
-    export: "Export readiness"
-  }[stage];
-}
-
-function generationStageHeadline(label: string) {
-  if (label === "Queued") return "Waiting for queue slot";
-  if (label === "Research") return "Researching source evidence";
-  if (label === "Planning article") return "Planning article";
-  if (label === "Writing draft") return "Writing draft";
-  if (label === "Validation") return "Validating article";
-  if (label === "Export readiness") return "Preparing export signals";
-  return label;
-}
-
 function generationLiveLabel(row: GenerationPipelineRow) {
   if (row.status === "failed") return `${row.label} failed`;
   if (row.status === "skipped") return `${row.label} skipped`;
-  if (row.status === "done") return `${row.label} complete`;
+  if (row.status === "done") return row.label;
+  if (row.step) return `${row.label}${row.status === "running" ? "..." : ""}`;
   return {
     queue: "Queued...",
     website: "Loading website knowledge...",
     profile: "Loading project profile...",
     standards: "Loading editorial standards...",
-    business: "Loading business profile...",
-    research: "Researching...",
-    outline: "Outlining...",
-    generation: "Writing...",
-    save: "Saving...",
-    editor: "Running editorial pass...",
-    validation: "Validating...",
-    export: "Preparing export..."
+    business: "Loading business knowledge..."
   }[row.key] ?? `${row.label}...`;
 }
 
@@ -5995,59 +5969,18 @@ function pipelineRowGlyph(status: PipelineStatus) {
   return <span className="size-2 rounded-full border border-line-strong bg-surface-2" />;
 }
 
-function generationStageDetail(step: ArticleDocument["pipeline"][number], research: ResearchPack | null) {
+function generationStageDetail(step: ArticleDocument["pipeline"][number]) {
   if (step.status === "failed") return step.error ?? "Stage failed.";
-  if (step.message && step.status !== "done") return step.message;
-  if (step.stage === "research") {
-    const accepted = numberMeta(step.meta?.sourcesAccepted) ?? research?.researchSummary?.accepted ?? research?.sources.length;
-    const found = numberMeta(step.meta?.sourcesFound) ?? research?.sourcesFound ?? ((research?.sources.length ?? 0) + (research?.rejectedSources.length ?? 0) || undefined);
-    if (found !== undefined) return `${formatNumber(found)} source${found === 1 ? "" : "s"} analysed${accepted && accepted !== found ? ` · ${formatNumber(accepted)} accepted` : ""}`;
-  }
-  if (step.stage === "outline") {
-    const targetWords = numberMeta(step.meta?.targetWords);
-    const sections = numberMeta(step.meta?.h2SectionCount);
-    if (targetWords || sections) return [targetWords ? `${formatNumber(targetWords)} target words` : null, sections ? `${sections} sections planned` : null].filter(Boolean).join(" · ");
-  }
-  if (step.stage === "generation") {
-    const tokens = numberMeta(step.meta?.outputTokens);
-    if (tokens) return `${formatNumber(tokens)} output tokens generated`;
-  }
-  if (step.stage === "validation") {
-    const warnings = numberMeta(step.meta?.warnings);
-    const quality = numberMeta(step.meta?.qualityScore);
-    if (warnings !== undefined || quality !== undefined) return [warnings !== undefined ? `${warnings} warning${warnings === 1 ? "" : "s"}` : null, quality !== undefined ? `Quality score ${quality}` : null].filter(Boolean).join(" · ");
-  }
-  if (step.status === "done") return "Complete";
-  if (step.status === "idle") return "Pending";
-  return undefined;
+  return step.message;
 }
 
-function pipelineRowIcon(status: PipelineStatus) {
-  if (status === "done") return "✓";
-  if (status === "running") return "●";
-  if (status === "failed") return "!";
-  if (status === "skipped") return "−";
-  return "○";
-}
-
-function pipelineRowIconTone(status: PipelineStatus) {
-  return {
-    done: "bg-success/10 text-success",
-    running: "bg-info/10 text-info",
-    failed: "bg-danger/10 text-danger",
-    skipped: "bg-surface-3 text-ink-subtle",
-    idle: "bg-background text-ink-subtle"
-  }[status];
-}
-
-function formatPipelineRowStatus(status: PipelineStatus) {
-  return {
-    done: "Done",
-    running: "Active",
-    failed: "Failed",
-    skipped: "Skipped",
-    idle: "Pending"
-  }[status];
+function formatGenerationRowStatus(row: GenerationPipelineRow) {
+  if (row.step) return formatPipelineStepStatus(row.step);
+  if (row.status === "done") return "Done";
+  if (row.status === "running") return "Live";
+  if (row.status === "failed") return "Failed";
+  if (row.status === "skipped") return "Skipped";
+  return "Pending";
 }
 
 function numberMeta(value: unknown) {
