@@ -6,6 +6,7 @@ import { normalizeProjectProfile, profileKeyFor } from "@/lib/project/profile";
 import { calculateTelemetryQuality } from "@/lib/telemetry/quality";
 import { errorMessage, logStorageError } from "@/lib/storage/logging";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, jobPath, jobsPrefix, neonUsageSnapshotPath, neonUsageSnapshotPrefix, operationalTelemetryPath, operationalTelemetryPrefix, queueControlPath, researchPath, settingsPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
+import { compactPipelineForJobStorage } from "@/lib/pipeline";
 import type { StorageProvider } from "@/lib/storage/storage";
 import type { WorkerObservationTimings } from "@/lib/storage/storage";
 import type { ArticleDocument, ArticleSummary, DebugDocument, DocumentVersion, GenerationTelemetryDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, NeonUsageSnapshotDocument, OperationalTelemetryDocument, OrganisationDocument, ProjectDocument, ProjectShopifyConnectionSecret, ProjectSiteKnowledgeDocument, ProjectSiteProfileDocument, ProjectWordPressConnectionSecret, QueueControlDocument, QueueJob, QueueStatus, ResearchFinding, ResearchPack, ResearchRun, ResearchSource, SettingsDocument, SiteKnowledgePageDocument, SourceCitation, TelemetryExportStatusDocument, WorkerLeaseDocument, WorkspacePreferencesDocument } from "@/lib/types";
@@ -2565,6 +2566,7 @@ function withJobDefaults(job: QueueJob, tenant: TenantSeed): QueueJob {
     organisationId: job.organisationId ?? tenant.organisationId,
     createdByUserId: job.createdByUserId ?? tenant.userId,
     queuePosition: job.queuePosition ?? new Date(job.createdAt).getTime(),
+    pipeline: compactPipelineForJobStorage(job.pipeline),
     statusReason: job.statusReason ?? null
   };
 }

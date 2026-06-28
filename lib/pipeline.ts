@@ -42,3 +42,15 @@ export function failStage(pipeline: PipelineStep[], stage: PipelineStageName, er
 export function skipStage(pipeline: PipelineStep[], stage: PipelineStageName, message: string): PipelineStep[] {
   return pipeline.map((step) => step.stage === stage ? { ...step, status: "skipped", message } : step);
 }
+
+export function compactPipelineForJobStorage(pipeline: PipelineStep[]): PipelineStep[] {
+  return pipeline.map((step) => ({
+    stage: step.stage,
+    status: step.status,
+    startedAt: step.startedAt,
+    completedAt: step.completedAt,
+    durationMs: step.durationMs,
+    message: step.message,
+    error: step.error
+  }));
+}

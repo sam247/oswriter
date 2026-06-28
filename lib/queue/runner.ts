@@ -496,7 +496,10 @@ export class QueueRunner {
         return job;
       }
 
-      const outlineSemanticIntelligence = semanticIntelligenceFromResearchStage(job);
+      const outlineResearch = stageDone(job, "research")
+        ? await this.store.getResearch(job.articleId, job.projectId)
+        : null;
+      const outlineSemanticIntelligence = outlineResearch?.semanticIntelligence ?? semanticIntelligenceFromResearchStage(job);
       if (outlineSemanticIntelligence) plan = buildArticleGenerationPlan(settings.controls, profileSnapshot, projectIntelligence, contentProfile, job.title, outlineSemanticIntelligence);
 
       if (!stageDone(job, "outline")) {

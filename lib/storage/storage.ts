@@ -5,6 +5,7 @@ import { normalizeProjectProfile } from "@/lib/project/profile";
 import { normalizeProjectKnowledgeBase } from "@/lib/project/knowledge-base";
 import { toPublicWorkspacePreferences } from "@/lib/research/providers/public";
 import { toArticleSummary } from "@/lib/articles/summary";
+import { compactPipelineForJobStorage } from "@/lib/pipeline";
 import { isApprovedStatus, isCompletedArticleStatus } from "@/lib/status";
 import type { ProjectAnalyticsSummary } from "@/lib/analytics/summary";
 import { activeProjectPath, articleMarkdownPath, articlePath, articlesPrefix, debugPath, generationTelemetryPath, generationTelemetryPrefix, jobPath, jobsPrefix, neonUsageSnapshotPath, neonUsageSnapshotPrefix, operationalTelemetryPath, operationalTelemetryPrefix, queueControlPath, researchPath, settingsPath, shopifyConnectionPath, siteKnowledgePagePath, siteKnowledgePagesPrefix, siteKnowledgePath, siteProfilePath, telemetryExportStatusPath, telemetryExportStatusPrefix, workerLeasePath, wordpressConnectionPath, workspacePath, workspacePreferencesPath } from "@/lib/storage/paths";
@@ -397,7 +398,10 @@ export class WorkspaceStore {
   }
 
   async saveJob(job: QueueJob) {
-    await this.storage.putJson(jobPath(job.id, job.projectId), job);
+    await this.storage.putJson(jobPath(job.id, job.projectId), {
+      ...job,
+      pipeline: compactPipelineForJobStorage(job.pipeline)
+    });
   }
 
   async saveJobs(jobs: QueueJob[]) {

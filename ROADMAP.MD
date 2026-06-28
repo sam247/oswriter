@@ -2,6 +2,30 @@
 
 ## Completed
 
+### Safe Storage Optimisation Pass
+
+- Verified the two large GIN search indexes are still backed by live application queries in `NeonStorage.globalSearch`, so they were intentionally kept in place for this safe pass:
+  - `articles_search_tsv_idx`
+  - `research_findings_search_tsv_idx`
+- Added a new additive migration to remove only duplicate B-tree indexes that are fully covered by existing unique indexes:
+  - `generation_telemetry_article_idx`
+  - `document_versions_history_idx`
+  - `research_runs_article_idx`
+- Compacted persisted `jobs.pipeline` storage so queue jobs now keep lightweight transient execution state only:
+  - stage
+  - status
+  - timestamps and durations
+  - message and error
+- Kept `articles.pipeline` unchanged as the durable detailed execution history used by the inspector, analytics, and article-level diagnostics.
+- Moved the outline resume dependency away from persisted `jobs.pipeline.meta` and back onto saved research state so research handoff and resume behavior still work after job-pipeline compaction.
+- Added focused regression coverage proving:
+  - persisted job pipelines are compacted
+  - article pipelines retain detailed stage metadata
+  - outline resume still works after a persisted research handoff
+- Verified the pass with:
+  - `npm test`
+  - `npm run build`
+
 ### Queue Add Feedback Cleanup
 
 - Removed the static `Paste one title per line to queue work.` helper beneath the add-titles box.

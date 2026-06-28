@@ -256,6 +256,41 @@ describe("QueueRunner", () => {
     assert.equal(state.articles.length, 1);
   });
 
+  it("compacts persisted job pipeline metadata while keeping article pipeline details", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Compact persisted job pipeline"]);
+    await runner.resumeQueue();
+
+    const researched = await runner.processNext(undefined, { source: "manual" });
+    const persistedAfterResearch = researched.job ? await store.getJob(researched.job.id) : null;
+    assert.equal(persistedAfterResearch?.pipeline.find((step) => step.stage === "research")?.meta, undefined);
+
+    await drainQueue(runner, 10, false);
+
+    const finalJob = researched.job ? await store.getJob(researched.job.id) : null;
+    const article = researched.job ? await store.getArticle(researched.job.articleId) : null;
+    assert.ok(article);
+    assert.equal(finalJob?.pipeline.some((step) => step.meta !== undefined), false);
+    assert.equal(article?.pipeline.some((step) => step.meta !== undefined), true);
+  });
+
+  it("resumes outline generation from saved research when persisted job pipeline metadata is compacted", async () => {
+    const { store, runner } = setup();
+    await runner.addTitles(["Resume outline after compacted research state"]);
+    await runner.resumeQueue();
+
+    const researched = await runner.processNext(undefined, { source: "manual" });
+    assert.equal(researched.job?.status, "processing");
+
+    const workerOutline = await runner.processNext(undefined, { source: "worker" });
+    assert.equal(workerOutline.processed, true);
+    assert.equal(workerOutline.job?.pipeline.find((step) => step.stage === "outline")?.status, "done");
+
+    await drainQueue(runner, 10, false);
+    const article = researched.job ? await store.getArticle(researched.job.articleId) : null;
+    assert.ok(article);
+  });
+
   it("stops gracefully after the current article completes", async () => {
     const { store, runner } = setup();
     const [first, second] = await runner.addTitles(["Finish me first", "Do not start yet"]);
