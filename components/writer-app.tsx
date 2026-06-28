@@ -23,7 +23,7 @@ import type { QueueCostProjection } from "@/lib/queue/projection";
 import { rejectionSummaryLabel } from "@/lib/research/source-classification";
 import { toArticleSummary } from "@/lib/articles/summary";
 import { calculateArticleScores, type ArticleScore, type ArticleScores } from "@/lib/scoring/article-scores";
-import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectShopifyConnection, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, ShopifyConnectionStatus, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
+import type { AppState, ArticleDocument, ArticleSummary, DebugDocument, GlobalSearchResponse, GlobalSearchResult, GlobalSearchResultType, JobStatus, PipelineStatus, PostGenerationPublishingAction, ProjectDocument, ProjectProfile, ProjectShopifyConnection, ProjectWordPressConnection, PublishingScheduleIntervalUnit, PublishingSchedulePattern, PublishingWorkflowStatus, QueueControlMode, QueueJob, QueueStatus, ResearchPack, ResearchSource, ShopifyConnectionStatus, WorkerStatusSnapshot, WordPressConnectionStatus, WordPressPostStatus, WorkspacePreferencesDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isGlobalSearchShortcut } from "@/lib/ui/keyboard";
 import { getSourceDisplayDomain, getSourceDisplayTitle, truncateSourceTitle } from "@/lib/ui/source-display";
@@ -2103,7 +2103,18 @@ function Workbench() {
                     richEditorRef={richEditorRef}
                     onChange={handleSelectedMarkdownChange}
                   />
-                ) : selectedJob ? <JobPlaceholder job={selectedJob} onRetry={() => retryOne(selectedJob.id)} /> : null}
+                ) : selectedJob ? (
+                  <GenerationWorkspace
+                    job={selectedJob}
+                    project={state?.project ?? null}
+                    settings={state?.settings ?? null}
+                    research={details.research}
+                    viewMode={articleViewMode}
+                    editorRef={editorRef}
+                    richEditorRef={richEditorRef}
+                    onRetry={() => retryOne(selectedJob.id)}
+                  />
+                ) : null}
               </div>
               {selectedArticle && <ArticleMetricsRail saveState={saveState} lastSavedAt={lastSavedAt} />}
             </>
@@ -4997,24 +5008,214 @@ function JobPlaceholder({ job, onRetry }: { job: QueueJob; onRetry: () => void }
   );
 }
 
+function GenerationWorkspace({
+  job,
+  project,
+  settings,
+  research,
+  viewMode,
+  editorRef,
+  richEditorRef,
+  onRetry
+}: {
+  job: QueueJob;
+  project: ProjectDocument | null;
+  settings: AppState["settings"] | null;
+  research: ResearchPack | null;
+  viewMode: ArticleViewMode;
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+  richEditorRef: RefObject<HTMLDivElement | null>;
+  onRetry: () => void;
+}) {
+  if (job.status === "failed" || job.status === "research_failed") return <JobPlaceholder job={job} onRetry={onRetry} />;
+  const placeholderMarkdown = generationPlaceholderMarkdown(job.title);
+  return (
+    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+      <div className="mx-auto w-full max-w-[960px] px-6 py-4 lg:px-8">
+        <GenerationPipelineCard job={job} project={project} settings={settings} research={research} />
+      </div>
+      <div className="hairline-t min-h-0 bg-background">
+        <ArticleWorkspace
+          markdown={placeholderMarkdown}
+          viewMode={viewMode}
+          editorRef={editorRef}
+          richEditorRef={richEditorRef}
+          onChange={() => undefined}
+          readOnly
+        />
+      </div>
+    </div>
+  );
+}
+
+function GenerationPipelineCard({
+  job,
+  project,
+  settings,
+  research
+}: {
+  job: QueueJob;
+  project: ProjectDocument | null;
+  settings: AppState["settings"] | null;
+  research: ResearchPack | null;
+}) {
+  const rows = buildGenerationPipelineRows(job, project, research);
+  const activeIndex = Math.max(0, rows.findIndex((row) => row.status === "running") >= 0
+    ? rows.findIndex((row) => row.status === "running")
+    : rows.findIndex((row) => row.status === "idle"));
+  const active = rows[activeIndex] ?? rows[0];
+  const completed = rows.length > 0 && rows.every((row) => row.status === "done" || row.status === "skipped");
+  const runtime = calculatePipelineRuntime(job.pipeline);
+  const targetWords = numberMeta(job.pipeline.find((step) => step.stage === "outline")?.meta?.targetWords)
+    ?? settings?.controls.lengthTargetWords
+    ?? project?.profile?.defaultTargetWords
+    ?? 0;
+  return (
+    <section className="rounded-md border border-line bg-surface-1">
+      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+        <PanelTitle title="Current pipeline" />
+        <span className={cn("rounded-full px-2 py-0.5 text-[10.5px] font-medium", statusBadgeTone(job.status))}>{displayStatusLabel(job)}</span>
+      </div>
+      {completed ? (
+        <GenerationCompletionSummary job={job} research={research} runtimeMs={runtime.totalMs} />
+      ) : (
+        <div className="grid gap-0 md:grid-cols-[minmax(0,1fr)_270px]">
+          <div className="min-w-0 px-4 py-3">
+            <div className="relative pl-6">
+              <div className="absolute bottom-1 left-[5px] top-1 w-px bg-line" />
+              <span className="absolute -left-px top-1 grid size-3 place-items-center bg-surface-1">
+                {generationActiveIcon(active.status)}
+              </span>
+              <div key={active.key} className="rounded-md border border-line bg-background px-3 py-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="truncate text-[15px] font-semibold text-ink">{generationLiveLabel(active)}</h2>
+                  <span className="mono ml-auto shrink-0 text-[10.5px] text-ink-subtle">{formatPipelineRowStatus(active.status)}</span>
+                </div>
+                {active.detail && <p className="mt-1 text-[12px] leading-5 text-ink-muted">{active.detail}</p>}
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-1.5 overflow-hidden">
+              {rows.map((row, index) => (
+                <span
+                  key={row.key}
+                  title={`${row.label}: ${formatPipelineRowStatus(row.status)}`}
+                  className={cn(
+                    "h-1.5 min-w-4 flex-1 rounded-full",
+                    row.status === "done" && "bg-success/70",
+                    row.status === "running" && "bg-info",
+                    row.status === "failed" && "bg-danger",
+                    row.status === "skipped" && "bg-line-strong",
+                    row.status === "idle" && "bg-surface-3",
+                    index === activeIndex && "ring-1 ring-info/40 ring-offset-1 ring-offset-surface-1"
+                  )}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="border-t border-line px-4 py-3 md:border-l md:border-t-0">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11.5px]">
+              <MetricLine label="Project" value={project?.name ?? "-"} />
+              <MetricLine label="Audience" value={project?.profile?.audienceLabel ?? "-"} />
+              <MetricLine label="Profile" value={contentProfileLabel(job.contentProfile ?? "", project?.defaultContentProfile)} />
+              <MetricLine label="Length" value={`${formatNumber(targetWords)} words`} />
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+type GenerationPipelineRow = {
+  key: string;
+  label: string;
+  status: PipelineStatus;
+  detail?: string;
+  durationMs?: number;
+};
+
+function buildGenerationPipelineRows(job: QueueJob, project: ProjectDocument | null, research: ResearchPack | null): GenerationPipelineRow[] {
+  const rows: GenerationPipelineRow[] = [{ key: "queue", label: "Queued", status: job.status === "queued" && !job.pipeline.some((step) => step.status !== "idle") ? "running" : "done", detail: `Attempt ${job.attempts}` }];
+  if (project?.knowledgeBase?.website || project?.knowledgeBase?.aboutBusiness) rows.push({ key: "website", label: "Website knowledge loaded", status: "done", detail: project.knowledgeBase.website ? safeDomain(project.knowledgeBase.website) : undefined });
+  if (project?.profile || project?.knowledgeBase) rows.push({ key: "business", label: "Business profile loaded", status: "done", detail: project.profile?.industryLabel });
+  for (const step of job.pipeline) {
+    if (step.status === "skipped") continue;
+    rows.push({
+      key: step.stage,
+      label: generationStageLabel(step.stage),
+      status: step.status,
+      detail: generationStageDetail(step, research),
+      durationMs: step.durationMs
+    });
+    if (step.stage === "research" && step.status === "done") {
+      const semantic = research?.semanticIntelligence ?? (step.meta?.semanticIntelligence as ResearchPack["semanticIntelligence"] | undefined);
+      if (semantic) {
+        rows.push({
+          key: "semantic",
+          label: "Semantic graph built",
+          status: "done",
+          detail: `${formatNumber(semantic.conceptCount)} concept${semantic.conceptCount === 1 ? "" : "s"} identified`
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+function GenerationCompletionSummary({ job, research, runtimeMs }: { job: QueueJob; research: ResearchPack | null; runtimeMs: number }) {
+  const validation = job.pipeline.find((step) => step.stage === "validation");
+  const concepts = research?.semanticIntelligence?.conceptCount ?? research?.researchConceptCount ?? null;
+  const quality = validation?.meta?.qualityScore as number | undefined;
+  const researchStage = job.pipeline.find((step) => step.stage === "research");
+  const observedSources = (research?.sources.length ?? 0) + (research?.rejectedSources.length ?? 0);
+  const sourceCount = research?.sourcesFound
+    ?? (observedSources > 0 ? observedSources : undefined)
+    ?? numberMeta(researchStage?.meta?.sourcesFound)
+    ?? numberMeta(researchStage?.meta?.sourcesAccepted)
+    ?? "-";
+  return (
+    <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+      <CompletionMetric label="Sources analysed" value={sourceCount} />
+      <CompletionMetric label="Semantic concepts" value={concepts ?? "-"} />
+      <CompletionMetric label="Quality Score" value={quality ?? "-"} />
+      <CompletionMetric label="Completed in" value={formatDuration(runtimeMs)} />
+    </div>
+  );
+}
+
+function CompletionMetric({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-md border border-line/70 bg-background p-3">
+      <div className="mono text-[10px] uppercase tracking-[0.14em] text-ink-subtle">{label}</div>
+      <div className="mono mt-2 text-lg font-semibold text-ink">{value}</div>
+    </div>
+  );
+}
+
+function generationPlaceholderMarkdown(title: string) {
+  return `# ${title}\n\nQueueWrite is currently preparing this article.\n\nThe editor will populate automatically once generation begins.`;
+}
+
 function ArticleWorkspace({
   markdown,
   viewMode,
   editorRef,
   richEditorRef,
-  onChange
+  onChange,
+  readOnly = false
 }: {
   markdown: string;
   viewMode: ArticleViewMode;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   richEditorRef: RefObject<HTMLDivElement | null>;
   onChange: (markdown: string) => void;
+  readOnly?: boolean;
 }) {
   if (viewMode === "split") {
     return (
       <div className="grid h-full min-h-0 grid-cols-2">
         <div className="hairline-r min-h-0 overflow-hidden">
-          <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} compact />
+          <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} compact readOnly={readOnly} />
         </div>
         <div className="min-h-0 overflow-auto">
           <MarkdownPreview markdown={markdown} compact />
@@ -5024,7 +5225,7 @@ function ArticleWorkspace({
   }
 
   if (viewMode === "md") {
-    return <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} />;
+    return <MarkdownEditor markdown={markdown} editorRef={editorRef} onChange={onChange} readOnly={readOnly} />;
   }
 
   return (
@@ -5033,6 +5234,7 @@ function ArticleWorkspace({
         markdown={markdown}
         onChange={onChange}
         editorRef={richEditorRef}
+        readOnly={readOnly}
       />
     </div>
   );
@@ -5051,11 +5253,13 @@ function MarkdownPreview({ markdown, compact = false }: { markdown: string; comp
 function RichMarkdownEditor({
   markdown,
   onChange,
-  editorRef
+  editorRef,
+  readOnly = false
 }: {
   markdown: string;
   onChange: (markdown: string) => void;
   editorRef: RefObject<HTMLDivElement | null>;
+  readOnly?: boolean;
 }) {
   const lastMarkdownRef = useRef(markdown);
 
@@ -5069,6 +5273,7 @@ function RichMarkdownEditor({
   }, [markdown]);
 
   function handleInput() {
+    if (readOnly) return;
     const next = editableHtmlToMarkdown(editorRef.current);
     lastMarkdownRef.current = next;
     onChange(next);
@@ -5078,12 +5283,12 @@ function RichMarkdownEditor({
     <div className="mx-auto max-w-[820px] px-8 pb-16 pt-10">
       <div
         ref={editorRef}
-        contentEditable
+        contentEditable={!readOnly}
         suppressContentEditableWarning
         spellCheck
         onInput={handleInput}
         onBlur={handleInput}
-        className="min-h-[520px] space-y-5 text-ink outline-none [&_a]:underline [&_a]:decoration-line-strong [&_a]:underline-offset-4 [&_h1]:text-[30px] [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:tracking-tight [&_h2]:pt-4 [&_h2]:text-[23px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:tracking-tight [&_h3]:pt-2 [&_h3]:text-[19px] [&_h3]:font-semibold [&_h3]:leading-snug [&_li]:text-[17px] [&_li]:leading-8 [&_p]:text-[17px] [&_p]:leading-8 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-6"
+        className={cn("min-h-[520px] space-y-5 text-ink outline-none [&_a]:underline [&_a]:decoration-line-strong [&_a]:underline-offset-4 [&_h1]:text-[30px] [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:tracking-tight [&_h2]:pt-4 [&_h2]:text-[23px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:tracking-tight [&_h3]:pt-2 [&_h3]:text-[19px] [&_h3]:font-semibold [&_h3]:leading-snug [&_li]:text-[17px] [&_li]:leading-8 [&_p]:text-[17px] [&_p]:leading-8 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-6", readOnly && "cursor-default text-ink-muted")}
         aria-label="Article body"
       />
     </div>
@@ -5094,12 +5299,14 @@ function MarkdownEditor({
   markdown,
   editorRef,
   onChange,
-  compact = false
+  compact = false,
+  readOnly = false
 }: {
   markdown: string;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (markdown: string) => void;
   compact?: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <div className={cn("h-full min-h-0 overflow-hidden px-6 pb-8 pt-6 lg:px-8", compact && "px-5 pt-5 lg:px-5")}>
@@ -5108,8 +5315,9 @@ function MarkdownEditor({
           ref={editorRef}
           value={markdown}
           onChange={(event) => onChange(event.target.value)}
+          readOnly={readOnly}
           spellCheck
-          className="h-full w-full resize-none border-0 bg-transparent px-2 py-2 text-[17px] leading-8 text-ink outline-none placeholder:text-ink-subtle"
+          className={cn("h-full w-full resize-none border-0 bg-transparent px-2 py-2 text-[17px] leading-8 text-ink outline-none placeholder:text-ink-subtle", readOnly && "cursor-default text-ink-muted")}
           placeholder="Start writing..."
         />
       </div>
@@ -5615,6 +5823,112 @@ function DashboardMetricCards({ items }: { items: Array<{ label: string; value: 
 
 function formatPipelineStageLabel(stage: ArticleDocument["pipeline"][number]["stage"]) {
   return stage.charAt(0).toUpperCase() + stage.slice(1);
+}
+
+function generationStageLabel(stage: ArticleDocument["pipeline"][number]["stage"]) {
+  return {
+    research: "Research",
+    outline: "Planning article",
+    generation: "Writing draft",
+    save: "Saving article",
+    editor: "Editorial pass",
+    validation: "Validation",
+    export: "Export readiness"
+  }[stage];
+}
+
+function generationStageHeadline(label: string) {
+  if (label === "Queued") return "Waiting for queue slot";
+  if (label === "Research") return "Researching source evidence";
+  if (label === "Planning article") return "Planning article";
+  if (label === "Writing draft") return "Writing draft";
+  if (label === "Validation") return "Validating article";
+  if (label === "Export readiness") return "Preparing export signals";
+  return label;
+}
+
+function generationLiveLabel(row: GenerationPipelineRow) {
+  if (row.status === "failed") return `${row.label} failed`;
+  if (row.status === "skipped") return `${row.label} skipped`;
+  if (row.status === "done") return `${row.label} complete`;
+  return {
+    queue: "Queued...",
+    website: "Loading website knowledge...",
+    business: "Loading business profile...",
+    research: "Researching...",
+    outline: "Outlining...",
+    generation: "Writing...",
+    save: "Saving...",
+    editor: "Running editorial pass...",
+    validation: "Validating...",
+    export: "Preparing export..."
+  }[row.key] ?? `${row.label}...`;
+}
+
+function generationActiveIcon(status: PipelineStatus) {
+  if (status === "failed") return <AlertCircle className="size-3 text-danger" />;
+  if (status === "done") return <CheckCircle2 className="size-3 text-success" />;
+  if (status === "skipped") return <span className="size-2 rounded-full border border-line-strong bg-surface-2" />;
+  return <Search className="size-3 animate-pulse text-info" />;
+}
+
+function generationStageDetail(step: ArticleDocument["pipeline"][number], research: ResearchPack | null) {
+  if (step.status === "failed") return step.error ?? "Stage failed.";
+  if (step.message && step.status !== "done") return step.message;
+  if (step.stage === "research") {
+    const accepted = numberMeta(step.meta?.sourcesAccepted) ?? research?.researchSummary?.accepted ?? research?.sources.length;
+    const found = numberMeta(step.meta?.sourcesFound) ?? research?.sourcesFound ?? ((research?.sources.length ?? 0) + (research?.rejectedSources.length ?? 0) || undefined);
+    if (found !== undefined) return `${formatNumber(found)} source${found === 1 ? "" : "s"} analysed${accepted && accepted !== found ? ` · ${formatNumber(accepted)} accepted` : ""}`;
+  }
+  if (step.stage === "outline") {
+    const targetWords = numberMeta(step.meta?.targetWords);
+    const sections = numberMeta(step.meta?.h2SectionCount);
+    if (targetWords || sections) return [targetWords ? `${formatNumber(targetWords)} target words` : null, sections ? `${sections} sections planned` : null].filter(Boolean).join(" · ");
+  }
+  if (step.stage === "generation") {
+    const tokens = numberMeta(step.meta?.outputTokens);
+    if (tokens) return `${formatNumber(tokens)} output tokens generated`;
+  }
+  if (step.stage === "validation") {
+    const warnings = numberMeta(step.meta?.warnings);
+    const quality = numberMeta(step.meta?.qualityScore);
+    if (warnings !== undefined || quality !== undefined) return [warnings !== undefined ? `${warnings} warning${warnings === 1 ? "" : "s"}` : null, quality !== undefined ? `Quality score ${quality}` : null].filter(Boolean).join(" · ");
+  }
+  if (step.status === "done") return "Complete";
+  if (step.status === "idle") return "Pending";
+  return undefined;
+}
+
+function pipelineRowIcon(status: PipelineStatus) {
+  if (status === "done") return "✓";
+  if (status === "running") return "●";
+  if (status === "failed") return "!";
+  if (status === "skipped") return "−";
+  return "○";
+}
+
+function pipelineRowIconTone(status: PipelineStatus) {
+  return {
+    done: "bg-success/10 text-success",
+    running: "bg-info/10 text-info",
+    failed: "bg-danger/10 text-danger",
+    skipped: "bg-surface-3 text-ink-subtle",
+    idle: "bg-background text-ink-subtle"
+  }[status];
+}
+
+function formatPipelineRowStatus(status: PipelineStatus) {
+  return {
+    done: "Done",
+    running: "Active",
+    failed: "Failed",
+    skipped: "Skipped",
+    idle: "Pending"
+  }[status];
+}
+
+function numberMeta(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function formatPipelineStepStatus(step: ArticleDocument["pipeline"][number]) {
