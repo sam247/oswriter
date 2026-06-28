@@ -276,6 +276,8 @@ function Workbench() {
     () => jobs.find((job) => job.articleId === selectedArticleId || job.id === selectedArticle?.jobId) ?? null,
     [jobs, selectedArticle?.jobId, selectedArticleId]
   );
+  const selectedJobHasWritingStarted = selectedJob ? generationHasReachedWriting(selectedJob) : false;
+  const showArticleToolbar = Boolean(selectedArticle || selectedJobHasWritingStarted);
   const selectedMarkdown = selectedArticle ? drafts[selectedArticle.id] ?? selectedArticle.markdown : "";
   // Keep a ref to the current markdown so undo checkpoints can capture it without being in useCallback deps
   const selectedMarkdownRef = useRef(selectedMarkdown);
@@ -2072,20 +2074,22 @@ function Workbench() {
                 onApprove={() => void approveSelectedArticle()}
                 onRegenerate={() => selectedArticle && setRegenerateCandidate(toArticleSummary(selectedArticle))}
               />
-              <ArticleToolbar
-                article={selectedArticle}
-                connection={state?.project.publishing?.wordpress}
-                busy={busy}
-                viewMode={articleViewMode}
-                onViewModeChange={setArticleViewMode}
-                onFormat={applyFormat}
-                onUndo={undoLastChange}
-                canUndo={canUndo}
-                onCopyAll={copySelectedArticle}
-                onConnectWordPress={() => setProjectSettingsProjectId(state?.project.id ?? null)}
-                onPublishDraft={() => void publishSelectedArticle("draft")}
-                onPublishNow={() => void publishSelectedArticle("publish")}
-              />
+              {showArticleToolbar && (
+                <ArticleToolbar
+                  article={selectedArticle}
+                  connection={state?.project.publishing?.wordpress}
+                  busy={busy}
+                  viewMode={articleViewMode}
+                  onViewModeChange={setArticleViewMode}
+                  onFormat={applyFormat}
+                  onUndo={undoLastChange}
+                  canUndo={canUndo}
+                  onCopyAll={copySelectedArticle}
+                  onConnectWordPress={() => setProjectSettingsProjectId(state?.project.id ?? null)}
+                  onPublishDraft={() => void publishSelectedArticle("draft")}
+                  onPublishNow={() => void publishSelectedArticle("publish")}
+                />
+              )}
               <div
                 className="min-h-0 flex-1"
                 onKeyDown={(event) => {
@@ -5028,6 +5032,9 @@ function GenerationWorkspace({
   onRetry: () => void;
 }) {
   if (job.status === "failed" || job.status === "research_failed") return <JobPlaceholder job={job} onRetry={onRetry} />;
+  if (!generationHasReachedWriting(job)) {
+    return <PreparingArticleWorkspace job={job} project={project} settings={settings} research={research} />;
+  }
   const placeholderMarkdown = generationPlaceholderMarkdown(job.title);
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
@@ -5048,6 +5055,99 @@ function GenerationWorkspace({
   );
 }
 
+function PreparingArticleWorkspace({
+  job,
+  project,
+  settings,
+  research
+}: {
+  job: QueueJob;
+  project: ProjectDocument | null;
+  settings: AppState["settings"] | null;
+  research: ResearchPack | null;
+}) {
+  const rows = buildGenerationPipelineRows(job, project, research);
+  const activeIndex = resolveActiveGenerationRowIndex(rows);
+  const active = rows[activeIndex] ?? rows[0];
+  const completedRows = rows.filter((row) => row.status === "done").slice(-5);
+  const upcomingRows = rows.slice(activeIndex + 1).filter((row) => row.status === "idle").slice(0, 5);
+  const targetWords = numberMeta(job.pipeline.find((step) => step.stage === "outline")?.meta?.targetWords)
+    ?? settings?.controls.lengthTargetWords
+    ?? project?.profile?.defaultTargetWords
+    ?? 0;
+  return (
+    <div className="h-full min-h-0 overflow-auto bg-background">
+      <div className="mx-auto grid w-full max-w-[980px] gap-4 px-6 py-6 lg:px-8">
+        <section className="rounded-md border border-line bg-surface-1">
+          <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Preparing article</div>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight text-ink">{generationLiveLabel(active)}</h2>
+            </div>
+            <span className={cn("rounded-full px-2 py-0.5 text-[10.5px] font-medium", statusBadgeTone(job.status))}>{displayStatusLabel(job)}</span>
+          </div>
+
+          <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="min-w-0 p-5">
+              <div className="relative pl-6">
+                <div className="absolute bottom-1 left-[5px] top-1 w-px bg-line" />
+                <span className="absolute -left-px top-1 grid size-3 place-items-center bg-surface-1">
+                  {generationActiveIcon(active.status)}
+                </span>
+                <div key={active.key} className="rounded-md border border-line bg-background px-4 py-3">
+                  <div className="text-sm font-semibold text-ink">Current activity</div>
+                  <div className="mt-2 flex min-w-0 items-center gap-2">
+                    <span className="size-1.5 shrink-0 rounded-full bg-info" />
+                    <span className="truncate text-[13px] font-medium text-ink">{active.label}</span>
+                    <span className="mono ml-auto shrink-0 text-[10.5px] text-ink-subtle">{formatPipelineRowStatus(active.status)}</span>
+                  </div>
+                  {active.detail && <p className="mt-1 pl-3.5 text-[12px] leading-5 text-ink-muted">{active.detail}</p>}
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <GenerationTaskList title="Completed" rows={completedRows} emptyText="Completed work will appear here." />
+                <GenerationTaskList title="Next" rows={upcomingRows} emptyText="No further queued stages." muted />
+              </div>
+            </div>
+
+            <div className="border-t border-line p-5 lg:border-l lg:border-t-0">
+              <div className="mono text-[10px] uppercase tracking-[0.18em] text-ink-subtle">Project summary</div>
+              <div className="mt-3 grid gap-2 text-[12px]">
+                <MetricLine label="Project" value={project?.name ?? "-"} />
+                <MetricLine label="Industry" value={project?.profile?.industryLabel ?? "-"} />
+                <MetricLine label="Audience" value={project?.profile?.audienceLabel ?? "-"} />
+                <MetricLine label="Profile" value={contentProfileLabel(job.contentProfile ?? "", project?.defaultContentProfile)} />
+                <MetricLine label="Language" value={project?.profile?.languageLabel ?? "English (UK)"} />
+                <MetricLine label="Target length" value={`${formatNumber(targetWords)} words`} />
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function GenerationTaskList({ title, rows, emptyText, muted = false }: { title: string; rows: GenerationPipelineRow[]; emptyText: string; muted?: boolean }) {
+  return (
+    <div>
+      <div className="mono text-[10px] uppercase tracking-[0.16em] text-ink-subtle">{title}</div>
+      <div className="mt-2 space-y-1.5">
+        {rows.length ? rows.map((row) => (
+          <div key={`${title}-${row.key}`} className={cn("flex items-start gap-2 text-[12px] leading-5", muted ? "text-ink-subtle" : "text-ink-muted")}>
+            <span className="mt-1 grid size-3 shrink-0 place-items-center">{pipelineRowGlyph(row.status)}</span>
+            <span className="min-w-0">
+              <span className={cn("block truncate", !muted && "text-ink")}>{row.label}</span>
+              {row.detail && <span className="block truncate text-ink-subtle">{row.detail}</span>}
+            </span>
+          </div>
+        )) : <p className="text-[12px] leading-5 text-ink-subtle">{emptyText}</p>}
+      </div>
+    </div>
+  );
+}
+
 function GenerationPipelineCard({
   job,
   project,
@@ -5060,9 +5160,7 @@ function GenerationPipelineCard({
   research: ResearchPack | null;
 }) {
   const rows = buildGenerationPipelineRows(job, project, research);
-  const activeIndex = Math.max(0, rows.findIndex((row) => row.status === "running") >= 0
-    ? rows.findIndex((row) => row.status === "running")
-    : rows.findIndex((row) => row.status === "idle"));
+  const activeIndex = resolveActiveGenerationRowIndex(rows);
   const active = rows[activeIndex] ?? rows[0];
   const completed = rows.length > 0 && rows.every((row) => row.status === "done" || row.status === "skipped");
   const runtime = calculatePipelineRuntime(job.pipeline);
@@ -5136,8 +5234,10 @@ type GenerationPipelineRow = {
 
 function buildGenerationPipelineRows(job: QueueJob, project: ProjectDocument | null, research: ResearchPack | null): GenerationPipelineRow[] {
   const rows: GenerationPipelineRow[] = [{ key: "queue", label: "Queued", status: job.status === "queued" && !job.pipeline.some((step) => step.status !== "idle") ? "running" : "done", detail: `Attempt ${job.attempts}` }];
+  if (project?.profile) rows.push({ key: "profile", label: "Project profile loaded", status: "done", detail: project.profile.industryLabel });
+  if (project?.profile?.editorialStandards.length) rows.push({ key: "standards", label: "Editorial standards loaded", status: "done", detail: `${project.profile.editorialStandards.length} standard${project.profile.editorialStandards.length === 1 ? "" : "s"}` });
   if (project?.knowledgeBase?.website || project?.knowledgeBase?.aboutBusiness) rows.push({ key: "website", label: "Website knowledge loaded", status: "done", detail: project.knowledgeBase.website ? safeDomain(project.knowledgeBase.website) : undefined });
-  if (project?.profile || project?.knowledgeBase) rows.push({ key: "business", label: "Business profile loaded", status: "done", detail: project.profile?.industryLabel });
+  if (project?.knowledgeBase?.aboutBusiness || project?.knowledgeBase?.services || project?.knowledgeBase?.targetCustomer) rows.push({ key: "business", label: "Business knowledge loaded", status: "done", detail: project.profile?.industryLabel });
   for (const step of job.pipeline) {
     if (step.status === "skipped") continue;
     rows.push({
@@ -5160,6 +5260,20 @@ function buildGenerationPipelineRows(job: QueueJob, project: ProjectDocument | n
     }
   }
   return rows;
+}
+
+function resolveActiveGenerationRowIndex(rows: GenerationPipelineRow[]) {
+  const running = rows.findIndex((row) => row.status === "running");
+  if (running >= 0) return running;
+  const idle = rows.findIndex((row) => row.status === "idle");
+  if (idle >= 0) return idle;
+  return Math.max(0, rows.length - 1);
+}
+
+function generationHasReachedWriting(job: QueueJob | null) {
+  if (!job) return false;
+  const writingStages = new Set(["generation", "save", "editor", "validation", "export"]);
+  return job.pipeline.some((step) => writingStages.has(step.stage) && step.status !== "idle");
 }
 
 function GenerationCompletionSummary({ job, research, runtimeMs }: { job: QueueJob; research: ResearchPack | null; runtimeMs: number }) {
@@ -5854,6 +5968,8 @@ function generationLiveLabel(row: GenerationPipelineRow) {
   return {
     queue: "Queued...",
     website: "Loading website knowledge...",
+    profile: "Loading project profile...",
+    standards: "Loading editorial standards...",
     business: "Loading business profile...",
     research: "Researching...",
     outline: "Outlining...",
@@ -5870,6 +5986,13 @@ function generationActiveIcon(status: PipelineStatus) {
   if (status === "done") return <CheckCircle2 className="size-3 text-success" />;
   if (status === "skipped") return <span className="size-2 rounded-full border border-line-strong bg-surface-2" />;
   return <Search className="size-3 animate-pulse text-info" />;
+}
+
+function pipelineRowGlyph(status: PipelineStatus) {
+  if (status === "done") return <CheckCircle2 className="size-3 text-success" />;
+  if (status === "failed") return <AlertCircle className="size-3 text-danger" />;
+  if (status === "running") return <Search className="size-3 animate-pulse text-info" />;
+  return <span className="size-2 rounded-full border border-line-strong bg-surface-2" />;
 }
 
 function generationStageDetail(step: ArticleDocument["pipeline"][number], research: ResearchPack | null) {
